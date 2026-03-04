@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import Image from "next/image";
 
 interface Option {
   value: string;
@@ -56,9 +57,19 @@ export default function SearchSelect({
           setQuery("");
           setTimeout(() => inputRef.current?.focus(), 0);
         }}
-        className="flex w-full items-center justify-between rounded-lg border border-border bg-bg-secondary px-2 py-1.5 text-xs text-text-primary outline-none transition-colors hover:border-brand/30"
+        className="flex w-full items-center gap-2 rounded-lg border border-border bg-bg-secondary px-2 py-1.5 text-xs text-text-primary outline-none transition-colors hover:border-brand/30"
       >
-        <span className={selected ? "text-text-primary" : "text-text-tertiary"}>
+        {selected?.icon && (
+          <Image
+            src={selected.icon}
+            alt=""
+            width={14}
+            height={14}
+            className="rounded-full shrink-0"
+            unoptimized
+          />
+        )}
+        <span className={`flex-1 text-left ${selected ? "text-text-primary" : "text-text-tertiary"}`}>
           {selected ? selected.label : placeholder}
         </span>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="shrink-0">
@@ -97,13 +108,23 @@ export default function SearchSelect({
                     setOpen(false);
                     setQuery("");
                   }}
-                  className={`flex w-full items-center justify-center gap-2 px-2 py-1.5 text-xs text-center transition-colors hover:bg-bg-secondary ${
+                  className={`flex w-full items-center gap-2 px-2 py-1.5 text-xs transition-colors hover:bg-bg-secondary ${
                     o.value === value
                       ? "text-brand font-medium"
                       : "text-text-primary"
                   }`}
                 >
-                  {o.label}
+                  {o.icon && (
+                    <Image
+                      src={o.icon}
+                      alt=""
+                      width={14}
+                      height={14}
+                      className="rounded-full shrink-0"
+                      unoptimized
+                    />
+                  )}
+                  <span className="flex-1 text-center">{o.label}</span>
                 </button>
               ))
             )}

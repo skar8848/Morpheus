@@ -10,7 +10,7 @@ import type { VaultDepositNodeData } from "@/lib/canvas/types";
 import NodeShell from "./NodeShell";
 import SearchSelect from "./SearchSelect";
 
-type SortKey = "tvl" | "apy" | "curator";
+type SortKey = "tvl" | "apy";
 
 interface UpstreamSource {
   nodeId: string;
@@ -98,10 +98,6 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
         return v.sort(
           (a, b) => (b.state.totalAssetsUsd ?? 0) - (a.state.totalAssetsUsd ?? 0)
         );
-      case "curator":
-        return v.sort((a, b) =>
-          (a.state.curator ?? "zzz").localeCompare(b.state.curator ?? "zzz")
-        );
       default:
         return v;
     }
@@ -112,6 +108,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
       sortedVaults.map((v) => ({
         value: v.address,
         label: `${v.name} — ${formatApy(v.state.netApy)}`,
+        icon: v.asset.logoURI,
       })),
     [sortedVaults]
   );
@@ -151,7 +148,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
         {connectedLoanAddress && !vaultsLoading && sortedVaults.length > 1 && (
           <div className="flex items-center gap-1">
             <span className="text-[9px] text-text-tertiary mr-1">Sort:</span>
-            {(["tvl", "apy", "curator"] as SortKey[]).map((key) => (
+            {(["tvl", "apy"] as SortKey[]).map((key) => (
               <button
                 key={key}
                 onClick={() => setSortBy(key)}

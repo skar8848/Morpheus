@@ -94,7 +94,7 @@ export const VALID_CONNECTIONS: Record<string, string[]> = {
   wallet: ["supplyCollateral", "swap"],
   supplyCollateral: ["borrow"],
   borrow: ["swap", "vaultDeposit"],
-  swap: ["vaultDeposit", "wallet"],
+  swap: ["vaultDeposit", "supplyCollateral", "wallet"],
   vaultDeposit: [],
   vaultWithdraw: ["swap", "vaultDeposit"],
   position: ["vaultWithdraw", "supplyCollateral", "swap"],
