@@ -10,7 +10,7 @@ export default function ChainLayout({
     <ChainProvider>
       <div className="min-h-screen bg-bg-primary">
         <Navbar />
-        <main className="mx-auto max-w-5xl px-6 py-8">{children}</main>
+        {children}
       </div>
     </ChainProvider>
   );

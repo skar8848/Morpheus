@@ -28,7 +28,8 @@ export default function Navbar() {
     { href: `/${slug}/earn`, label: "Earn" },
     { href: `/${slug}/borrow`, label: "Borrow" },
     { href: `/${slug}/migrate`, label: "Migrate" },
-    { href: `/${slug}/strategy`, label: "Strategy", badge: "NEW" },
+    { href: `/${slug}/strategy`, label: "Strategy" },
+    { href: `/${slug}/canvas`, label: "Canvas", badge: "NEW" },
   ];
 
   const truncatedAddress = address
