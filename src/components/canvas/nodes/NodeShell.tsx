@@ -9,6 +9,7 @@ interface NodeShellProps {
   children: ReactNode;
   onDelete?: () => void;
   invalid?: boolean;
+  dimmed?: boolean;
 }
 
 export default function NodeShell({
@@ -17,12 +18,15 @@ export default function NodeShell({
   children,
   onDelete,
   invalid,
+  dimmed,
 }: NodeShellProps) {
   const accent = NODE_COLORS[nodeType] ?? "#6b7079";
 
   return (
     <div
-      className="min-w-[240px] max-w-[280px] rounded-xl border bg-bg-card shadow-lg"
+      className={`min-w-[240px] max-w-[280px] rounded-xl border bg-bg-card shadow-lg transition-opacity duration-300 ${
+        dimmed ? "opacity-40" : "opacity-100"
+      }`}
       style={{
         borderColor: invalid ? "var(--error)" : `${accent}33`,
         boxShadow: invalid

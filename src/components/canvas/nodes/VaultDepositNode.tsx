@@ -73,6 +73,20 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
           });
         }
       }
+
+      if (sd.type === "supplyCollateral") {
+        const asset = sd.asset as { address: string; symbol?: string } | null;
+        const amt = parseFloat((sd.amount as string) || "0");
+        if (asset?.address) {
+          loanAddr = asset.address;
+          sources.push({
+            nodeId: sourceNode.id,
+            label: `Supply ${asset.symbol ?? "?"}`,
+            borrowAmount: amt,
+            loanAddress: asset.address,
+          });
+        }
+      }
     }
 
     return { sources, connectedLoanAddress: loanAddr };
@@ -80,6 +94,32 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
 
   const { sources, connectedLoanAddress } = upstreamSources;
   const hasBorrowUpstream = sources.some((s) => s.borrowAmount > 0);
+
+  // For each borrow source, find sibling vault deposits and their allocations
+  const siblingAllocations = useMemo(() => {
+    const result: Record<string, { siblingTotal: number; remaining: number }> = {};
+    for (const src of sources) {
+      if (src.borrowAmount <= 0) continue;
+      // Find all outgoing edges from this borrow source
+      const outEdges = edges.filter((e) => e.source === src.nodeId);
+      let siblingTotal = 0;
+      for (const edge of outEdges) {
+        if (edge.target === id) continue; // skip self
+        const siblingNode = allNodes.find((n) => n.id === edge.target);
+        if (!siblingNode) continue;
+        const sd = siblingNode.data as Record<string, unknown>;
+        if (sd.type === "vaultDeposit") {
+          const sibAllocPcts = (sd.allocPcts as Record<string, number>) ?? {};
+          siblingTotal += sibAllocPcts[src.nodeId] ?? 100;
+        }
+      }
+      result[src.nodeId] = {
+        siblingTotal,
+        remaining: Math.max(0, 100 - siblingTotal),
+      };
+    }
+    return result;
+  }, [sources, edges, allNodes, id]);
 
   // Fetch vaults filtered by the connected loan asset
   const vaultAssetAddresses = useMemo(
@@ -113,18 +153,29 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     [sortedVaults]
   );
 
-  // Per-source allocation percentages
+  // Per-source allocation percentages — capped by what siblings have taken
   const allocPcts = d.allocPcts ?? {};
-  const getSourcePct = (nodeId: string) => allocPcts[nodeId] ?? 100;
+  const getSourcePct = (nodeId: string) => {
+    const raw = allocPcts[nodeId] ?? 100;
+    const sibling = siblingAllocations[nodeId];
+    if (!sibling) return raw;
+    return Math.min(raw, sibling.remaining);
+  };
 
   // Compute per-source deposit amounts + total
   const sourceDeposits = sources
     .filter((s) => s.borrowAmount > 0)
-    .map((s) => ({
-      ...s,
-      pct: getSourcePct(s.nodeId),
-      depositAmount: (s.borrowAmount * getSourcePct(s.nodeId)) / 100,
-    }));
+    .map((s) => {
+      const sibling = siblingAllocations[s.nodeId];
+      const maxPct = sibling ? sibling.remaining : 100;
+      const pct = getSourcePct(s.nodeId);
+      return {
+        ...s,
+        pct,
+        maxPct,
+        depositAmount: (s.borrowAmount * pct) / 100,
+      };
+    });
   const totalDeposit = sourceDeposits.reduce((sum, s) => sum + s.depositAmount, 0);
 
   const truncateAddress = (addr: string) =>
@@ -242,12 +293,14 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
               <div className="nodrag space-y-2">
                 {sourceDeposits.map((src) => {
                   const handlePctChange = (pct: number) => {
-                    const clamped = Math.max(0, Math.min(100, pct));
+                    const clamped = Math.max(0, Math.min(src.maxPct, pct));
                     const newAllocPcts = { ...allocPcts, [src.nodeId]: clamped };
                     const newTotal = sources
                       .filter((s) => s.borrowAmount > 0)
                       .reduce((sum, s) => {
-                        const p = s.nodeId === src.nodeId ? clamped : getSourcePct(s.nodeId);
+                        const sibling = siblingAllocations[s.nodeId];
+                        const max = sibling ? sibling.remaining : 100;
+                        const p = s.nodeId === src.nodeId ? clamped : Math.min(allocPcts[s.nodeId] ?? 100, max);
                         return sum + (s.borrowAmount * p) / 100;
                       }, 0);
                     updateNodeData(id, {
@@ -255,6 +308,8 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
                       amount: newTotal.toFixed(6),
                     });
                   };
+
+                  const overAllocated = src.pct > src.maxPct;
 
                   return (
                     <div key={src.nodeId} className="space-y-1">
@@ -266,7 +321,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
                           <input
                             type="number"
                             min={0}
-                            max={100}
+                            max={src.maxPct}
                             value={src.pct}
                             onChange={(e) => handlePctChange(parseInt(e.target.value) || 0)}
                             className="w-10 rounded bg-bg-secondary px-1 py-0.5 text-right text-xs font-medium text-text-primary outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
@@ -277,7 +332,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
                       <input
                         type="range"
                         min={0}
-                        max={100}
+                        max={src.maxPct}
                         value={src.pct}
                         onChange={(e) => handlePctChange(parseInt(e.target.value))}
                         className="w-full accent-purple-400"
@@ -286,8 +341,10 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
                         <span className="text-[10px] text-text-tertiary">
                           {src.depositAmount.toFixed(4)} {d.vault?.asset.symbol ?? ""}
                         </span>
-                        <span className="text-[10px] text-text-tertiary">
-                          of {src.borrowAmount.toFixed(4)}
+                        <span className={`text-[10px] ${src.maxPct < 100 ? "text-purple-300" : "text-text-tertiary"}`}>
+                          {src.maxPct < 100
+                            ? `${src.maxPct}% avail (${((src.borrowAmount * src.maxPct) / 100).toFixed(4)})`
+                            : `of ${src.borrowAmount.toFixed(4)}`}
                         </span>
                       </div>
                     </div>

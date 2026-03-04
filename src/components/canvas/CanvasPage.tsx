@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useEffect, type DragEvent } from "react";
+import { useCallback, useRef, useEffect, useState, type DragEvent } from "react";
 import {
   ReactFlow,
   Controls,
@@ -13,7 +13,7 @@ import "@xyflow/react/dist/style.css";
 import { nodeTypes } from "./nodes";
 import { edgeTypes } from "./edges";
 import { useCanvasState } from "@/lib/canvas/useCanvasState";
-import { isValidConnection } from "@/lib/canvas/validation";
+import { isValidConnection, getConnectionHint } from "@/lib/canvas/validation";
 import type { CanvasNode } from "@/lib/canvas/types";
 import Sidebar from "./Sidebar";
 import ExecuteButton from "./ExecuteButton";
@@ -35,6 +35,15 @@ export default function CanvasPage() {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const reactFlowInstance = useRef<any>(null);
+
+  // Connection hint state
+  const [connectionHint, setConnectionHint] = useState<{
+    message: string;
+    highlightType: string;
+  } | null>(null);
+  const hintTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // Track last rejected connection for onConnectEnd
+  const lastRejectionRef = useRef<{ source: string; target: string } | null>(null);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const onInit = useCallback((instance: any) => {
@@ -67,12 +76,36 @@ export default function CanvasPage() {
     [addNode]
   );
 
-  // Validate connection before allowing
+  // Validate connection before allowing — also track rejections for hints
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const connectionValidator = useCallback(
-    (connection: any) => isValidConnection(connection, nodes as CanvasNode[]),
+    (connection: any) => {
+      const valid = isValidConnection(connection, nodes as CanvasNode[]);
+      if (!valid && connection.source && connection.target) {
+        lastRejectionRef.current = { source: connection.source, target: connection.target };
+      }
+      return valid;
+    },
     [nodes]
   );
+
+  // Show hint when connection attempt ends on an invalid target
+  const onConnectEnd = useCallback(() => {
+    const rejection = lastRejectionRef.current;
+    lastRejectionRef.current = null;
+    if (!rejection) return;
+
+    const hint = getConnectionHint(
+      { source: rejection.source, target: rejection.target, sourceHandle: null, targetHandle: null },
+      nodes as CanvasNode[]
+    );
+    if (!hint) return;
+
+    // Clear existing timer
+    if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    setConnectionHint(hint);
+    hintTimerRef.current = setTimeout(() => setConnectionHint(null), 3000);
+  }, [nodes]);
 
   // Keyboard handler — Delete + Ctrl+Z
   const onKeyDown = useCallback(
@@ -142,7 +175,21 @@ export default function CanvasPage() {
       onKeyDown={onKeyDown}
       tabIndex={0}
     >
-      <Sidebar onAddPosition={() => {}} />
+      <Sidebar onAddPosition={() => {}} highlightType={connectionHint?.highlightType} />
+
+      {/* Connection hint toast */}
+      {connectionHint && (
+        <div className="pointer-events-none absolute left-1/2 top-6 z-50 -translate-x-1/2 animate-fade-in">
+          <div className="pointer-events-auto flex items-center gap-2 rounded-xl border border-border bg-bg-card/95 px-4 py-2.5 shadow-lg backdrop-blur-sm">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="7" stroke="#f59e0b" strokeWidth="1.5" />
+              <path d="M8 4.5v4" stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" />
+              <circle cx="8" cy="11.5" r="0.75" fill="#f59e0b" />
+            </svg>
+            <span className="text-xs font-medium text-text-primary">{connectionHint.message}</span>
+          </div>
+        </div>
+      )}
 
       <ReactFlow
         nodes={nodes}
@@ -150,6 +197,7 @@ export default function CanvasPage() {
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onConnect={onConnect}
+        onConnectEnd={onConnectEnd}
         onInit={onInit}
         onDragOver={onDragOver}
         onDrop={onDrop}

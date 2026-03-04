@@ -19,26 +19,36 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
   const edges = useEdges();
   const nodes = useNodes();
 
-  // Find the collateral asset + amount from connected SupplyCollateral node
-  const { connectedCollateralAddress, connectedAmount } = useMemo(() => {
-    const incomingEdge = edges.find((e) => e.target === id);
-    if (!incomingEdge) return { connectedCollateralAddress: null, connectedAmount: 0 };
+  // Find ALL collateral inputs — sum amounts from multiple SupplyCollateral nodes
+  const { connectedCollateralAddress, connectedAmount, collateralSources } = useMemo(() => {
+    const incomingEdges = edges.filter((e) => e.target === id);
+    if (incomingEdges.length === 0)
+      return { connectedCollateralAddress: null, connectedAmount: 0, collateralSources: [] };
 
-    const sourceNode = nodes.find((n) => n.id === incomingEdge.source);
-    if (!sourceNode) return { connectedCollateralAddress: null, connectedAmount: 0 };
+    type Source = { nodeId: string; label: string; amount: number };
+    const sources: Source[] = [];
+    let collateralAddr: string | null = null;
 
-    const sd = sourceNode.data as {
-      type?: string;
-      asset?: { address: string } | null;
-      amount?: string;
-    };
-    if (sd.type === "supplyCollateral" && sd.asset) {
-      return {
-        connectedCollateralAddress: sd.asset.address,
-        connectedAmount: parseFloat(sd.amount || "0"),
+    for (const edge of incomingEdges) {
+      const sourceNode = nodes.find((n) => n.id === edge.source);
+      if (!sourceNode) continue;
+      const sd = sourceNode.data as {
+        type?: string;
+        asset?: { address: string; symbol: string } | null;
+        amount?: string;
       };
+      if (sd.type === "supplyCollateral" && sd.asset) {
+        collateralAddr = sd.asset.address;
+        sources.push({
+          nodeId: sourceNode.id,
+          label: `Supply ${sd.asset.symbol}`,
+          amount: parseFloat(sd.amount || "0"),
+        });
+      }
     }
-    return { connectedCollateralAddress: null, connectedAmount: 0 };
+
+    const total = sources.reduce((sum, s) => sum + s.amount, 0);
+    return { connectedCollateralAddress: collateralAddr, connectedAmount: total, collateralSources: sources };
   }, [edges, nodes, id]);
 
   // Fetch real price for the connected collateral asset
@@ -133,7 +143,7 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
     () =>
       markets.map((m) => ({
         value: m.uniqueKey,
-        label: `${m.collateralAsset.symbol}/${m.loanAsset.symbol} — LLTV ${formatLltv(m.lltv)} — ${formatApy(m.state.netBorrowApy)}`,
+        label: `${m.collateralAsset.symbol}/${m.loanAsset.symbol} — LLTV ${formatLltv(m.lltv)} — ${formatApy(Math.abs(m.state.netBorrowApy))}`,
         icon: m.loanAsset.logoURI,
       })),
     [markets]
@@ -215,18 +225,39 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
               <span className="text-xs text-text-primary">
                 {d.market.collateralAsset.symbol}/{d.market.loanAsset.symbol}
               </span>
-              <span className="ml-auto text-[10px] text-success">
-                {formatApy(d.market.state.netBorrowApy)}
+              <span className={`ml-auto text-[10px] ${d.market.state.netBorrowApy <= 0 ? "text-success" : "text-error"}`}>
+                {formatApy(Math.abs(d.market.state.netBorrowApy))}
               </span>
             </div>
 
             {/* Collateral value (auto-filled from supply) */}
-            <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-2 py-1.5">
-              <span className="text-[10px] text-text-tertiary">Collateral</span>
-              <span className="text-xs font-medium text-text-primary">
-                ${depositUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-              </span>
-            </div>
+            {collateralSources.length > 1 && (
+              <div className="space-y-0.5 rounded-lg bg-bg-secondary px-2 py-1.5">
+                <span className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Collateral Sources</span>
+                {collateralSources.map((s) => (
+                  <div key={s.nodeId} className="flex items-center justify-between">
+                    <span className="text-[10px] text-text-tertiary">{s.label}</span>
+                    <span className="text-[10px] text-text-secondary">
+                      ${(s.amount * collateralPrice).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between border-t border-border pt-0.5">
+                  <span className="text-[10px] font-medium text-text-tertiary">Total</span>
+                  <span className="text-[10px] font-medium text-text-primary">
+                    ${depositUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+            )}
+            {collateralSources.length <= 1 && (
+              <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-2 py-1.5">
+                <span className="text-[10px] text-text-tertiary">Collateral</span>
+                <span className="text-xs font-medium text-text-primary">
+                  ${depositUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </span>
+              </div>
+            )}
 
             {/* LTV slider — nodrag prevents node dragging */}
             <div className="nodrag">

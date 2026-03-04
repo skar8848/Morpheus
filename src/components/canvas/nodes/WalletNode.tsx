@@ -1,7 +1,7 @@
 "use client";
 
-import { memo } from "react";
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+import { memo, useMemo } from "react";
+import { Handle, Position, useEdges, type NodeProps } from "@xyflow/react";
 import Image from "next/image";
 import { useAccount } from "wagmi";
 import { useChain } from "@/lib/context/ChainContext";
@@ -11,8 +11,10 @@ import type { SupportedChainId } from "@/lib/web3/chains";
 import type { WalletNodeData } from "@/lib/canvas/types";
 import NodeShell from "./NodeShell";
 
-function WalletNodeComponent({ data }: NodeProps) {
+function WalletNodeComponent({ id, data }: NodeProps) {
   const { address, isConnected } = useAccount();
+  const edges = useEdges();
+  const isUsed = useMemo(() => edges.some((e) => e.source === id), [edges, id]);
   const { slug, chainId } = useChain();
   const assets = COLLATERAL_ASSETS[chainId as SupportedChainId] ?? [];
   const { assetsWithBalances, isLoading } = useTokenBalances(assets);
@@ -26,7 +28,7 @@ function WalletNodeComponent({ data }: NodeProps) {
   );
 
   return (
-    <NodeShell nodeType="wallet" title="Wallet">
+    <NodeShell nodeType="wallet" title="Wallet" dimmed={!isUsed}>
       <div className="space-y-2">
         {/* Address */}
         <div className="flex items-center justify-between">

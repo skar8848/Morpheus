@@ -8,9 +8,10 @@ import { DRAGGABLE_NODE_TYPES, NODE_COLORS } from "@/lib/canvas/types";
 
 interface SidebarProps {
   onAddPosition: (positionId: string) => void;
+  highlightType?: string | null;
 }
 
-export default function Sidebar({ onAddPosition }: SidebarProps) {
+export default function Sidebar({ onAddPosition, highlightType }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const { marketPositions, vaultPositions, loading } = useUserPositions();
 
@@ -67,7 +68,11 @@ export default function Sidebar({ onAddPosition }: SidebarProps) {
                   key={type}
                   draggable
                   onDragStart={(e) => onDragStart(e, type)}
-                  className="flex cursor-grab items-center gap-2 rounded-lg border border-border bg-bg-card px-3 py-2 text-xs text-text-primary transition-colors hover:border-brand/30 hover:bg-bg-secondary active:cursor-grabbing"
+                  className={`flex cursor-grab items-center gap-2 rounded-lg border bg-bg-card px-3 py-2 text-xs text-text-primary transition-colors hover:border-brand/30 hover:bg-bg-secondary active:cursor-grabbing ${
+                    highlightType === type
+                      ? "sidebar-node-pulse border-brand/50"
+                      : "border-border"
+                  }`}
                 >
                   <span
                     className="flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold text-white"

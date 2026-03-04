@@ -92,7 +92,7 @@ export type CanvasNode = Node<CanvasNodeData>;
 
 export const VALID_CONNECTIONS: Record<string, string[]> = {
   wallet: ["supplyCollateral", "swap"],
-  supplyCollateral: ["borrow"],
+  supplyCollateral: ["borrow", "vaultDeposit"],
   borrow: ["swap", "vaultDeposit"],
   swap: ["vaultDeposit", "supplyCollateral", "wallet"],
   vaultDeposit: [],

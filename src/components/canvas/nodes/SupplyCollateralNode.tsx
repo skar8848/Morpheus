@@ -12,6 +12,13 @@ import type { SupplyCollateralNodeData } from "@/lib/canvas/types";
 import NodeShell from "./NodeShell";
 import SearchSelect from "./SearchSelect";
 
+interface UpstreamInput {
+  nodeId: string;
+  label: string;
+  amount: number;
+  type: "wallet" | "swap" | "vaultWithdraw";
+}
+
 function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
   const { updateNodeData, deleteElements } = useReactFlow();
   const { chainId } = useChain();
@@ -20,51 +27,106 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
   const edges = useEdges();
   const allNodes = useNodes();
 
-  // Auto-select asset from upstream swap node's tokenOut
-  const upstreamTokenOut = useMemo(() => {
-    const incomingEdge = edges.find((e) => e.target === id);
-    if (!incomingEdge) return null;
-    const sourceNode = allNodes.find((n) => n.id === incomingEdge.source);
-    if (!sourceNode) return null;
-    const sd = sourceNode.data as Record<string, unknown>;
-    if (sd.type === "swap") {
-      return sd.tokenOut as { address: string; symbol: string; logoURI: string; decimals: number; name: string } | null;
-    }
-    return null;
-  }, [edges, allNodes, id]);
+  // Detect ALL upstream inputs
+  const { upstreamInputs, suggestedAsset } = useMemo(() => {
+    const incomingEdges = edges.filter((e) => e.target === id);
+    type AssetInfo = { address: string; symbol: string; logoURI: string; decimals: number; name: string };
+    const inputs: UpstreamInput[] = [];
+    let suggested: AssetInfo | null = null;
 
-  const prevTokenOutRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!upstreamTokenOut) {
-      prevTokenOutRef.current = null;
-      return;
-    }
-    const addr = upstreamTokenOut.address.toLowerCase();
-    if (addr !== prevTokenOutRef.current) {
-      prevTokenOutRef.current = addr;
-      // Auto-select the matching asset from COLLATERAL_ASSETS, or use the tokenOut directly
-      const match = assets.find((a) => a.address.toLowerCase() === addr);
-      if (match) {
-        updateNodeData(id, { asset: match });
-      } else {
-        updateNodeData(id, { asset: upstreamTokenOut });
+    for (const edge of incomingEdges) {
+      const sourceNode = allNodes.find((n) => n.id === edge.source);
+      if (!sourceNode) continue;
+      const sd = sourceNode.data as Record<string, unknown>;
+
+      if (sd.type === "swap") {
+        const tokenOut = sd.tokenOut as AssetInfo | null;
+        const quoteOut = parseFloat((sd.quoteOut as string) || "0");
+        if (tokenOut) {
+          suggested = tokenOut;
+          inputs.push({
+            nodeId: sourceNode.id,
+            label: `Swap → ${tokenOut.symbol}`,
+            amount: quoteOut,
+            type: "swap",
+          });
+        }
+      } else if (sd.type === "vaultWithdraw") {
+        const position = sd.position as { vault: { asset: AssetInfo; name: string } } | null;
+        const amt = parseFloat((sd.amount as string) || "0");
+        if (position?.vault.asset) {
+          suggested = position.vault.asset;
+          inputs.push({
+            nodeId: sourceNode.id,
+            label: `Withdraw ${position.vault.name}`,
+            amount: amt,
+            type: "vaultWithdraw",
+          });
+        }
+      } else if (sd.type === "wallet") {
+        // Wallet balance computed below via useTokenBalances
+        inputs.push({
+          nodeId: sourceNode.id,
+          label: "Wallet",
+          amount: 0, // filled below
+          type: "wallet",
+        });
       }
     }
-  }, [upstreamTokenOut]);
+
+    return { upstreamInputs: inputs, suggestedAsset: suggested };
+  }, [edges, allNodes, id]);
+
+  // Auto-select asset from upstream
+  const prevSuggestedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!suggestedAsset) {
+      prevSuggestedRef.current = null;
+      return;
+    }
+    const addr = suggestedAsset.address.toLowerCase();
+    if (addr !== prevSuggestedRef.current) {
+      prevSuggestedRef.current = addr;
+      const match = assets.find((a) => a.address.toLowerCase() === addr);
+      updateNodeData(id, { asset: match ?? suggestedAsset });
+    }
+  }, [suggestedAsset]);
 
   // Fetch real prices from Morpho API
   const allAddresses = useMemo(() => assets.map((a) => a.address), [assets]);
   const { prices } = useAssetPrices(allAddresses);
 
-  // Fetch wallet balances
+  // Fetch wallet balance for selected asset
   const selectedAssets = useMemo(() => (d.asset ? [d.asset] : []), [d.asset]);
   const { assetsWithBalances } = useTokenBalances(selectedAssets);
-  const walletBalance = assetsWithBalances[0]?.balance ?? "0";
+  const walletBalance = parseFloat(assetsWithBalances[0]?.balance ?? "0");
+
+  // Fill wallet input amounts + compute total
+  const hasWalletInput = upstreamInputs.some((i) => i.type === "wallet");
+  const inputsWithBalances = upstreamInputs.map((i) =>
+    i.type === "wallet" ? { ...i, amount: walletBalance } : i
+  );
+  // If no upstream edges at all but user has wallet balance, show it
+  const totalFromUpstream = inputsWithBalances.reduce((sum, i) => sum + i.amount, 0);
+  const totalAvailable = upstreamInputs.length === 0 ? walletBalance : totalFromUpstream;
 
   const priceUsd = d.asset
     ? prices[d.asset.address.toLowerCase()] ?? 0
     : 0;
-  const amountUsd = parseFloat(d.amount || "0") * priceUsd;
+  const currentAmount = parseFloat(d.amount || "0");
+  const amountUsd = currentAmount * priceUsd;
+  const exceedsBalance = currentAmount > 0 && (
+    totalAvailable > 0 ? currentAmount > totalAvailable : hasWalletInput
+  );
+
+  // Persist blocked state so downstream edges/nodes can read it
+  const prevExceedsRef = useRef(false);
+  useEffect(() => {
+    if (exceedsBalance !== prevExceedsRef.current) {
+      prevExceedsRef.current = exceedsBalance;
+      updateNodeData(id, { exceedsBalance });
+    }
+  }, [exceedsBalance]);
 
   const assetOptions = useMemo(
     () => assets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
@@ -76,6 +138,7 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
       nodeType="supplyCollateral"
       title="Supply Collateral"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
+      invalid={exceedsBalance}
     >
       <div className="space-y-2">
         {/* Asset selector */}
@@ -92,26 +155,59 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
           />
         </div>
 
-        {/* Amount input with USD inline */}
-        <div>
+        {/* Multi-input sources breakdown */}
+        {d.asset && inputsWithBalances.length > 1 && (
+          <div className="space-y-0.5 rounded-lg bg-bg-secondary px-2 py-1.5">
+            <span className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Sources</span>
+            {inputsWithBalances.map((input) => (
+              <div key={input.nodeId} className="flex items-center justify-between">
+                <span className="text-[10px] text-text-tertiary">{input.label}</span>
+                <span className="text-[10px] text-text-secondary">
+                  {input.amount.toFixed(4)} {d.asset?.symbol}
+                </span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between border-t border-border pt-0.5">
+              <span className="text-[10px] font-medium text-text-tertiary">Total</span>
+              <span className="text-[10px] font-medium text-text-primary">
+                {totalAvailable.toFixed(4)} {d.asset?.symbol}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Wallet balance indicator */}
+        {d.asset && (hasWalletInput || upstreamInputs.length === 0) && (
+          <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-2 py-1">
+            <span className="text-[10px] text-text-tertiary">Wallet</span>
+            <span className="text-[10px] text-text-secondary">
+              {walletBalance.toFixed(4)} {d.asset.symbol}
+            </span>
+          </div>
+        )}
+
+        {/* Amount input with USD inline + slider */}
+        <div className="space-y-1">
           <div className="flex items-center justify-between">
             <label className="text-[10px] text-text-tertiary">Amount</label>
-            {d.asset && walletBalance !== "0" && (
+            {d.asset && totalAvailable > 0 && (
               <button
                 type="button"
                 onClick={() =>
                   updateNodeData(id, {
-                    amount: walletBalance,
-                    amountUsd: parseFloat(walletBalance) * priceUsd,
+                    amount: totalAvailable.toFixed(6),
+                    amountUsd: totalAvailable * priceUsd,
                   })
                 }
                 className="text-[9px] text-text-tertiary hover:text-brand transition-colors"
               >
-                Bal: {walletBalance} {d.asset.symbol}
+                MAX
               </button>
             )}
           </div>
-          <div className="nodrag relative mt-0.5 flex items-center rounded-lg border border-border bg-bg-secondary">
+          <div className={`nodrag relative flex items-center rounded-lg border bg-bg-secondary ${
+            exceedsBalance ? "border-error" : "border-border"
+          }`}>
             <input
               type="number"
               placeholder="0.00"
@@ -130,6 +226,38 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
               </span>
             )}
           </div>
+          {exceedsBalance && (
+            <p className="text-[10px] text-error">
+              Exceeds available balance ({totalAvailable.toFixed(4)} {d.asset?.symbol ?? ""})
+            </p>
+          )}
+          {d.asset && totalAvailable > 0 && (
+            <div className="nodrag">
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={Math.min(100, totalAvailable > 0 ? Math.round((currentAmount / totalAvailable) * 100) : 0)}
+                onChange={(e) => {
+                  const p = parseInt(e.target.value);
+                  const amt = (totalAvailable * p) / 100;
+                  updateNodeData(id, {
+                    amount: amt.toFixed(6),
+                    amountUsd: amt * priceUsd,
+                  });
+                }}
+                className="w-full accent-brand"
+              />
+              <div className="flex items-center justify-between rounded-lg bg-bg-primary px-2 py-1">
+                <span className="text-[10px] text-text-tertiary">
+                  {currentAmount.toFixed(4)} {d.asset.symbol}
+                </span>
+                <span className="text-[10px] text-text-tertiary">
+                  of {totalAvailable.toFixed(4)}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Selected asset preview */}
