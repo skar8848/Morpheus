@@ -13,12 +13,10 @@ import {
 } from "@xyflow/react";
 import { useAccount } from "wagmi";
 import { useChain } from "@/lib/context/ChainContext";
-import { useUserPositions } from "@/lib/hooks/useUserPositions";
 import { buildInitialLayout } from "./layout";
 import { isValidConnection } from "./validation";
 import type { CanvasNode, CanvasNodeData } from "./types";
 
-const STORAGE_KEY = "morpho-canvas-graph";
 const MAX_HISTORY = 50;
 
 interface SavedGraph {
@@ -26,30 +24,9 @@ interface SavedGraph {
   edges: Edge[];
 }
 
-function loadSavedGraph(): SavedGraph | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-function saveGraph(nodes: CanvasNode[], edges: Edge[]) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes, edges }));
-  } catch {
-    // localStorage full or unavailable
-  }
-}
-
 export function useCanvasState() {
   const { address } = useAccount();
   const { slug, chainId } = useChain();
-  const { marketPositions, vaultPositions } = useUserPositions();
 
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -78,34 +55,20 @@ export function useCanvasState() {
     setEdges(prev.edges);
   }, [setNodes, setEdges]);
 
-  // Initialize from localStorage or build from positions
+  // Initialize with just the wallet node — fresh start every time
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
-
-    const saved = loadSavedGraph();
-    if (saved && saved.nodes.length > 0) {
-      setNodes(saved.nodes);
-      setEdges(saved.edges);
-      return;
-    }
 
     const initial = buildInitialLayout(
       address,
       slug,
       chainId,
-      marketPositions,
-      vaultPositions
+      [],
+      []
     );
     setNodes(initial);
-  }, [address, slug, chainId, marketPositions, vaultPositions, setNodes, setEdges]);
-
-  // Persist to localStorage on change
-  useEffect(() => {
-    if (nodes.length > 0) {
-      saveGraph(nodes, edges);
-    }
-  }, [nodes, edges]);
+  }, [address, slug, chainId, setNodes]);
 
   // Connection handler with validation
   const onConnect: OnConnect = useCallback(
@@ -215,20 +178,13 @@ export function useCanvasState() {
     [setNodes]
   );
 
-  // Clear saved graph
+  // Clear canvas — reset to just the wallet node
   const clearGraph = useCallback(() => {
     pushHistory();
-    localStorage.removeItem(STORAGE_KEY);
-    const initial = buildInitialLayout(
-      address,
-      slug,
-      chainId,
-      marketPositions,
-      vaultPositions
-    );
+    const initial = buildInitialLayout(address, slug, chainId, [], []);
     setNodes(initial);
     setEdges([]);
-  }, [address, slug, chainId, marketPositions, vaultPositions, setNodes, setEdges, pushHistory]);
+  }, [address, slug, chainId, setNodes, setEdges, pushHistory]);
 
   return {
     nodes,
