@@ -126,7 +126,7 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
 
   // SearchSelect options
   const loanOptions = useMemo(
-    () => loanAssets.map((a) => ({ value: a.address, label: a.symbol })),
+    () => loanAssets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
     [loanAssets]
   );
   const marketOptions = useMemo(
@@ -134,6 +134,7 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
       markets.map((m) => ({
         value: m.uniqueKey,
         label: `${m.collateralAsset.symbol}/${m.loanAsset.symbol} — LLTV ${formatLltv(m.lltv)} — ${formatApy(m.state.netBorrowApy)}`,
+        icon: m.loanAsset.logoURI,
       })),
     [markets]
   );

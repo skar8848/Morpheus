@@ -39,9 +39,25 @@ function WalletNodeComponent({ data }: NodeProps) {
         {/* Chain */}
         <div className="flex items-center justify-between">
           <span className="text-xs text-text-tertiary">Chain</span>
-          <span className="text-xs text-text-secondary capitalize">
-            {slug}
-          </span>
+          <div className="flex items-center gap-1.5">
+            {chainId === 1 ? (
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <circle cx="8" cy="8" r="7" fill="#627EEA" />
+                <path d="M8 2v4.5L11.5 8 8 2z" fill="white" fillOpacity="0.6" />
+                <path d="M8 2L4.5 8 8 6.5V2z" fill="white" />
+                <path d="M8 10.5v3.5l3.5-5L8 10.5z" fill="white" fillOpacity="0.6" />
+                <path d="M8 14v-3.5L4.5 9 8 14z" fill="white" />
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <circle cx="8" cy="8" r="7" fill="#0052FF" />
+                <text x="8" y="11" textAnchor="middle" fill="white" fontSize="8" fontWeight="bold">B</text>
+              </svg>
+            )}
+            <span className="text-xs text-text-secondary capitalize">
+              {slug}
+            </span>
+          </div>
         </div>
 
         {/* Balances */}

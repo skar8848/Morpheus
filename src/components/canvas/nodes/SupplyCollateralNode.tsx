@@ -33,7 +33,7 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
   const amountUsd = parseFloat(d.amount || "0") * priceUsd;
 
   const assetOptions = useMemo(
-    () => assets.map((a) => ({ value: a.address, label: a.symbol })),
+    () => assets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
     [assets]
   );
 
