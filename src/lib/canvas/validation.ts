@@ -24,6 +24,57 @@ export function isValidConnection(
 }
 
 /**
+ * Get a hint message for invalid connection attempts.
+ * Returns null if no specific hint applies.
+ */
+export function getConnectionHint(
+  connection: Connection,
+  nodes: CanvasNode[]
+): { message: string; highlightType: string } | null {
+  const sourceNode = nodes.find((n) => n.id === connection.source);
+  const targetNode = nodes.find((n) => n.id === connection.target);
+
+  if (!sourceNode || !targetNode) return null;
+
+  const sourceType = (sourceNode.data as { type: string }).type;
+  const targetType = (targetNode.data as { type: string }).type;
+
+  // Swap → Borrow: need supply collateral in between
+  if (sourceType === "swap" && targetType === "borrow") {
+    return {
+      message: "You need to supply collateral first",
+      highlightType: "supplyCollateral",
+    };
+  }
+
+  // Wallet → Borrow: need supply collateral in between
+  if (sourceType === "wallet" && targetType === "borrow") {
+    return {
+      message: "You need to supply collateral first",
+      highlightType: "supplyCollateral",
+    };
+  }
+
+  // Borrow → Borrow: not allowed
+  if (sourceType === "borrow" && targetType === "borrow") {
+    return {
+      message: "Connect borrow output to a swap or vault deposit",
+      highlightType: "swap",
+    };
+  }
+
+  // Wallet → VaultDeposit: need supply collateral first
+  if (sourceType === "wallet" && targetType === "vaultDeposit") {
+    return {
+      message: "Supply collateral first, then borrow to deposit into a vault",
+      highlightType: "supplyCollateral",
+    };
+  }
+
+  return null;
+}
+
+/**
  * Validate entire graph — returns list of error messages (empty = valid).
  */
 export function validateGraph(
