@@ -1,7 +1,7 @@
 "use client";
 
-import { memo, useMemo } from "react";
-import { Handle, Position, useReactFlow, type NodeProps } from "@xyflow/react";
+import { memo, useEffect, useMemo, useRef } from "react";
+import { Handle, Position, useReactFlow, useEdges, useNodes, type NodeProps } from "@xyflow/react";
 import Image from "next/image";
 import { useChain } from "@/lib/context/ChainContext";
 import { COLLATERAL_ASSETS } from "@/lib/constants/assets";
@@ -17,6 +17,40 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
   const { chainId } = useChain();
   const assets = COLLATERAL_ASSETS[chainId as SupportedChainId] ?? [];
   const d = data as unknown as SupplyCollateralNodeData;
+  const edges = useEdges();
+  const allNodes = useNodes();
+
+  // Auto-select asset from upstream swap node's tokenOut
+  const upstreamTokenOut = useMemo(() => {
+    const incomingEdge = edges.find((e) => e.target === id);
+    if (!incomingEdge) return null;
+    const sourceNode = allNodes.find((n) => n.id === incomingEdge.source);
+    if (!sourceNode) return null;
+    const sd = sourceNode.data as Record<string, unknown>;
+    if (sd.type === "swap") {
+      return sd.tokenOut as { address: string; symbol: string; logoURI: string; decimals: number; name: string } | null;
+    }
+    return null;
+  }, [edges, allNodes, id]);
+
+  const prevTokenOutRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!upstreamTokenOut) {
+      prevTokenOutRef.current = null;
+      return;
+    }
+    const addr = upstreamTokenOut.address.toLowerCase();
+    if (addr !== prevTokenOutRef.current) {
+      prevTokenOutRef.current = addr;
+      // Auto-select the matching asset from COLLATERAL_ASSETS, or use the tokenOut directly
+      const match = assets.find((a) => a.address.toLowerCase() === addr);
+      if (match) {
+        updateNodeData(id, { asset: match });
+      } else {
+        updateNodeData(id, { asset: upstreamTokenOut });
+      }
+    }
+  }, [upstreamTokenOut]);
 
   // Fetch real prices from Morpho API
   const allAddresses = useMemo(() => assets.map((a) => a.address), [assets]);

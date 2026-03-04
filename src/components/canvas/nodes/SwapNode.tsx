@@ -20,7 +20,7 @@ function SwapNodeComponent({ id, data }: NodeProps) {
   const isMainnet = chainId === 1;
 
   const assetOptions = useMemo(
-    () => assets.map((a) => ({ value: a.address, label: a.symbol })),
+    () => assets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
     [assets]
   );
 
