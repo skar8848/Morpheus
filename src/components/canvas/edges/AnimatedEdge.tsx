@@ -11,7 +11,7 @@ import {
   type EdgeProps,
 } from "@xyflow/react";
 
-/** Walk upstream from a node and return true if it or any ancestor has exceedsBalance */
+/** Walk upstream from a node and return true if it or any ancestor has exceedsBalance or incomplete */
 function isUpstreamBlocked(
   nodeId: string,
   nodesMap: Map<string, Record<string, unknown>>,
@@ -21,7 +21,7 @@ function isUpstreamBlocked(
   if (visited.has(nodeId)) return false;
   visited.add(nodeId);
   const data = nodesMap.get(nodeId);
-  if (data?.exceedsBalance) return true;
+  if (data?.exceedsBalance || data?.incomplete) return true;
   const sources = edgesMap.get(nodeId) ?? [];
   return sources.some((src) => isUpstreamBlocked(src, nodesMap, edgesMap, visited));
 }
@@ -29,6 +29,7 @@ function isUpstreamBlocked(
 function AnimatedEdgeComponent({
   id,
   source,
+  target,
   sourceX,
   sourceY,
   targetX,
@@ -54,7 +55,9 @@ function AnimatedEdgeComponent({
     targetPosition,
   });
 
-  // Check if this edge should be grayed (source or any ancestor is blocked)
+  // Check if this edge should be grayed:
+  // - source or any ancestor has exceedsBalance/incomplete
+  // - OR target node itself is incomplete (missing piece)
   const blocked = (() => {
     const nodesMap = new Map<string, Record<string, unknown>>();
     for (const n of allNodes) nodesMap.set(n.id, n.data as Record<string, unknown>);
@@ -64,6 +67,9 @@ function AnimatedEdgeComponent({
       arr.push(e.source);
       edgesMap.set(e.target, arr);
     }
+    // Check target node directly for incomplete
+    const targetData = nodesMap.get(target);
+    if (targetData?.incomplete) return true;
     return isUpstreamBlocked(source, nodesMap, edgesMap);
   })();
 

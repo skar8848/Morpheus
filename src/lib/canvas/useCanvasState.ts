@@ -15,7 +15,7 @@ import { useAccount } from "wagmi";
 import { useChain } from "@/lib/context/ChainContext";
 import { buildInitialLayout } from "./layout";
 import { isValidConnection } from "./validation";
-import type { CanvasNode, CanvasNodeData } from "./types";
+import { VALID_CONNECTIONS, type CanvasNode, type CanvasNodeData } from "./types";
 
 const MAX_HISTORY = 50;
 
@@ -148,20 +148,52 @@ export function useCanvasState() {
 
       pushHistory();
       setNodes((nds) => [...nds, newNode]);
+      return id;
     },
     [chainId, setNodes, pushHistory]
   );
 
-  // Delete a node and its edges
+  // Delete a node — reconnect upstream→downstream if valid
   const deleteNode = useCallback(
     (nodeId: string) => {
       pushHistory();
+
+      // Find incoming and outgoing edges
+      const incoming = edges.filter((e) => e.target === nodeId);
+      const outgoing = edges.filter((e) => e.source === nodeId);
+
+      // Build bridge edges for each upstream→downstream pair if valid
+      const bridgeEdges: Edge[] = [];
+      const currentNodes = nodes as CanvasNode[];
+
+      for (const inEdge of incoming) {
+        for (const outEdge of outgoing) {
+          const sourceNode = currentNodes.find((n) => n.id === inEdge.source);
+          const targetNode = currentNodes.find((n) => n.id === outEdge.target);
+          if (!sourceNode || !targetNode) continue;
+
+          const sourceType = (sourceNode.data as { type: string }).type;
+          const targetType = (targetNode.data as { type: string }).type;
+          const allowed = VALID_CONNECTIONS[sourceType];
+          if (allowed?.includes(targetType)) {
+            bridgeEdges.push({
+              id: `${inEdge.source}-${outEdge.target}`,
+              source: inEdge.source,
+              target: outEdge.target,
+              type: "animatedEdge",
+              animated: true,
+            });
+          }
+        }
+      }
+
       setNodes((nds) => nds.filter((n) => n.id !== nodeId));
-      setEdges((eds) =>
-        eds.filter((e) => e.source !== nodeId && e.target !== nodeId)
-      );
+      setEdges((eds) => [
+        ...eds.filter((e) => e.source !== nodeId && e.target !== nodeId),
+        ...bridgeEdges,
+      ]);
     },
-    [setNodes, setEdges, pushHistory]
+    [setNodes, setEdges, edges, nodes, pushHistory]
   );
 
   // Update data for a specific node

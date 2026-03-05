@@ -14,7 +14,7 @@ import { nodeTypes } from "./nodes";
 import { edgeTypes } from "./edges";
 import { useCanvasState } from "@/lib/canvas/useCanvasState";
 import { isValidConnection, getConnectionHint } from "@/lib/canvas/validation";
-import type { CanvasNode } from "@/lib/canvas/types";
+import { VALID_CONNECTIONS, type CanvasNode } from "@/lib/canvas/types";
 import Sidebar from "./Sidebar";
 import ExecuteButton from "./ExecuteButton";
 
@@ -30,6 +30,8 @@ export default function CanvasPage() {
     clearGraph,
     undo,
     pushHistory,
+    setEdges,
+    setNodes,
   } = useCanvasState();
 
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
@@ -56,6 +58,46 @@ export default function CanvasPage() {
     event.dataTransfer.dropEffect = "move";
   }, []);
 
+  // Collect all downstream node ids from a starting node
+  const getDownstream = useCallback(
+    (startId: string, edgeList: typeof edges) => {
+      const downstream = new Set<string>();
+      const queue = [startId];
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        for (const e of edgeList) {
+          if (e.source === current && !downstream.has(e.target)) {
+            downstream.add(e.target);
+            queue.push(e.target);
+          }
+        }
+      }
+      return downstream;
+    },
+    []
+  );
+
+  const GAP = 5; // px gap between nodes
+  const isDragging = useRef(false);
+
+  /** Get real node bounding box from DOM */
+  const getNodeRect = useCallback((nodeId: string, pos: { x: number; y: number }) => {
+    const el = document.querySelector(`[data-id="${nodeId}"]`) as HTMLElement | null;
+    const w = el?.offsetWidth ?? 280;
+    const h = el?.offsetHeight ?? 200;
+    return { x: pos.x, y: pos.y, w, h };
+  }, []);
+
+  /** Check if two rects overlap (with gap) */
+  const rectsOverlap = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) => {
+    return (
+      a.x < b.x + b.w + GAP &&
+      a.x + a.w + GAP > b.x &&
+      a.y < b.y + b.h + GAP &&
+      a.y + a.h + GAP > b.y
+    );
+  };
+
   const onDrop = useCallback(
     (event: DragEvent) => {
       event.preventDefault();
@@ -71,9 +113,67 @@ export default function CanvasPage() {
 
       if (type.startsWith("position:")) return;
 
-      addNode(type, position);
+      // Check if dropping near an edge — insert in between
+      const THRESHOLD = 60;
+      let insertedOnEdge = false;
+
+      for (const edge of edges) {
+        const sourceNode = nodes.find((n) => n.id === edge.source);
+        const targetNode = nodes.find((n) => n.id === edge.target);
+        if (!sourceNode || !targetNode) continue;
+
+        const midX = (sourceNode.position.x + targetNode.position.x) / 2 + 120;
+        const midY = (sourceNode.position.y + targetNode.position.y) / 2 + 40;
+        const dist = Math.sqrt((position.x - midX) ** 2 + (position.y - midY) ** 2);
+
+        if (dist > THRESHOLD) continue;
+
+        const sourceType = (sourceNode.data as { type: string }).type;
+        const targetType = (targetNode.data as { type: string }).type;
+        const sourceAllowed = VALID_CONNECTIONS[sourceType]?.includes(type) ?? false;
+        const newAllowed = VALID_CONNECTIONS[type]?.includes(targetType) ?? false;
+
+        if (!sourceAllowed || !newAllowed) continue;
+
+        // Place new node between source and target
+        const sourceRect = getNodeRect(sourceNode.id, sourceNode.position);
+        const insertX = sourceNode.position.x + sourceRect.w + GAP;
+        const insertY = (sourceNode.position.y + targetNode.position.y) / 2;
+
+        const newId = addNode(type, { x: insertX, y: insertY });
+        if (!newId) break;
+
+        // Push target + all downstream nodes to the right
+        const newEdges = [
+          ...edges.filter((e) => e.id !== edge.id),
+          { id: `${edge.source}-${newId}`, source: edge.source, target: newId, type: "animatedEdge", animated: true },
+          { id: `${newId}-${edge.target}`, source: newId, target: edge.target, type: "animatedEdge", animated: true },
+        ];
+
+        const downstream = getDownstream(edge.target, newEdges);
+        downstream.add(edge.target);
+
+        // Shift by actual new node width (estimate 280 + gap since node not in DOM yet)
+        const shiftX = 280 + GAP;
+
+        setNodes((nds) =>
+          nds.map((n) =>
+            downstream.has(n.id)
+              ? { ...n, position: { ...n.position, x: n.position.x + shiftX } }
+              : n
+          )
+        );
+
+        setEdges(newEdges);
+        insertedOnEdge = true;
+        break;
+      }
+
+      if (!insertedOnEdge) {
+        addNode(type, position);
+      }
     },
-    [addNode]
+    [addNode, edges, nodes, setEdges, setNodes, getDownstream, getNodeRect]
   );
 
   // Validate connection before allowing — also track rejections for hints
@@ -149,6 +249,85 @@ export default function CanvasPage() {
     return () => window.removeEventListener("keydown", handler);
   }, [undo]);
 
+  // Snap back if dropped on another node
+  const dragStartPos = useRef<{ x: number; y: number } | null>(null);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const onNodeDragStart = useCallback((_event: any, node: any) => {
+    isDragging.current = true;
+    dragStartPos.current = { ...node.position };
+  }, []);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const onNodeDragStop = useCallback((_event: any, draggedNode: any) => {
+    isDragging.current = false;
+    if (!dragStartPos.current) return;
+    const startPos = dragStartPos.current;
+    dragStartPos.current = null;
+
+    const draggedRect = getNodeRect(draggedNode.id, draggedNode.position);
+    const overlaps = nodes.some((n) => {
+      if (n.id === draggedNode.id) return false;
+      const otherRect = getNodeRect(n.id, n.position);
+      return rectsOverlap(draggedRect, otherRect);
+    });
+
+    if (overlaps) {
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === draggedNode.id
+            ? { ...n, position: startPos }
+            : n
+        )
+      );
+    }
+  }, [nodes, setNodes, getNodeRect]);
+
+  // Watch for node resizes — push overlapping neighbors apart
+  const resizeDebounce = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => {
+    const container = reactFlowWrapper.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver(() => {
+      if (isDragging.current) return;
+      if (resizeDebounce.current) clearTimeout(resizeDebounce.current);
+      resizeDebounce.current = setTimeout(() => {
+        if (isDragging.current) return;
+        setNodes((nds) => {
+          const rects = nds.map((n) => ({ id: n.id, ...getNodeRect(n.id, n.position) }));
+          let changed = false;
+          const updated = nds.map((n) => ({ ...n, position: { ...n.position } }));
+
+          for (let i = 0; i < rects.length; i++) {
+            for (let j = i + 1; j < rects.length; j++) {
+              const a = rects[i];
+              const b = rects[j];
+              if (rectsOverlap(a, b)) {
+                // Push the one further right even more right
+                const pushIdx = a.x <= b.x ? j : i;
+                const stayIdx = a.x <= b.x ? i : j;
+                const stay = rects[stayIdx];
+                const push = rects[pushIdx];
+                const newX = stay.x + stay.w + GAP;
+                updated[pushIdx].position.x = newX;
+                rects[pushIdx].x = newX;
+                changed = true;
+              }
+            }
+          }
+          return changed ? updated : nds;
+        });
+      }, 200);
+    });
+
+    // Observe all node elements
+    const nodeEls = container.querySelectorAll(".react-flow__node");
+    nodeEls.forEach((el) => observer.observe(el));
+
+    return () => observer.disconnect();
+  });
+
   // Wrap onNodesChange to snapshot before deletions from React Flow (X button)
   const handleNodesChange: typeof onNodesChange = useCallback(
     (changes) => {
@@ -198,6 +377,8 @@ export default function CanvasPage() {
         onEdgesChange={handleEdgesChange}
         onConnect={onConnect}
         onConnectEnd={onConnectEnd}
+        onNodeDragStart={onNodeDragStart}
+        onNodeDragStop={onNodeDragStop}
         onInit={onInit}
         onDragOver={onDragOver}
         onDrop={onDrop}

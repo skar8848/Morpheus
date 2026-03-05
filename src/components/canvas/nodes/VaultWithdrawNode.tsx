@@ -172,11 +172,6 @@ function VaultWithdrawNodeComponent({ id, data }: NodeProps) {
       </div>
 
       <Handle
-        type="target"
-        position={Position.Left}
-        className="!h-3 !w-3 !rounded-full !border-2 !border-orange-400 !bg-bg-card"
-      />
-      <Handle
         type="source"
         position={Position.Right}
         className="!h-3 !w-3 !rounded-full !border-2 !border-orange-400 !bg-bg-card"

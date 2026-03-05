@@ -74,6 +74,20 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
         }
       }
 
+      if (sd.type === "vaultWithdraw") {
+        const position = sd.position as { vault: { asset: { address: string; symbol?: string }; name: string } } | null;
+        const amt = parseFloat((sd.amount as string) || "0");
+        if (position?.vault.asset?.address) {
+          loanAddr = position.vault.asset.address;
+          sources.push({
+            nodeId: sourceNode.id,
+            label: `Withdraw ${position.vault.name}`,
+            borrowAmount: amt,
+            loanAddress: position.vault.asset.address,
+          });
+        }
+      }
+
       if (sd.type === "supplyCollateral") {
         const asset = sd.asset as { address: string; symbol?: string } | null;
         const amt = parseFloat((sd.amount as string) || "0");

@@ -119,14 +119,30 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
     totalAvailable > 0 ? currentAmount > totalAvailable : hasWalletInput
   );
 
-  // Persist blocked state so downstream edges/nodes can read it
+  // Check if upstream asset has no collateral markets on this chain
+  const upstreamNotSupported = useMemo(() => {
+    if (!suggestedAsset) return null;
+    const match = assets.find((a) => a.address.toLowerCase() === suggestedAsset.address.toLowerCase());
+    if (match) return null;
+    return suggestedAsset;
+  }, [suggestedAsset, assets]);
+
+  // Persist states for edge rendering
   const prevExceedsRef = useRef(false);
+  const prevIncompleteRef = useRef(false);
   useEffect(() => {
     if (exceedsBalance !== prevExceedsRef.current) {
       prevExceedsRef.current = exceedsBalance;
       updateNodeData(id, { exceedsBalance });
     }
   }, [exceedsBalance]);
+  useEffect(() => {
+    const incomplete = !!upstreamNotSupported;
+    if (incomplete !== prevIncompleteRef.current) {
+      prevIncompleteRef.current = incomplete;
+      updateNodeData(id, { incomplete });
+    }
+  }, [upstreamNotSupported]);
 
   const assetOptions = useMemo(
     () => assets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
@@ -141,6 +157,13 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
       invalid={exceedsBalance}
     >
       <div className="space-y-2">
+        {/* Warning: upstream asset not supported as collateral */}
+        {upstreamNotSupported && (
+          <div className="rounded-lg border border-yellow-400/20 bg-yellow-400/5 px-2 py-1.5 text-[10px] text-yellow-400">
+            {upstreamNotSupported.symbol} has no collateral markets on this chain
+          </div>
+        )}
+
         {/* Asset selector */}
         <div>
           <label className="text-[10px] text-text-tertiary">Asset</label>
