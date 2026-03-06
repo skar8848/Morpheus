@@ -7,8 +7,6 @@ import {
   MiniMap,
   Background,
   BackgroundVariant,
-  getNodesBounds,
-  getViewportForBounds,
 } from "@xyflow/react";
 import { toPng } from "html-to-image";
 import "@xyflow/react/dist/style.css";
@@ -435,61 +433,54 @@ export default function CanvasPage() {
             const viewport = document.querySelector(".react-flow__viewport") as HTMLElement;
             if (!viewport || nodes.length === 0) return;
 
-            const nodesBounds = getNodesBounds(nodes);
-            const padding = 80;
-            const width = nodesBounds.width + padding * 2;
-            const height = nodesBounds.height + padding * 2;
-            const transform = getViewportForBounds(nodesBounds, width, height, 0.5, 2, padding);
+            // Compute tight bounding box from real DOM node dimensions
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const n of nodes) {
+              const el = document.querySelector(`[data-id="${n.id}"]`) as HTMLElement | null;
+              const w = el?.offsetWidth ?? 280;
+              const h = el?.offsetHeight ?? 200;
+              minX = Math.min(minX, n.position.x);
+              minY = Math.min(minY, n.position.y);
+              maxX = Math.max(maxX, n.position.x + w);
+              maxY = Math.max(maxY, n.position.y + h);
+            }
 
-            toPng(viewport, {
-              backgroundColor: "#15181a",
-              width,
-              height,
-              pixelRatio: 3,
-              skipFonts: true,
-              imagePlaceholder: "",
-              filter: (node) => {
-                // Skip minimap and controls from the export
-                if (node?.classList?.contains("react-flow__minimap")) return false;
-                if (node?.classList?.contains("react-flow__controls")) return false;
-                return true;
-              },
-              style: {
-                width: `${width}px`,
-                height: `${height}px`,
-                transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.zoom})`,
-              },
-            }).then((dataUrl) => {
-              const a = document.createElement("a");
-              a.download = "morpheus-strategy.png";
-              a.href = dataUrl;
-              a.click();
-            }).catch(() => {
-              // Fallback: try without images
+            const padding = 50;
+            const contentW = maxX - minX + padding * 2;
+            const contentH = maxY - minY + padding * 2;
+            // Render at 1:1 scale (zoom=1) for sharp output
+            const tx = -minX + padding;
+            const ty = -minY + padding;
+
+            const doExport = (skipImages: boolean) =>
               toPng(viewport, {
                 backgroundColor: "#15181a",
-                width,
-                height,
-                pixelRatio: 2,
+                width: contentW,
+                height: contentH,
+                pixelRatio: 3,
                 skipFonts: true,
+                imagePlaceholder: "",
                 filter: (node) => {
                   if (node?.classList?.contains("react-flow__minimap")) return false;
                   if (node?.classList?.contains("react-flow__controls")) return false;
-                  if (node instanceof HTMLImageElement) return false;
+                  if (skipImages && node instanceof HTMLImageElement) return false;
                   return true;
                 },
                 style: {
-                  width: `${width}px`,
-                  height: `${height}px`,
-                  transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.zoom})`,
+                  width: `${contentW}px`,
+                  height: `${contentH}px`,
+                  transform: `translate(${tx}px, ${ty}px) scale(1)`,
                 },
-              }).then((dataUrl) => {
+              });
+
+            doExport(false)
+              .catch(() => doExport(true))
+              .then((dataUrl) => {
                 const a = document.createElement("a");
                 a.download = "morpheus-strategy.png";
                 a.href = dataUrl;
                 a.click();
               });
-            });
           }}
           className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-card/90 px-3 py-1.5 text-[10px] text-text-tertiary transition-colors hover:text-brand"
         >
