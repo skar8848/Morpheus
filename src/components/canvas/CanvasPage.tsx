@@ -461,7 +461,7 @@ export default function CanvasPage() {
               },
             }).then((dataUrl) => {
               const a = document.createElement("a");
-              a.download = "morpho-strategy.png";
+              a.download = "morpheus-strategy.png";
               a.href = dataUrl;
               a.click();
             }).catch(() => {
@@ -485,7 +485,7 @@ export default function CanvasPage() {
                 },
               }).then((dataUrl) => {
                 const a = document.createElement("a");
-                a.download = "morpho-strategy.png";
+                a.download = "morpheus-strategy.png";
                 a.href = dataUrl;
                 a.click();
               });

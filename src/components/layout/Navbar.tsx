@@ -49,7 +49,7 @@ export default function Navbar() {
             strokeLinejoin="round"
           />
         </svg>
-        <span className="text-lg font-semibold text-text-primary">Morpho</span>
+        <span className="text-lg font-semibold text-text-primary">Morpheus</span>
       </div>
 
       {/* Tabs */}

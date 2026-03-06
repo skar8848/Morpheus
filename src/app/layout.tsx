@@ -9,8 +9,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Morpho — Strategy Visualizer",
-  description: "Compose yield strategies on Morpho",
+  title: "Morpheus — DeFi Strategy Composer",
+  description: "Visualize, compose and copy Morpho strategies",
 };
 
 export default function RootLayout({
