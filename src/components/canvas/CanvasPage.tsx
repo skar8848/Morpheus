@@ -446,6 +446,14 @@ export default function CanvasPage() {
               width,
               height,
               pixelRatio: 3,
+              skipFonts: true,
+              imagePlaceholder: "",
+              filter: (node) => {
+                // Skip minimap and controls from the export
+                if (node?.classList?.contains("react-flow__minimap")) return false;
+                if (node?.classList?.contains("react-flow__controls")) return false;
+                return true;
+              },
               style: {
                 width: `${width}px`,
                 height: `${height}px`,
@@ -456,6 +464,31 @@ export default function CanvasPage() {
               a.download = "morpho-strategy.png";
               a.href = dataUrl;
               a.click();
+            }).catch(() => {
+              // Fallback: try without images
+              toPng(viewport, {
+                backgroundColor: "#15181a",
+                width,
+                height,
+                pixelRatio: 2,
+                skipFonts: true,
+                filter: (node) => {
+                  if (node?.classList?.contains("react-flow__minimap")) return false;
+                  if (node?.classList?.contains("react-flow__controls")) return false;
+                  if (node instanceof HTMLImageElement) return false;
+                  return true;
+                },
+                style: {
+                  width: `${width}px`,
+                  height: `${height}px`,
+                  transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.zoom})`,
+                },
+              }).then((dataUrl) => {
+                const a = document.createElement("a");
+                a.download = "morpho-strategy.png";
+                a.href = dataUrl;
+                a.click();
+              });
             });
           }}
           className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-card/90 px-3 py-1.5 text-[10px] text-text-tertiary transition-colors hover:text-brand"
