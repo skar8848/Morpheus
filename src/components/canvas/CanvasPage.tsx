@@ -7,7 +7,10 @@ import {
   MiniMap,
   Background,
   BackgroundVariant,
+  getNodesBounds,
+  getViewportForBounds,
 } from "@xyflow/react";
+import { toPng } from "html-to-image";
 import "@xyflow/react/dist/style.css";
 
 import { nodeTypes } from "./nodes";
@@ -425,13 +428,52 @@ export default function CanvasPage() {
 
       <ExecuteButton nodes={nodes as CanvasNode[]} edges={edges} />
 
-      {/* Clear button */}
-      <button
-        onClick={clearGraph}
-        className="absolute right-4 top-4 z-30 rounded-lg border border-border bg-bg-card/90 px-3 py-1.5 text-[10px] text-text-tertiary transition-colors hover:text-error"
-      >
-        Clear Canvas
-      </button>
+      {/* Top-right buttons */}
+      <div className="absolute right-4 top-4 z-30 flex items-center gap-2">
+        <button
+          onClick={() => {
+            const viewport = document.querySelector(".react-flow__viewport") as HTMLElement;
+            if (!viewport || nodes.length === 0) return;
+
+            const nodesBounds = getNodesBounds(nodes);
+            const padding = 80;
+            const width = nodesBounds.width + padding * 2;
+            const height = nodesBounds.height + padding * 2;
+            const transform = getViewportForBounds(nodesBounds, width, height, 0.5, 2, padding);
+
+            toPng(viewport, {
+              backgroundColor: "#15181a",
+              width,
+              height,
+              pixelRatio: 3,
+              style: {
+                width: `${width}px`,
+                height: `${height}px`,
+                transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.zoom})`,
+              },
+            }).then((dataUrl) => {
+              const a = document.createElement("a");
+              a.download = "morpho-strategy.png";
+              a.href = dataUrl;
+              a.click();
+            });
+          }}
+          className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-card/90 px-3 py-1.5 text-[10px] text-text-tertiary transition-colors hover:text-brand"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+            <rect x="2" y="2" width="12" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+            <circle cx="5.5" cy="6" r="1.5" stroke="currentColor" strokeWidth="1.2" />
+            <path d="M2 9l3.5-3 3 2.5L11 6l3 3v1.5a1 1 0 01-1 1H3a1 1 0 01-1-1V9z" fill="currentColor" fillOpacity="0.3" />
+          </svg>
+          Screenshot
+        </button>
+        <button
+          onClick={clearGraph}
+          className="rounded-lg border border-border bg-bg-card/90 px-3 py-1.5 text-[10px] text-text-tertiary transition-colors hover:text-error"
+        >
+          Clear Canvas
+        </button>
+      </div>
     </div>
   );
 }
