@@ -16,6 +16,7 @@ import { useChain } from "@/lib/context/ChainContext";
 import { buildInitialLayout } from "./layout";
 import { isValidConnection } from "./validation";
 import { VALID_CONNECTIONS, type CanvasNode, type CanvasNodeData } from "./types";
+import { consumeImportedStrategy } from "./importStrategy";
 
 const MAX_HISTORY = 50;
 
@@ -55,10 +56,17 @@ export function useCanvasState() {
     setEdges(prev.edges);
   }, [setNodes, setEdges]);
 
-  // Initialize with just the wallet node — fresh start every time
+  // Initialize: check for imported strategy, otherwise fresh wallet node
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
+
+    const imported = consumeImportedStrategy();
+    if (imported) {
+      setNodes(imported.nodes);
+      setEdges(imported.edges);
+      return;
+    }
 
     const initial = buildInitialLayout(
       address,
@@ -68,7 +76,7 @@ export function useCanvasState() {
       []
     );
     setNodes(initial);
-  }, [address, slug, chainId, setNodes]);
+  }, [address, slug, chainId, setNodes, setEdges]);
 
   // Connection handler with validation
   const onConnect: OnConnect = useCallback(

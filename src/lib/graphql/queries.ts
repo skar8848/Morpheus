@@ -192,3 +192,99 @@ export const LOAN_ASSETS_QUERY = `
     }
   }
 `;
+
+export const USER_TRANSACTIONS_QUERY = `
+  query GetUserTransactions($userAddress: [String!]!, $chainId: [Int!]!, $first: Int, $skip: Int) {
+    transactions(
+      first: $first
+      skip: $skip
+      orderBy: Timestamp
+      orderDirection: Desc
+      where: {
+        userAddress_in: $userAddress
+        chainId_in: $chainId
+      }
+    ) {
+      items {
+        id
+        hash
+        timestamp
+        blockNumber
+        type
+        data {
+          __typename
+          ... on VaultTransactionData {
+            assets
+            assetsUsd
+            vault {
+              name
+              address
+              asset {
+                symbol
+                decimals
+                logoURI
+              }
+            }
+          }
+          ... on MarketTransferTransactionData {
+            assets
+            assetsUsd
+            shares
+            market {
+              uniqueKey
+              collateralAsset {
+                symbol
+                decimals
+                logoURI
+              }
+              loanAsset {
+                symbol
+                decimals
+                logoURI
+              }
+            }
+          }
+          ... on MarketCollateralTransferTransactionData {
+            assets
+            assetsUsd
+            market {
+              uniqueKey
+              collateralAsset {
+                symbol
+                decimals
+                logoURI
+              }
+              loanAsset {
+                symbol
+                decimals
+                logoURI
+              }
+            }
+          }
+          ... on MarketLiquidationTransactionData {
+            repaidAssets
+            repaidAssetsUsd
+            seizedAssets
+            seizedAssetsUsd
+            badDebtAssets
+            badDebtAssetsUsd
+            liquidator
+            market {
+              uniqueKey
+              collateralAsset {
+                symbol
+                decimals
+                logoURI
+              }
+              loanAsset {
+                symbol
+                decimals
+                logoURI
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;

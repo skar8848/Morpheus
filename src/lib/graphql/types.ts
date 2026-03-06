@@ -184,3 +184,93 @@ export interface LoanAssetsResponse {
     }[];
   };
 }
+
+// --- Transactions ---
+
+export type TransactionType =
+  | "MetaMorphoDeposit"
+  | "MetaMorphoWithdraw"
+  | "MetaMorphoTransfer"
+  | "MetaMorphoFee"
+  | "MarketBorrow"
+  | "MarketLiquidation"
+  | "MarketRepay"
+  | "MarketSupply"
+  | "MarketSupplyCollateral"
+  | "MarketWithdraw"
+  | "MarketWithdrawCollateral";
+
+export interface VaultTransactionData {
+  __typename: "VaultTransactionData";
+  assets: string;
+  assetsUsd: number | null;
+  vault: {
+    name: string;
+    address: string;
+    asset: {
+      symbol: string;
+      decimals: number;
+      logoURI: string;
+    };
+  };
+}
+
+export interface MarketTransferTransactionData {
+  __typename: "MarketTransferTransactionData";
+  assets: string;
+  assetsUsd: number | null;
+  shares: string;
+  market: {
+    uniqueKey: string;
+    collateralAsset: { symbol: string; decimals: number; logoURI: string } | null;
+    loanAsset: { symbol: string; decimals: number; logoURI: string };
+  };
+}
+
+export interface MarketCollateralTransferTransactionData {
+  __typename: "MarketCollateralTransferTransactionData";
+  assets: string;
+  assetsUsd: number | null;
+  market: {
+    uniqueKey: string;
+    collateralAsset: { symbol: string; decimals: number; logoURI: string } | null;
+    loanAsset: { symbol: string; decimals: number; logoURI: string };
+  };
+}
+
+export interface MarketLiquidationTransactionData {
+  __typename: "MarketLiquidationTransactionData";
+  repaidAssets: string;
+  repaidAssetsUsd: number | null;
+  seizedAssets: string;
+  seizedAssetsUsd: number | null;
+  badDebtAssets: string;
+  badDebtAssetsUsd: number | null;
+  liquidator: string;
+  market: {
+    uniqueKey: string;
+    collateralAsset: { symbol: string; decimals: number; logoURI: string } | null;
+    loanAsset: { symbol: string; decimals: number; logoURI: string };
+  };
+}
+
+export type TransactionData =
+  | VaultTransactionData
+  | MarketTransferTransactionData
+  | MarketCollateralTransferTransactionData
+  | MarketLiquidationTransactionData;
+
+export interface MorphoTransaction {
+  id: string;
+  hash: string;
+  timestamp: string;
+  blockNumber: string;
+  type: TransactionType;
+  data: TransactionData;
+}
+
+export interface TransactionsResponse {
+  transactions: {
+    items: MorphoTransaction[];
+  };
+}
