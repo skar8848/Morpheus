@@ -30,6 +30,7 @@ export default function Navbar() {
     { href: `/${slug}/migrate`, label: "Migrate" },
     { href: `/${slug}/strategy`, label: "Strategy" },
     { href: `/${slug}/canvas`, label: "Canvas", badge: "NEW" },
+    { href: `/${slug}/address`, label: "Address" },
   ];
 
   const truncatedAddress = address
