@@ -172,17 +172,11 @@ export function getRequiredApprovals(
     }
 
     // VaultDeposit: needs approval for the underlying asset (user → adapter)
-    // BUT skip if upstream is a vaultWithdraw (funds go directly to adapter)
     if (data.type === "vaultDeposit") {
       const d = node.data as unknown as VaultDepositNodeData;
       if (!d.vault?.address || !d.amount) continue;
-      const upEdge = edges.find((e) => e.target === node.id);
-      const upNode = upEdge ? nodes.find((n) => n.id === upEdge.source) : null;
-      const upType = upNode ? (upNode.data as { type?: string }).type : null;
-      if (upType !== "vaultWithdraw") {
-        const raw = safeAmountToBigInt(d.amount, d.vault.asset.decimals);
-        addApproval(d.vault.asset.address, d.vault.asset.symbol, raw);
-      }
+      const raw = safeAmountToBigInt(d.amount, d.vault.asset.decimals);
+      addApproval(d.vault.asset.address, d.vault.asset.symbol, raw);
     }
 
     // VaultWithdraw: adapter needs approval on vault shares (vault address is the ERC-20 share token)
@@ -259,13 +253,9 @@ export function buildExecutionBundle(
         const raw = safeAmountToBigInt(d.amount, d.position.vault.asset.decimals);
         if (raw === 0n) break;
 
-        // Check if downstream is a vaultDeposit — if so, send directly to adapter
-        // to avoid an extra erc20TransferFrom + approval on the withdrawn asset.
-        const downEdge = edges.find((e) => e.source === node.id);
-        const downNode = downEdge ? nodes.find((n) => n.id === downEdge.target) : null;
-        const downType = downNode ? (downNode.data as { type?: string }).type : null;
-        const receiver = downType === "vaultDeposit" ? adapter : userAddress;
-
+        // Always withdraw to user. The downstream deposit will use erc20TransferFrom
+        // to pull from the user. Sending to adapter is risky when amounts differ
+        // (leftover tokens get stuck, adapter safety checks may revert).
         calls.push({
           to: adapter,
           data: encodeFunctionData({
@@ -275,7 +265,7 @@ export function buildExecutionBundle(
               vaultAddr,
               raw,
               MAX_UINT256, // permissive: accept any share price
-              receiver,
+              userAddress,
               userAddress,
             ],
           }),
@@ -381,27 +371,18 @@ export function buildExecutionBundle(
         const rawAmount = safeAmountToBigInt(d.amount, d.vault.asset.decimals);
         if (rawAmount === 0n) break;
 
-        // Check if upstream is a vaultWithdraw — if so, funds are already at
-        // the adapter (withdraw sent receiver=adapter). Skip transferFrom.
-        const upEdge = edges.find((e) => e.target === node.id);
-        const upNode = upEdge ? nodes.find((n) => n.id === upEdge.source) : null;
-        const upType = upNode ? (upNode.data as { type?: string }).type : null;
-        const fundsAtAdapter = upType === "vaultWithdraw";
-
-        if (!fundsAtAdapter) {
-          // Pull tokens from user into adapter
-          calls.push({
-            to: adapter,
-            data: encodeFunctionData({
-              abi: generalAdapterAbi,
-              functionName: "erc20TransferFrom",
-              args: [vaultAssetAddr, adapter, rawAmount],
-            }),
-            value: 0n,
-            skipRevert: false,
-            callbackHash: ZERO_HASH,
-          });
-        }
+        // Always pull tokens from user into adapter before depositing.
+        calls.push({
+          to: adapter,
+          data: encodeFunctionData({
+            abi: generalAdapterAbi,
+            functionName: "erc20TransferFrom",
+            args: [vaultAssetAddr, adapter, rawAmount],
+          }),
+          value: 0n,
+          skipRevert: false,
+          callbackHash: ZERO_HASH,
+        });
 
         calls.push({
           to: adapter,
