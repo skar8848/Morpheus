@@ -27,6 +27,17 @@ interface AddressData {
 }
 
 const TX_PAGE_SIZE = 50;
+const MAX_TRANSACTIONS = 1000;
+
+/** Safely convert API string to BigInt, returns 0n on failure */
+function safeBigInt(value: unknown): bigint {
+  if (typeof value !== "string" && typeof value !== "number") return 0n;
+  try {
+    return BigInt(value);
+  } catch {
+    return 0n;
+  }
+}
 
 export function useAddressPositions(
   address: string | null,
@@ -81,14 +92,14 @@ export function useAddressPositions(
 
         const activeMarkets = marketData.marketPositions.items.filter((p) => {
           if (!p.state) return false;
-          const hasBorrow = p.state.borrowAssets && BigInt(p.state.borrowAssets) > 0n;
-          const hasSupply = p.state.supplyAssets && BigInt(p.state.supplyAssets) > 0n;
-          const hasCollateral = BigInt(p.state.collateral) > 0n;
+          const hasBorrow = safeBigInt(p.state.borrowAssets) > 0n;
+          const hasSupply = safeBigInt(p.state.supplyAssets) > 0n;
+          const hasCollateral = safeBigInt(p.state.collateral) > 0n;
           return hasBorrow || hasSupply || hasCollateral;
         });
 
         const activeVaults = vaultData.vaultPositions.items.filter(
-          (p) => p.state && BigInt(p.state.shares) > 0n
+          (p) => p.state && safeBigInt(p.state.shares) > 0n
         );
 
         setMarketPositions(activeMarkets);
@@ -110,18 +121,28 @@ export function useAddressPositions(
 
   const loadMoreTransactions = useCallback(() => {
     if (!address || !hasMore) return;
+    // Cap total transactions to prevent memory exhaustion
+    if (skipRef.current >= MAX_TRANSACTIONS) {
+      setHasMore(false);
+      return;
+    }
 
     morphoQuery<TransactionsResponse>(USER_TRANSACTIONS_QUERY, {
       userAddress: [address],
       chainId: [chainId],
       first: TX_PAGE_SIZE,
       skip: skipRef.current,
-    }).then((txData) => {
-      const newTxs = txData.transactions.items;
-      setTransactions((prev) => [...prev, ...newTxs]);
-      setHasMore(newTxs.length === TX_PAGE_SIZE);
-      skipRef.current += TX_PAGE_SIZE;
-    });
+    })
+      .then((txData) => {
+        const newTxs = txData.transactions.items;
+        setTransactions((prev) => [...prev, ...newTxs]);
+        setHasMore(newTxs.length === TX_PAGE_SIZE && skipRef.current + TX_PAGE_SIZE < MAX_TRANSACTIONS);
+        skipRef.current += TX_PAGE_SIZE;
+      })
+      .catch(() => {
+        // Silently handle pagination errors — don't break the UI
+        setHasMore(false);
+      });
   }, [address, chainId, hasMore]);
 
   return {

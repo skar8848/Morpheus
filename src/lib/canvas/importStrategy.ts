@@ -9,6 +9,15 @@ const COL = { wallet: 50, supply: 380, borrow: 710, vault: 1040 };
 const ROW_GAP = 220;
 const START_Y = 80;
 
+function safeBigInt(value: unknown): bigint {
+  if (typeof value !== "string" && typeof value !== "number") return 0n;
+  try {
+    return BigInt(value);
+  } catch {
+    return 0n;
+  }
+}
+
 const STORAGE_KEY = "morpho-canvas-import";
 
 export interface ImportedStrategy {
@@ -57,13 +66,13 @@ export function buildStrategyFromPositions(
 
   // Separate borrow positions from supply-only
   const borrowPositions = marketPositions.filter(
-    (p) => p.state?.borrowAssets && BigInt(p.state.borrowAssets) > 0n
+    (p) => p.state?.borrowAssets && safeBigInt(p.state.borrowAssets) > 0n
   );
   const supplyOnlyPositions = marketPositions.filter(
     (p) =>
       p.state?.supplyAssets &&
-      BigInt(p.state.supplyAssets) > 0n &&
-      (!p.state?.borrowAssets || BigInt(p.state.borrowAssets) === 0n)
+      safeBigInt(p.state.supplyAssets) > 0n &&
+      (!p.state?.borrowAssets || safeBigInt(p.state.borrowAssets) === 0n)
   );
 
   // Track borrow node outputs by loan asset address (for linking to vaults)
@@ -313,6 +322,16 @@ export function saveImportedStrategy(strategy: ImportedStrategy) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(strategy));
 }
 
+const VALID_NODE_TYPES = new Set([
+  "walletNode", "supplyCollateralNode", "borrowNode",
+  "swapNode", "vaultDepositNode", "vaultWithdrawNode", "positionNode",
+]);
+const VALID_DATA_TYPES = new Set([
+  "wallet", "supplyCollateral", "borrow",
+  "swap", "vaultDeposit", "vaultWithdraw", "position",
+]);
+const MAX_STRING_LEN = 500;
+
 /** Validate that an imported strategy has valid structure */
 function isValidImportedStrategy(data: unknown): data is ImportedStrategy {
   if (!data || typeof data !== "object") return false;
@@ -320,30 +339,32 @@ function isValidImportedStrategy(data: unknown): data is ImportedStrategy {
 
   // Must have nodes array, edges array, sourceAddress string
   if (!Array.isArray(obj.nodes) || !Array.isArray(obj.edges)) return false;
-  if (typeof obj.sourceAddress !== "string") return false;
+  if (typeof obj.sourceAddress !== "string" || obj.sourceAddress.length > 100) return false;
 
   // Limit size to prevent memory abuse
   if (obj.nodes.length > 200 || obj.edges.length > 500) return false;
 
-  // Validate each node has required fields
+  // Validate each node has required fields + whitelisted types
   for (const node of obj.nodes) {
     if (!node || typeof node !== "object") return false;
     const n = node as Record<string, unknown>;
-    if (typeof n.id !== "string") return false;
-    if (typeof n.type !== "string") return false;
+    if (typeof n.id !== "string" || n.id.length > MAX_STRING_LEN) return false;
+    if (typeof n.type !== "string" || !VALID_NODE_TYPES.has(n.type)) return false;
     if (!n.position || typeof n.position !== "object") return false;
     if (!n.data || typeof n.data !== "object") return false;
     const d = n.data as Record<string, unknown>;
-    if (typeof d.type !== "string") return false;
+    if (typeof d.type !== "string" || !VALID_DATA_TYPES.has(d.type)) return false;
   }
 
-  // Validate each edge has required fields
+  // Validate each edge has required fields + string length limits
   for (const edge of obj.edges) {
     if (!edge || typeof edge !== "object") return false;
     const e = edge as Record<string, unknown>;
-    if (typeof e.id !== "string") return false;
-    if (typeof e.source !== "string") return false;
-    if (typeof e.target !== "string") return false;
+    if (typeof e.id !== "string" || e.id.length > MAX_STRING_LEN) return false;
+    if (typeof e.source !== "string" || e.source.length > MAX_STRING_LEN) return false;
+    if (typeof e.target !== "string" || e.target.length > MAX_STRING_LEN) return false;
+    // Reject self-loops
+    if (e.source === e.target) return false;
   }
 
   return true;
@@ -354,6 +375,8 @@ export function consumeImportedStrategy(): ImportedStrategy | null {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return null;
   localStorage.removeItem(STORAGE_KEY);
+  // Reject excessively large payloads (500KB)
+  if (raw.length > 500_000) return null;
   try {
     const parsed = JSON.parse(raw);
     if (!isValidImportedStrategy(parsed)) return null;

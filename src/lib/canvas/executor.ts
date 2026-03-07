@@ -1,5 +1,5 @@
 import type { Edge } from "@xyflow/react";
-import { encodeFunctionData } from "viem";
+import { encodeFunctionData, isAddress, parseUnits } from "viem";
 import type { CanvasNode } from "./types";
 import type {
   SupplyCollateralNodeData,
@@ -15,6 +15,7 @@ import {
   erc20Abi,
 } from "@/lib/constants/contracts";
 import type { SupportedChainId } from "@/lib/web3/chains";
+import { validateGraph } from "./validation";
 
 interface BundlerCall {
   to: `0x${string}`;
@@ -31,18 +32,49 @@ const ZERO_HASH =
 const DEFAULT_SLIPPAGE_BPS = 50; // 0.5% = 50 basis points
 
 /**
- * Safely convert a human-readable amount to raw BigInt.
+ * Safely convert a human-readable amount to raw BigInt using string-based
+ * arithmetic (via viem's parseUnits) to avoid floating-point precision loss.
  * Returns 0n for invalid/NaN/Infinity/negative values.
  */
 function safeAmountToBigInt(amount: number | string, decimals: number): bigint {
-  const num = typeof amount === "string" ? parseFloat(amount) : amount;
-  if (!isFinite(num) || num <= 0) return 0n;
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) return 0n;
-  // Use string math to avoid floating point issues for large values
-  const factor = 10 ** decimals;
-  const raw = Math.floor(num * factor);
-  if (!isFinite(raw) || raw <= 0) return 0n;
-  return BigInt(raw);
+  const str = typeof amount === "number" ? String(amount) : amount;
+  if (!str || str.trim() === "") return 0n;
+  // Quick sanity check: must look like a positive number
+  const num = parseFloat(str);
+  if (!isFinite(num) || num <= 0) return 0n;
+  try {
+    const result = parseUnits(str, decimals);
+    if (result <= 0n) return 0n;
+    return result;
+  } catch {
+    return 0n;
+  }
+}
+
+/**
+ * Safely convert an API string to BigInt. Returns fallback on failure.
+ */
+function safeBigInt(value: unknown, fallback: bigint = 0n): bigint {
+  if (typeof value === "bigint") return value;
+  if (typeof value !== "string" && typeof value !== "number") return fallback;
+  try {
+    const result = BigInt(value);
+    return result;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Validate an address for use in transaction construction.
+ * Throws if invalid.
+ */
+function requireValidAddress(addr: unknown, label: string): `0x${string}` {
+  if (typeof addr !== "string" || !isAddress(addr)) {
+    throw new Error(`Invalid address for ${label}: ${String(addr)}`);
+  }
+  return addr as `0x${string}`;
 }
 
 /**
@@ -51,10 +83,16 @@ function safeAmountToBigInt(amount: number | string, decimals: number): bigint {
  * We allow up to (1 + slippage) × current price.
  * Conservative default: use 1.005e27 (0.5% above 1:1)
  */
+function clampSlippage(slippageBps: number): number {
+  if (!Number.isInteger(slippageBps) || slippageBps < 1) return DEFAULT_SLIPPAGE_BPS;
+  if (slippageBps > 5000) return 5000; // Cap at 50%
+  return slippageBps;
+}
+
 function maxSharePriceWithSlippage(slippageBps: number = DEFAULT_SLIPPAGE_BPS): bigint {
-  // 1e27 base + slippage
+  const bps = clampSlippage(slippageBps);
   const base = 10n ** 27n;
-  const slippage = (base * BigInt(slippageBps)) / 10000n;
+  const slippage = (base * BigInt(bps)) / 10000n;
   return base + slippage;
 }
 
@@ -63,8 +101,9 @@ function maxSharePriceWithSlippage(slippageBps: number = DEFAULT_SLIPPAGE_BPS): 
  * We accept down to (1 - slippage) × 1:1 price.
  */
 function minSharePriceWithSlippage(slippageBps: number = DEFAULT_SLIPPAGE_BPS): bigint {
+  const bps = clampSlippage(slippageBps);
   const base = 10n ** 27n;
-  const slippage = (base * BigInt(slippageBps)) / 10000n;
+  const slippage = (base * BigInt(bps)) / 10000n;
   return base - slippage;
 }
 
@@ -125,6 +164,23 @@ export function getRequiredApprovals(
 
   const approvals = new Map<string, { token: `0x${string}`; symbol: string; amount: bigint }>();
 
+  const addApproval = (address: string, symbol: string, amount: bigint) => {
+    if (!isAddress(address) || amount <= 0n) return;
+    const key = address.toLowerCase();
+    const existing = approvals.get(key);
+    approvals.set(key, {
+      token: address as `0x${string}`,
+      symbol,
+      amount: (existing?.amount ?? 0n) + amount,
+    });
+  };
+
+  // Track which nodes receive tokens from upstream (within the bundle)
+  const nodesWithUpstreamTokens = new Set<string>();
+  for (const edge of edges) {
+    nodesWithUpstreamTokens.add(edge.target);
+  }
+
   for (const node of nodes) {
     const data = node.data as { type?: string };
 
@@ -132,14 +188,19 @@ export function getRequiredApprovals(
       const d = node.data as unknown as SupplyCollateralNodeData;
       if (!d.asset?.address || !d.amount) continue;
       const raw = safeAmountToBigInt(d.amount, d.asset.decimals);
-      if (raw === 0n) continue;
-      const key = d.asset.address.toLowerCase();
-      const existing = approvals.get(key);
-      approvals.set(key, {
-        token: d.asset.address as `0x${string}`,
-        symbol: d.asset.symbol,
-        amount: (existing?.amount ?? 0n) + raw,
-      });
+      addApproval(d.asset.address, d.asset.symbol, raw);
+    }
+
+    // VaultDeposit needs approval if tokens come from user wallet (no upstream borrow/withdraw)
+    if (data.type === "vaultDeposit") {
+      const d = node.data as unknown as VaultDepositNodeData;
+      if (!d.vault?.address || !d.amount) continue;
+      // Check if this node has an upstream node that provides tokens in the bundle
+      const hasUpstream = edges.some((e) => e.target === node.id);
+      if (!hasUpstream) {
+        const raw = safeAmountToBigInt(d.amount, d.vault.asset.decimals);
+        addApproval(d.vault.asset.address, d.vault.asset.symbol, raw);
+      }
     }
   }
 
@@ -179,6 +240,17 @@ export function buildExecutionBundle(
   calls: BundlerCall[];
   hasSwap: boolean;
 } {
+  // Defense-in-depth: validate graph before building bundle
+  const validationErrors = validateGraph(nodes, edges);
+  if (validationErrors.length > 0) {
+    throw new Error(`Graph validation failed: ${validationErrors[0]}`);
+  }
+
+  // Validate userAddress
+  if (!isAddress(userAddress)) {
+    throw new Error("Invalid user address");
+  }
+
   const adapter = GENERAL_ADAPTER1[chainId];
   const bundler = BUNDLER3[chainId];
   if (!adapter || !bundler) throw new Error("Chain not supported");
@@ -194,6 +266,7 @@ export function buildExecutionBundle(
       case "vaultWithdraw": {
         const d = node.data as unknown as VaultWithdrawNodeData;
         if (!d.position?.vault?.address || !d.amount) break;
+        const vaultAddr = requireValidAddress(d.position.vault.address, "vault withdraw");
         const raw = safeAmountToBigInt(d.amount, d.position.vault.asset.decimals);
         if (raw === 0n) break;
 
@@ -203,7 +276,7 @@ export function buildExecutionBundle(
             abi: generalAdapterAbi,
             functionName: "erc4626Redeem",
             args: [
-              d.position.vault.address as `0x${string}`,
+              vaultAddr,
               raw,
               minSharePriceWithSlippage(slippageBps),
               userAddress,
@@ -220,50 +293,52 @@ export function buildExecutionBundle(
       case "supplyCollateral": {
         const d = node.data as unknown as SupplyCollateralNodeData;
         if (!d.asset?.address || !d.amount) break;
+        const assetAddr = requireValidAddress(d.asset.address, "supply collateral asset");
         const rawAmount = safeAmountToBigInt(d.amount, d.asset.decimals);
         if (rawAmount === 0n) break;
 
-        // Transfer collateral to adapter
-        calls.push({
-          to: adapter,
-          data: encodeFunctionData({
-            abi: generalAdapterAbi,
-            functionName: "erc20TransferFrom",
-            args: [d.asset.address as `0x${string}`, adapter, rawAmount],
-          }),
-          value: 0n,
-          skipRevert: false,
-          callbackHash: ZERO_HASH,
-        });
-
         // Find downstream borrow market to supply collateral into
         const downEdge = edges.find((e) => e.source === node.id);
-        if (downEdge) {
-          const borrowNode = nodes.find((n) => n.id === downEdge.target);
-          if (borrowNode) {
-            const bd = borrowNode.data as unknown as BorrowNodeData;
-            if (bd.type === "borrow" && bd.market) {
-              const marketParams = {
-                loanToken: bd.market.loanAsset.address as `0x${string}`,
-                collateralToken: bd.market.collateralAsset.address as `0x${string}`,
-                oracle: bd.market.oracle.address as `0x${string}`,
-                irm: bd.market.irmAddress as `0x${string}`,
-                lltv: BigInt(bd.market.lltv),
-              };
-              calls.push({
-                to: adapter,
-                data: encodeFunctionData({
-                  abi: generalAdapterAbi,
-                  functionName: "morphoSupplyCollateral",
-                  args: [marketParams, rawAmount, userAddress, "0x"],
-                }),
-                value: 0n,
-                skipRevert: false,
-                callbackHash: ZERO_HASH,
-              });
-            }
-          }
+        const borrowNode = downEdge ? nodes.find((n) => n.id === downEdge.target) : null;
+        const bd = borrowNode ? (borrowNode.data as unknown as BorrowNodeData) : null;
+
+        // C4 fix: Only transfer + supply if there's a valid downstream borrow.
+        // Without a borrow, tokens would be stranded in the adapter.
+        if (bd?.type === "borrow" && bd.market) {
+          const loanToken = requireValidAddress(bd.market.loanAsset.address, "loan token");
+          const collateralToken = requireValidAddress(bd.market.collateralAsset.address, "collateral token");
+          const oracle = requireValidAddress(bd.market.oracle.address, "oracle");
+          const irm = requireValidAddress(bd.market.irmAddress, "IRM");
+          const lltv = safeBigInt(bd.market.lltv);
+          if (lltv === 0n) break;
+
+          // Transfer collateral to adapter
+          calls.push({
+            to: adapter,
+            data: encodeFunctionData({
+              abi: generalAdapterAbi,
+              functionName: "erc20TransferFrom",
+              args: [assetAddr, adapter, rawAmount],
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: ZERO_HASH,
+          });
+
+          const marketParams = { loanToken, collateralToken, oracle, irm, lltv };
+          calls.push({
+            to: adapter,
+            data: encodeFunctionData({
+              abi: generalAdapterAbi,
+              functionName: "morphoSupplyCollateral",
+              args: [marketParams, rawAmount, userAddress, "0x"],
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: ZERO_HASH,
+          });
         }
+        // If downstream is vaultDeposit, the transfer is handled by the vaultDeposit case
         break;
       }
 
@@ -273,15 +348,15 @@ export function buildExecutionBundle(
         const rawAmount = safeAmountToBigInt(d.borrowAmount, d.market.loanAsset.decimals);
         if (rawAmount === 0n) break;
 
-        const marketParams = {
-          loanToken: d.market.loanAsset.address as `0x${string}`,
-          collateralToken: d.market.collateralAsset.address as `0x${string}`,
-          oracle: d.market.oracle.address as `0x${string}`,
-          irm: d.market.irmAddress as `0x${string}`,
-          lltv: BigInt(d.market.lltv),
-        };
+        const loanToken = requireValidAddress(d.market.loanAsset.address, "loan token");
+        const collateralToken = requireValidAddress(d.market.collateralAsset.address, "collateral token");
+        const oracle = requireValidAddress(d.market.oracle.address, "oracle");
+        const irm = requireValidAddress(d.market.irmAddress, "IRM");
+        const lltv = safeBigInt(d.market.lltv);
+        if (lltv === 0n) break;
 
-        // Borrow with slippage: use shares=0 (borrow by assets) + minSharePriceE27
+        const marketParams = { loanToken, collateralToken, oracle, irm, lltv };
+
         calls.push({
           to: adapter,
           data: encodeFunctionData({
@@ -305,6 +380,7 @@ export function buildExecutionBundle(
       case "vaultDeposit": {
         const d = node.data as unknown as VaultDepositNodeData;
         if (!d.vault?.address || !d.amount) break;
+        const vaultAddr = requireValidAddress(d.vault.address, "vault deposit");
         const rawAmount = safeAmountToBigInt(d.amount, d.vault.asset.decimals);
         if (rawAmount === 0n) break;
 
@@ -314,7 +390,7 @@ export function buildExecutionBundle(
             abi: generalAdapterAbi,
             functionName: "erc4626Deposit",
             args: [
-              d.vault.address as `0x${string}`,
+              vaultAddr,
               rawAmount,
               maxSharePriceWithSlippage(slippageBps),
               userAddress,
