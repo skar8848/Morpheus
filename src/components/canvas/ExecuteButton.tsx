@@ -250,24 +250,32 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           });
 
           // Wait for approval to be confirmed on-chain before proceeding
-          await waitForTransactionReceipt(wagmiConfig, {
+          const approvalReceipt = await waitForTransactionReceipt(wagmiConfig, {
             hash,
             confirmations: 1,
             timeout: 120_000, // 2 minute timeout
           });
+
+          if (approvalReceipt.status === "reverted") {
+            setError(`Approval ${i + 1}/${approveTxs.length} reverted on-chain`);
+            return;
+          }
         }
       }
 
       // Check address hasn't changed during async approval flow (via ref, not stale closure)
       if (addressRef.current !== address) {
         setError("Wallet address changed during execution. Aborting.");
-        setApprovalStep(0);
         return;
       }
 
       // 4. Build and send bundler tx (using snapshot)
-      setApprovalStep(0);
-      const bundle = buildExecutionBundle(execNodes, execEdges, address, cid);
+      const currentAddress = addressRef.current;
+      if (!currentAddress) {
+        setError("Wallet disconnected during execution");
+        return;
+      }
+      const bundle = buildExecutionBundle(execNodes, execEdges, currentAddress, cid);
 
       if (bundle.calls.length === 0 && !bundle.hasSwap) {
         setError("No executable actions in graph");
@@ -281,24 +289,41 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
       }
 
       if (bundle.calls.length > 0) {
-        sendTransaction(
-          {
-            to: bundle.to,
-            data: bundle.data,
-            value: 0n,
-          },
-          {
-            onSuccess: (hash) => {
-              setTxHash(hash);
-              setShowConfirm(false);
-              snapshotRef.current = null;
+        const bundleHash = await new Promise<`0x${string}`>((resolve, reject) => {
+          sendTransaction(
+            {
+              to: bundle.to,
+              data: bundle.data,
+              value: 0n,
             },
-            onError: (err) => setError(err.message),
-          }
-        );
+            {
+              onSuccess: (h) => resolve(h),
+              onError: (err) => reject(err),
+            }
+          );
+        });
+
+        setTxHash(bundleHash);
+
+        // Verify the bundler tx was confirmed on-chain
+        const receipt = await waitForTransactionReceipt(wagmiConfig, {
+          hash: bundleHash,
+          confirmations: 1,
+          timeout: 120_000,
+        });
+
+        if (receipt.status === "reverted") {
+          setTxHash(null);
+          setError("Bundle transaction reverted on-chain");
+        }
+
+        setShowConfirm(false);
+        snapshotRef.current = null;
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to build bundle");
+    } finally {
+      setApprovalStep(0);
     }
   }, [address, isConnected, nodes, edges, chainId, walletChainId, showConfirm, sendTransaction, switchChainAsync]);
 

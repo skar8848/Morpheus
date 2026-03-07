@@ -56,9 +56,14 @@ export function useCowQuote({
       abortRef.current = controller;
 
       try {
-        const sellAmountWei = BigInt(
-          Math.floor(parseFloat(amountIn) * 10 ** decimalsIn)
-        ).toString();
+        // String-based conversion to avoid float precision loss for large amounts
+        const sellAmountWei = (() => {
+          const parts = amountIn.split(".");
+          const intPart = parts[0] || "0";
+          const fracPart = (parts[1] || "").slice(0, decimalsIn).padEnd(decimalsIn, "0");
+          const raw = BigInt(intPart + fracPart);
+          return raw.toString();
+        })();
 
         const res = await fetch("https://api.cow.fi/mainnet/api/v1/quote", {
           method: "POST",
@@ -94,7 +99,7 @@ export function useCowQuote({
               .toString()
               .padStart(decimalsOut, "0")
               .slice(0, 6);
-            setQuote(`${intPart}.${fracStr}`.replace(/\.?0+$/, "") || "0");
+            setQuote(`${intPart}.${fracStr}`.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "") || "0");
           } catch {
             setQuote(null);
           }

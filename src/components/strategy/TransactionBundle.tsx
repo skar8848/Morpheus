@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import Image from "next/image";
 import { useAccount, useSendTransaction, useChainId, useSwitchChain } from "wagmi";
 import { encodeFunctionData, parseUnits } from "viem";
@@ -74,6 +74,11 @@ export default function TransactionBundle({
   const [error, setError] = useState<string | null>(null);
   const [approvalStep, setApprovalStep] = useState(0);
   const [totalApprovals, setTotalApprovals] = useState(0);
+  const [isExecuting, setIsExecuting] = useState(false);
+
+  // Track wallet address via ref for reliable detection during async flow
+  const addressRef = useRef(address);
+  addressRef.current = address;
 
   // Build the visual steps
   const steps = useMemo(() => {
@@ -168,9 +173,10 @@ export default function TransactionBundle({
   ]);
 
   const handleExecute = async () => {
-    if (!address || !isConnected) return;
+    if (!address || !isConnected || isExecuting) return;
     setError(null);
     setTxHash(null);
+    setIsExecuting(true);
 
     try {
       const cid = chainId as SupportedChainId;
@@ -192,15 +198,33 @@ export default function TransactionBundle({
         return;
       }
 
-      // Send real approval transactions for each collateral token
-      const approvalTokens: { token: `0x${string}`; symbol: string; amount: bigint }[] = [];
+      // Send real approval transactions for each collateral token + loan token (for borrow→deposit)
+      const approvalMap = new Map<string, { token: `0x${string}`; symbol: string; amount: bigint }>();
+      const addApproval = (addr: string, symbol: string, amount: bigint) => {
+        if (amount <= 0n) return;
+        const key = addr.toLowerCase();
+        const existing = approvalMap.get(key);
+        approvalMap.set(key, {
+          token: addr as `0x${string}`,
+          symbol,
+          amount: (existing?.amount ?? 0n) + amount,
+        });
+      };
+
       for (const asset of selectedAssets) {
         const amount = depositAmounts[asset.address];
         if (!amount || parseFloat(amount) <= 0) continue;
         const raw = safeParseUnits(amount, asset.decimals);
-        if (raw === 0n) continue;
-        approvalTokens.push({ token: asset.address as `0x${string}`, symbol: asset.symbol, amount: raw });
+        addApproval(asset.address, asset.symbol, raw);
       }
+
+      // Approve loan token for borrow→deposit flow (erc20TransferFrom needs it)
+      if (selectedVaults.length > 0 && borrowAmount > 0 && selectedLoanAsset) {
+        const rawBorrow = safeParseUnits(String(borrowAmount), selectedLoanAsset.decimals);
+        addApproval(selectedLoanAsset.address, selectedLoanAsset.symbol, rawBorrow);
+      }
+
+      const approvalTokens = Array.from(approvalMap.values());
 
       if (approvalTokens.length > 0) {
         setTotalApprovals(approvalTokens.length);
@@ -223,13 +247,24 @@ export default function TransactionBundle({
               }
             );
           });
-          await waitForTransactionReceipt(wagmiConfig, {
+          const approvalReceipt = await waitForTransactionReceipt(wagmiConfig, {
             hash,
             confirmations: 1,
             timeout: 120_000,
           });
+
+          if (approvalReceipt.status === "reverted") {
+            setError(`Approval ${i + 1}/${approvalTokens.length} reverted on-chain`);
+            return;
+          }
         }
         setApprovalStep(0);
+      }
+
+      // Check address hasn't changed during async approval flow
+      if (addressRef.current !== address) {
+        setError("Wallet address changed during execution. Aborting.");
+        return;
       }
 
       const calls: {
@@ -357,6 +392,8 @@ export default function TransactionBundle({
       }
 
       // Deposit into vaults — with slippage (C3 fix)
+      // morphoBorrow sends tokens to `address` (user), so we need
+      // erc20TransferFrom to pull them into the adapter before erc4626Deposit.
       if (
         selectedVaults.length > 0 &&
         borrowAmount > 0 &&
@@ -377,6 +414,20 @@ export default function TransactionBundle({
             selectedLoanAsset.decimals
           );
           if (rawVaultAmount === 0n) continue;
+
+          // Transfer borrowed tokens from user to adapter
+          calls.push({
+            to: adapter,
+            data: encodeFunctionData({
+              abi: generalAdapterAbi,
+              functionName: "erc20TransferFrom",
+              args: [selectedLoanAsset.address as `0x${string}`, adapter, rawVaultAmount],
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: zeroHash,
+          });
+
           calls.push({
             to: adapter,
             data: encodeFunctionData({
@@ -401,23 +452,42 @@ export default function TransactionBundle({
         return;
       }
 
-      sendTransaction(
-        {
-          to: bundler,
-          data: encodeFunctionData({
-            abi: bundler3Abi,
-            functionName: "multicall",
-            args: [calls],
-          }),
-          value: 0n,
-        },
-        {
-          onSuccess: (hash) => setTxHash(hash),
-          onError: (err) => setError(err.message),
-        }
-      );
+      const bundleHash = await new Promise<`0x${string}`>((resolve, reject) => {
+        sendTransaction(
+          {
+            to: bundler,
+            data: encodeFunctionData({
+              abi: bundler3Abi,
+              functionName: "multicall",
+              args: [calls],
+            }),
+            value: 0n,
+          },
+          {
+            onSuccess: (h) => resolve(h),
+            onError: (err) => reject(err),
+          }
+        );
+      });
+
+      setTxHash(bundleHash);
+
+      // Verify the bundler tx was confirmed on-chain
+      const receipt = await waitForTransactionReceipt(wagmiConfig, {
+        hash: bundleHash,
+        confirmations: 1,
+        timeout: 120_000,
+      });
+
+      if (receipt.status === "reverted") {
+        setTxHash(null);
+        setError("Bundle transaction reverted on-chain");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to build bundle");
+    } finally {
+      setApprovalStep(0);
+      setIsExecuting(false);
     }
   };
 
@@ -527,7 +597,7 @@ export default function TransactionBundle({
           )}
           <button
             onClick={handleExecute}
-            disabled={!isConnected || isPending}
+            disabled={!isConnected || isPending || isExecuting}
             className="w-full rounded-xl bg-brand py-3.5 text-sm font-semibold text-white transition-colors hover:bg-brand-hover disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {!isConnected

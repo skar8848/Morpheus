@@ -150,18 +150,15 @@ export function getRequiredApprovals(
     if (!isAddress(address) || amount <= 0n) return;
     const key = address.toLowerCase();
     const existing = approvals.get(key);
+    // Cap at MAX_UINT256 to avoid encoding overflow (vault share approvals use MAX_UINT256)
+    let newAmount = (existing?.amount ?? 0n) + amount;
+    if (newAmount > MAX_UINT256) newAmount = MAX_UINT256;
     approvals.set(key, {
       token: address as `0x${string}`,
       symbol,
-      amount: (existing?.amount ?? 0n) + amount,
+      amount: newAmount,
     });
   };
-
-  // Track which nodes receive tokens from upstream (within the bundle)
-  const nodesWithUpstreamTokens = new Set<string>();
-  for (const edge of edges) {
-    nodesWithUpstreamTokens.add(edge.target);
-  }
 
   for (const node of nodes) {
     const data = node.data as { type?: string };
@@ -173,16 +170,20 @@ export function getRequiredApprovals(
       addApproval(d.asset.address, d.asset.symbol, raw);
     }
 
-    // VaultDeposit needs approval if tokens come from user wallet (no upstream borrow/withdraw)
+    // VaultDeposit: always needs approval for the underlying asset (user → adapter)
     if (data.type === "vaultDeposit") {
       const d = node.data as unknown as VaultDepositNodeData;
       if (!d.vault?.address || !d.amount) continue;
-      // Check if this node has an upstream node that provides tokens in the bundle
-      const hasUpstream = edges.some((e) => e.target === node.id);
-      if (!hasUpstream) {
-        const raw = safeAmountToBigInt(d.amount, d.vault.asset.decimals);
-        addApproval(d.vault.asset.address, d.vault.asset.symbol, raw);
-      }
+      const raw = safeAmountToBigInt(d.amount, d.vault.asset.decimals);
+      addApproval(d.vault.asset.address, d.vault.asset.symbol, raw);
+    }
+
+    // VaultWithdraw: adapter needs approval on vault shares (vault address is the ERC-20 share token)
+    // Use MAX_UINT256 since exact share amount requires on-chain read
+    if (data.type === "vaultWithdraw") {
+      const d = node.data as unknown as VaultWithdrawNodeData;
+      if (!d.position?.vault?.address) continue;
+      addApproval(d.position.vault.address, `${d.position.vault.name} shares`, MAX_UINT256);
     }
   }
 
@@ -364,8 +365,25 @@ export function buildExecutionBundle(
         const d = node.data as unknown as VaultDepositNodeData;
         if (!d.vault?.address || !d.amount) break;
         const vaultAddr = requireValidAddress(d.vault.address, "vault deposit");
+        const vaultAssetAddr = requireValidAddress(d.vault.asset.address, "vault deposit asset");
         const rawAmount = safeAmountToBigInt(d.amount, d.vault.asset.decimals);
         if (rawAmount === 0n) break;
+
+        // Always pull tokens from user into adapter before depositing.
+        // Whether tokens come from a borrow (sent to user by morphoBorrow),
+        // a wallet, or any other source — they're always in the user's wallet
+        // and need erc20TransferFrom to reach the adapter for erc4626Deposit.
+        calls.push({
+          to: adapter,
+          data: encodeFunctionData({
+            abi: generalAdapterAbi,
+            functionName: "erc20TransferFrom",
+            args: [vaultAssetAddr, adapter, rawAmount],
+          }),
+          value: 0n,
+          skipRevert: false,
+          callbackHash: ZERO_HASH,
+        });
 
         calls.push({
           to: adapter,
