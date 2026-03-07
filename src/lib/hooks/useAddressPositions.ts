@@ -15,6 +15,7 @@ import type {
   MorphoTransaction,
   TransactionsResponse,
 } from "../graphql/types";
+import { safeBigInt } from "../utils/bigint";
 
 interface AddressData {
   marketPositions: UserMarketPosition[];
@@ -27,8 +28,6 @@ interface AddressData {
 }
 
 const TX_PAGE_SIZE = 50;
-import { safeBigInt } from "../utils/bigint";
-
 const MAX_TRANSACTIONS = 1000;
 
 export function useAddressPositions(
@@ -43,6 +42,7 @@ export function useAddressPositions(
   const [hasMore, setHasMore] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
   const skipRef = useRef(0);
+  const loadingMoreRef = useRef(false);
 
   // Initial fetch: positions + first page of transactions
   useEffect(() => {
@@ -112,12 +112,13 @@ export function useAddressPositions(
   }, [address, chainId]);
 
   const loadMoreTransactions = useCallback(() => {
-    if (!address || !hasMore) return;
-    // Cap total transactions to prevent memory exhaustion
+    if (!address || !hasMore || loadingMoreRef.current) return;
     if (skipRef.current >= MAX_TRANSACTIONS) {
       setHasMore(false);
       return;
     }
+
+    loadingMoreRef.current = true;
 
     morphoQuery<TransactionsResponse>(USER_TRANSACTIONS_QUERY, {
       userAddress: [address],
@@ -132,8 +133,10 @@ export function useAddressPositions(
         skipRef.current += TX_PAGE_SIZE;
       })
       .catch(() => {
-        // Silently handle pagination errors — don't break the UI
         setHasMore(false);
+      })
+      .finally(() => {
+        loadingMoreRef.current = false;
       });
   }, [address, chainId, hasMore]);
 

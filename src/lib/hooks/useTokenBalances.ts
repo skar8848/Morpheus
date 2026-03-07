@@ -34,12 +34,18 @@ export function useTokenBalances(assets: Asset[]): {
       const result = data?.[i];
       const rawBalance =
         result?.status === "success" ? (result.result as bigint) : 0n;
-      const formatted =
-        rawBalance > 0n
-          ? (Number(rawBalance) / 10 ** asset.decimals).toFixed(
-              Math.min(asset.decimals, 6)
-            )
-          : "0";
+
+      let formatted = "0";
+      if (rawBalance > 0n) {
+        const divisor = 10n ** BigInt(asset.decimals);
+        const intPart = rawBalance / divisor;
+        const fracPart = rawBalance % divisor;
+        const fracStr = fracPart
+          .toString()
+          .padStart(asset.decimals, "0")
+          .slice(0, 6);
+        formatted = `${intPart}.${fracStr}`.replace(/\.?0+$/, "") || "0";
+      }
 
       return {
         ...asset,

@@ -85,10 +85,19 @@ export function useCowQuote({
         const buyAmount = data.quote?.buyAmount;
 
         if (buyAmount) {
-          const formatted = (Number(buyAmount) / 10 ** decimalsOut).toFixed(
-            Math.min(decimalsOut, 6)
-          );
-          setQuote(formatted);
+          try {
+            const raw = BigInt(buyAmount);
+            const divisor = 10n ** BigInt(decimalsOut);
+            const intPart = raw / divisor;
+            const fracPart = raw % divisor;
+            const fracStr = fracPart
+              .toString()
+              .padStart(decimalsOut, "0")
+              .slice(0, 6);
+            setQuote(`${intPart}.${fracStr}`.replace(/\.?0+$/, "") || "0");
+          } catch {
+            setQuote(null);
+          }
         } else {
           setQuote(null);
         }

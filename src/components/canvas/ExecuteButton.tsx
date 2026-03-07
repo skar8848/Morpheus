@@ -96,12 +96,14 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [slippageBps, setSlippageBps] = useState(50); // 0.5% default
   const [approvalStep, setApprovalStep] = useState<number>(0); // 0 = not started
   const [totalApprovals, setTotalApprovals] = useState(0);
 
-  // Snapshot of nodes/edges at confirmation time (H2: prevent race condition)
+  // Snapshot of nodes/edges at confirmation time
   const snapshotRef = useRef<{ nodes: CanvasNode[]; edges: Edge[] } | null>(null);
+  // Track wallet address via ref for reliable detection during async flow
+  const addressRef = useRef(address);
+  addressRef.current = address;
 
   // Build visual steps from graph
   const steps = useMemo(() => {
@@ -222,10 +224,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         return;
       }
 
-      // H6 fix: helper to verify address hasn't changed
-      const currentAddress = address;
-
-      // 3. Send approval txs (one per token) — wait for confirmations (H3 fix)
+      // 3. Send approval txs (one per token)
       const approvals = getRequiredApprovals(execNodes, execEdges, cid);
       if (approvals.length > 0) {
         setTotalApprovals(approvals.length);
@@ -259,8 +258,8 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         }
       }
 
-      // H6 fix: Check address hasn't changed during approval flow
-      if (address !== currentAddress) {
+      // Check address hasn't changed during async approval flow (via ref, not stale closure)
+      if (addressRef.current !== address) {
         setError("Wallet address changed during execution. Aborting.");
         setApprovalStep(0);
         return;
@@ -301,7 +300,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to build bundle");
     }
-  }, [address, isConnected, nodes, edges, chainId, walletChainId, showConfirm, slippageBps, sendTransaction, switchChainAsync]);
+  }, [address, isConnected, nodes, edges, chainId, walletChainId, showConfirm, sendTransaction, switchChainAsync]);
 
   const actionCount = nodes.filter((n) => {
     const t = (n.data as { type: string }).type;
@@ -392,26 +391,6 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               </p>
             )}
 
-            {/* Slippage setting */}
-            <div className="mt-3 flex items-center justify-between rounded-lg border border-border bg-bg-secondary px-3 py-2">
-              <span className="text-[10px] text-text-tertiary">Slippage Tolerance</span>
-              <div className="flex items-center gap-1">
-                {[50, 100, 200].map((bps) => (
-                  <button
-                    key={bps}
-                    onClick={() => setSlippageBps(bps)}
-                    className={`rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
-                      slippageBps === bps
-                        ? "bg-brand/20 text-brand"
-                        : "text-text-tertiary hover:text-text-primary"
-                    }`}
-                  >
-                    {(bps / 100).toFixed(1)}%
-                  </button>
-                ))}
-              </div>
-            </div>
-
             {/* Errors */}
             {validationErrors.length > 0 && (
               <div className="mt-3 rounded-lg border border-error/20 bg-error/5 px-3 py-2">
@@ -438,7 +417,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
                   Review the steps above carefully. Click Execute again to sign.
                 </p>
                 <p className="mt-0.5 text-[9px] text-yellow-400/70">
-                  Slippage: {(slippageBps / 100).toFixed(1)}% — {steps.filter((s) => s.type === "approve").length} approval(s) + 1 bundled tx
+                  {steps.filter((s) => s.type === "approve").length} approval(s) + 1 bundled tx
                 </p>
               </div>
             )}
