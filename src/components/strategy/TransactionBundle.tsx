@@ -224,6 +224,14 @@ export default function TransactionBundle({
         addApproval(selectedLoanAsset.address, selectedLoanAsset.symbol, rawBorrow);
       }
 
+      // Approve vault shares for withdrawals (adapter needs to redeem on user's behalf)
+      for (const vault of withdrawVaults) {
+        const amount = withdrawAmounts[vault.address];
+        if (!amount || parseFloat(amount) <= 0) continue;
+        // Use MAX_UINT256 since exact share amount requires on-chain read
+        addApproval(vault.address, `${vault.name} shares`, MAX_UINT256);
+      }
+
       const approvalTokens = Array.from(approvalMap.values());
 
       if (approvalTokens.length > 0) {

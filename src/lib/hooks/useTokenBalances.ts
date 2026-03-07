@@ -26,6 +26,8 @@ export function useTokenBalances(assets: Asset[]): {
     query: {
       enabled: isConnected && contracts.length > 0,
       refetchInterval: 30_000,
+      retry: 3,
+      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
     },
   });
 

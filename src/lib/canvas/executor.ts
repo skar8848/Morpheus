@@ -712,7 +712,7 @@ export function buildPostSwapBundle(
 
     if (data.type === "vaultDeposit") {
       const d = node.data as unknown as VaultDepositNodeData;
-      if (!d.vault?.address) break;
+      if (!d.vault?.address) continue;
       const vaultAddr = requireValidAddress(d.vault.address, "vault deposit");
       const vaultAssetAddr = requireValidAddress(d.vault.asset.address, "vault deposit asset");
 

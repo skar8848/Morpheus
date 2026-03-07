@@ -21,12 +21,18 @@ export default function Sidebar({ onAddPosition, highlightType }: SidebarProps) 
     event.dataTransfer.effectAllowed = "move";
   };
 
-  const borrowPositions = marketPositions.filter(
-    (p) => p.state && p.state.borrowAssets && safeBigInt(p.state.borrowAssets) > 0n
-  );
-  const vaultPos = vaultPositions.filter(
-    (p) => p.state && safeBigInt(p.state.shares) > 0n
-  );
+  const [hideDust, setHideDust] = useState(true);
+
+  const borrowPositions = marketPositions.filter((p) => {
+    if (!p.state || !p.state.borrowAssets || safeBigInt(p.state.borrowAssets) <= 0n) return false;
+    if (hideDust && (p.state.borrowAssetsUsd ?? 0) < 1) return false;
+    return true;
+  });
+  const vaultPos = vaultPositions.filter((p) => {
+    if (!p.state || safeBigInt(p.state.shares) <= 0n) return false;
+    if (hideDust && (p.state.assetsUsd ?? 0) < 1) return false;
+    return true;
+  });
 
   return (
     <div
@@ -89,9 +95,21 @@ export default function Sidebar({ onAddPosition, highlightType }: SidebarProps) 
 
           {/* Existing positions */}
           <div>
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
-              Positions
-            </p>
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
+                Positions
+              </p>
+              <button
+                onClick={() => setHideDust(!hideDust)}
+                className={`rounded px-1.5 py-0.5 text-[9px] transition-colors ${
+                  hideDust
+                    ? "bg-brand/10 text-brand"
+                    : "bg-bg-secondary text-text-tertiary hover:text-text-secondary"
+                }`}
+              >
+                Hide dust
+              </button>
+            </div>
 
             {loading ? (
               <div className="space-y-1.5">

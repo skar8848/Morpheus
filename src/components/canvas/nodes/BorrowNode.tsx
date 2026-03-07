@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { Handle, Position, useReactFlow, useEdges, useNodes, type NodeProps } from "@xyflow/react";
 import Image from "next/image";
 import { useChain } from "@/lib/context/ChainContext";
@@ -51,16 +51,23 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
     return { connectedCollateralAddress: collateralAddr, connectedAmount: total, collateralSources: sources };
   }, [edges, nodes, id]);
 
-  // Fetch real price for the connected collateral asset
-  const priceAddresses = useMemo(
-    () => (connectedCollateralAddress ? [connectedCollateralAddress] : []),
-    [connectedCollateralAddress]
-  );
+  // Fetch real prices for collateral + loan assets
+  const priceAddresses = useMemo(() => {
+    const addrs: string[] = [];
+    if (connectedCollateralAddress) addrs.push(connectedCollateralAddress);
+    if (d.market?.loanAsset?.address) addrs.push(d.market.loanAsset.address);
+    return addrs;
+  }, [connectedCollateralAddress, d.market?.loanAsset?.address]);
   const { prices } = useAssetPrices(priceAddresses);
   const collateralPrice = connectedCollateralAddress
     ? prices[connectedCollateralAddress.toLowerCase()] ?? 0
     : 0;
   const connectedAmountUsd = connectedAmount * collateralPrice;
+
+  // Loan asset price — needed to convert USD borrow amount to token amount
+  const loanAssetPrice = d.market?.loanAsset?.address
+    ? prices[d.market.loanAsset.address.toLowerCase()] ?? 0
+    : 0;
 
   // Auto-sync collateral USD from connected supply node
   useEffect(() => {
@@ -105,6 +112,7 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
   const { markets, loading: marketsLoading } = useMarkets(collateralAddresses, loanAddresses);
 
   // Compute borrow amount + HF reactively from LTV
+  // borrowAmountUsd = USD value, borrowAmount = token amount (for executor)
   const depositUsd = d.depositAmountUsd || connectedAmountUsd;
   useEffect(() => {
     if (!d.market || depositUsd <= 0) {
@@ -115,17 +123,38 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
     }
 
     const lltv = Number(d.market.lltv) / 1e18;
-    const maxBorrow = depositUsd * lltv;
-    const targetBorrow = (depositUsd * d.ltvPercent) / 100;
-    const borrowAmount = Math.min(targetBorrow, maxBorrow * 0.99);
-    const hf = borrowAmount > 0 ? (depositUsd * lltv) / borrowAmount : null;
+    const maxBorrowUsd = depositUsd * lltv;
+    const targetBorrowUsd = (depositUsd * d.ltvPercent) / 100;
+    const borrowUsd = Math.min(targetBorrowUsd, maxBorrowUsd * 0.99);
+    const hf = borrowUsd > 0 ? (depositUsd * lltv) / borrowUsd : null;
+
+    // Convert from USD to token amount using the loan asset's price
+    const borrowTokens = loanAssetPrice > 0 ? borrowUsd / loanAssetPrice : 0;
 
     updateNodeData(id, {
-      borrowAmount,
-      borrowAmountUsd: borrowAmount,
+      borrowAmount: borrowTokens,
+      borrowAmountUsd: borrowUsd,
       healthFactor: hf,
     });
-  }, [d.market?.uniqueKey, d.ltvPercent, depositUsd]);
+  }, [d.market?.uniqueKey, d.ltvPercent, depositUsd, loanAssetPrice]);
+
+  // Market liquidity check — warn if borrow exceeds available liquidity
+  const availableLiquidity = useMemo(() => {
+    if (!d.market?.state?.liquidityAssets) return null;
+    const raw = Number(d.market.state.liquidityAssets);
+    if (!isFinite(raw) || raw <= 0) return 0;
+    return raw / 10 ** d.market.loanAsset.decimals;
+  }, [d.market]);
+  const exceedsLiquidity = availableLiquidity !== null && d.borrowAmount > 0 && d.borrowAmount > availableLiquidity;
+
+  // Persist to node data so edges + ExecuteButton can read it
+  const prevExceedsRef = useRef(false);
+  useEffect(() => {
+    if (exceedsLiquidity !== prevExceedsRef.current) {
+      prevExceedsRef.current = exceedsLiquidity;
+      updateNodeData(id, { exceedsLiquidity });
+    }
+  }, [exceedsLiquidity]);
 
   const hfColor = (hf: number | null) => {
     if (hf === null) return "text-text-tertiary";
@@ -154,6 +183,7 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
       nodeType="borrow"
       title="Borrow"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
+      invalid={exceedsLiquidity}
     >
       <div className="space-y-2">
         {/* No connection hint */}
@@ -296,11 +326,16 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
             </div>
 
             {/* Borrow amount + HF */}
-            <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-2 py-1.5">
+            <div className={`flex items-center justify-between rounded-lg px-2 py-1.5 ${exceedsLiquidity ? "border border-error/30 bg-error/5" : "bg-bg-secondary"}`}>
               <div>
                 <span className="text-[10px] text-text-tertiary">Borrow</span>
                 <p className="text-xs font-medium text-text-primary">
-                  ${d.borrowAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  {d.borrowAmount > 0
+                    ? `${d.borrowAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${d.market.loanAsset.symbol}`
+                    : "—"}
+                </p>
+                <p className="text-[10px] text-text-tertiary">
+                  ${d.borrowAmountUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                 </p>
               </div>
               <div className="text-right">
@@ -310,6 +345,19 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
                 </p>
               </div>
             </div>
+
+            {/* Liquidity warning */}
+            {exceedsLiquidity && (
+              <div className="rounded-lg border border-error/20 bg-error/5 px-2 py-1.5 text-[10px] text-error">
+                Insufficient liquidity — only {availableLiquidity!.toLocaleString(undefined, { maximumFractionDigits: 4 })} {d.market.loanAsset.symbol} available
+              </div>
+            )}
+            {availableLiquidity !== null && !exceedsLiquidity && d.borrowAmount > 0 && (
+              <div className="flex items-center justify-between text-[9px] text-text-tertiary">
+                <span>Available liquidity</span>
+                <span>{availableLiquidity.toLocaleString(undefined, { maximumFractionDigits: 2 })} {d.market.loanAsset.symbol}</span>
+              </div>
+            )}
           </>
         )}
       </div>
