@@ -168,6 +168,30 @@ export async function signAndSubmitOrder(
 }
 
 /**
+ * Check the current status of a CowSwap order.
+ * Returns the status string, or null if the order can't be fetched.
+ */
+export async function getOrderStatus(
+  chainId: number,
+  orderUid: string
+): Promise<{ status: string; executedBuyAmount: string; executedSellAmount: string } | null> {
+  const apiBase = COW_API_BASE[chainId];
+  if (!apiBase) return null;
+  try {
+    const res = await fetch(`${apiBase}/orders/${orderUid}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      status: data.status as string,
+      executedBuyAmount: data.executedBuyAmount ?? "0",
+      executedSellAmount: data.executedSellAmount ?? "0",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Poll CowSwap order status until filled, cancelled, or timeout.
  * Returns the actual executed buy amount (raw wei string).
  */

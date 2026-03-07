@@ -20,6 +20,7 @@ import {
   getCowQuote,
   signAndSubmitOrder,
   pollOrderUntilFilled,
+  getOrderStatus,
   COW_VAULT_RELAYER,
 } from "@/lib/cowswap/order";
 import { formatApy } from "@/lib/utils/format";
@@ -117,6 +118,9 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   // Track wallet address via ref for reliable detection during async flow
   const addressRef = useRef(address);
   addressRef.current = address;
+  // Track pending CowSwap orders to avoid duplicate submissions
+  const pendingOrdersRef = useRef<Map<string, string>>(new Map()); // nodeId → orderUid
+  const isExecutingRef = useRef(false);
 
   /** Check on-chain allowance and filter out approvals that are already sufficient. */
   const filterNeededApprovals = useCallback(
@@ -220,6 +224,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   // Handle approval + execution flow
   const handleExecute = useCallback(async () => {
     if (!address || !isConnected) return;
+    if (isExecutingRef.current) return; // Prevent double execution
     setError(null);
     setTxHash(null);
     setApprovalStep(0);
@@ -247,6 +252,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     const execNodes = snapshotRef.current?.nodes ?? nodes;
     const execEdges = snapshotRef.current?.edges ?? edges;
 
+    isExecutingRef.current = true;
     try {
       const cid = chainId as SupportedChainId;
 
@@ -401,6 +407,33 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         for (let i = 0; i < swaps.length; i++) {
           const swap = swaps[i];
 
+          // Check if a previous order for this swap node is still active
+          const existingUid = pendingOrdersRef.current.get(swap.nodeId);
+          if (existingUid) {
+            setSwapStatus(`Checking existing order for ${swap.sellSymbol} → ${swap.buySymbol}...`);
+            const existing = await getOrderStatus(cid, existingUid);
+            if (existing) {
+              if (existing.status === "fulfilled") {
+                // Already filled — use the result directly
+                swapResults.set(swap.nodeId, BigInt(existing.executedBuyAmount));
+                pendingOrdersRef.current.delete(swap.nodeId);
+                continue;
+              }
+              if (existing.status === "open" || existing.status === "presignaturePending") {
+                // Still pending — resume polling instead of creating a duplicate
+                setSwapStatus(`Resuming poll for ${swap.sellSymbol} → ${swap.buySymbol}...`);
+                const result = await pollOrderUntilFilled(cid, existingUid, (status) => {
+                  setSwapStatus(`CowSwap: ${status} (${swap.sellSymbol} → ${swap.buySymbol})`);
+                });
+                swapResults.set(swap.nodeId, BigInt(result.executedBuyAmount));
+                pendingOrdersRef.current.delete(swap.nodeId);
+                continue;
+              }
+              // cancelled/expired — clear and create a new order
+              pendingOrdersRef.current.delete(swap.nodeId);
+            }
+          }
+
           // 2a. Approve sell token to CowSwap VaultRelayer (skip if already approved)
           setSwapStatus(`Checking ${swap.sellSymbol} allowance...`);
           const sellNeeded = await filterNeededApprovals(
@@ -431,6 +464,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           // 2c. Sign and submit order
           setSwapStatus(`Sign CowSwap order: ${swap.sellSymbol} → ${swap.buySymbol}...`);
           const orderUid = await signAndSubmitOrder(cid, quote, currentAddress);
+          pendingOrdersRef.current.set(swap.nodeId, orderUid);
 
           // 2d. Poll until filled
           setSwapStatus(`Waiting for CowSwap fill (${swap.sellSymbol} → ${swap.buySymbol})...`);
@@ -438,6 +472,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
             setSwapStatus(`CowSwap: ${status} (${swap.sellSymbol} → ${swap.buySymbol})`);
           });
 
+          pendingOrdersRef.current.delete(swap.nodeId);
           swapResults.set(swap.nodeId, BigInt(result.executedBuyAmount));
         }
 
@@ -482,6 +517,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
       setError(err instanceof Error ? err.message : "Failed to build bundle");
     } finally {
       setApprovalStep(0);
+      isExecutingRef.current = false;
     }
   }, [address, isConnected, nodes, edges, chainId, walletChainId, showConfirm, sendTransaction, switchChainAsync, filterNeededApprovals]);
 
