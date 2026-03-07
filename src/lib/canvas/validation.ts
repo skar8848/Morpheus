@@ -232,6 +232,7 @@ export function validateGraph(
         const d = node.data as {
           vault?: { address?: string; asset?: { decimals?: number } };
           amount?: string;
+          depositAll?: boolean;
         };
         if (!d.vault) {
           errors.push(`Vault deposit node: no vault selected`);
@@ -241,7 +242,8 @@ export function validateGraph(
           if (!isValidDecimals(d.vault.asset?.decimals))
             errors.push(`Vault deposit node: invalid decimals`);
         }
-        if (safeParseAmount(d.amount) <= 0)
+        // When depositAll is true, amount is determined at execution time from upstream swap output
+        if (!d.depositAll && safeParseAmount(d.amount) <= 0)
           errors.push(`Vault deposit node: no amount`);
         break;
       }

@@ -11,7 +11,7 @@ import {
   type EdgeProps,
 } from "@xyflow/react";
 
-/** Walk upstream from a node and return true if it or any ancestor has exceedsBalance or incomplete */
+/** Walk upstream from a node and return true if it or any ancestor has a blocking error */
 function isUpstreamBlocked(
   nodeId: string,
   nodesMap: Map<string, Record<string, unknown>>,
@@ -21,7 +21,7 @@ function isUpstreamBlocked(
   if (visited.has(nodeId)) return false;
   visited.add(nodeId);
   const data = nodesMap.get(nodeId);
-  if (data?.exceedsBalance || data?.incomplete) return true;
+  if (data?.exceedsBalance || data?.exceedsLiquidity || data?.incomplete) return true;
   const sources = edgesMap.get(nodeId) ?? [];
   return sources.some((src) => isUpstreamBlocked(src, nodesMap, edgesMap, visited));
 }

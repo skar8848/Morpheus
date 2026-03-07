@@ -190,7 +190,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           if (!d.market || !isFinite(d.borrowAmount) || d.borrowAmount <= 0) break;
           s.push({
             label: `Borrow ${d.market.loanAsset.symbol}`,
-            detail: `$${d.borrowAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} — ${formatApy(d.market.state.netBorrowApy)}`,
+            detail: `${d.borrowAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${d.market.loanAsset.symbol} ($${d.borrowAmountUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}) — ${formatApy(d.market.state.netBorrowApy)}`,
             type: "borrow",
             icon: d.market.loanAsset.logoURI,
           });
@@ -207,10 +207,15 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           break;
         }
         case "vaultDeposit": {
-          if (!d.vault || safeFloat(d.amount) <= 0) break;
+          if (!d.vault) break;
+          // When depositAll is true, amount comes from upstream swap at execution time
+          if (!d.depositAll && safeFloat(d.amount) <= 0) break;
+          const depositDetail = d.depositAll
+            ? `All swap output → ${d.vault.asset.symbol} — ${formatApy(d.vault.state.netApy)}`
+            : `${safeFloat(d.amount).toFixed(4)} ${d.vault.asset.symbol} — ${formatApy(d.vault.state.netApy)}`;
           s.push({
             label: `Deposit into ${d.vault.name}`,
-            detail: `${safeFloat(d.amount).toFixed(4)} ${d.vault.asset.symbol} — ${formatApy(d.vault.state.netApy)}`,
+            detail: depositDetail,
             type: "deposit",
             icon: d.vault.asset.logoURI,
           });
@@ -437,6 +442,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           // 2a + 2b: Approve sell token & fetch quote in parallel
           setSwapStatus(`Preparing ${swap.sellSymbol} → ${swap.buySymbol}...`);
 
+          const MAX_APPROVAL = 2n ** 256n - 1n;
           const approvalPromise = (async () => {
             const sellNeeded = await filterNeededApprovals(
               [{ token: swap.sellToken, amount: BigInt(swap.sellAmountWei) }],
@@ -448,7 +454,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               const approveData = encodeFunctionData({
                 abi: erc20Abi,
                 functionName: "approve",
-                args: [vaultRelayer, BigInt(swap.sellAmountWei)],
+                args: [vaultRelayer, MAX_APPROVAL],
               });
               await sendApprovals([{ to: swap.sellToken, data: approveData }]);
             }
@@ -528,6 +534,24 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     const t = (n.data as { type: string }).type;
     return t !== "wallet" && t !== "position";
   }).length;
+
+  // Check for blocking errors across all nodes
+  const blockingError = useMemo(() => {
+    for (const node of nodes) {
+      const d = node.data as Record<string, unknown>;
+      if (d.exceedsBalance) {
+        const symbol = (d.asset as { symbol?: string })?.symbol
+          ?? (d.tokenIn as { symbol?: string })?.symbol
+          ?? "";
+        return `Insufficient ${symbol} balance`;
+      }
+      if (d.exceedsLiquidity) {
+        const market = d.market as { loanAsset?: { symbol?: string } } | null;
+        return `Insufficient ${market?.loanAsset?.symbol ?? ""} market liquidity`;
+      }
+    }
+    return null;
+  }, [nodes]);
 
   if (actionCount === 0) return null;
 
@@ -664,21 +688,34 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               <span>1 bundled transaction</span>
             </div>
 
+            {/* Blocking error */}
+            {blockingError && (
+              <div className="mt-3 rounded-lg border border-error/20 bg-error/5 px-3 py-2 text-[10px] text-error">
+                {blockingError} — fix the issue above before executing
+              </div>
+            )}
+
             {/* Execute button */}
             <button
               onClick={handleExecute}
-              disabled={!isConnected || isPending || steps.length === 0}
-              className="mt-3 w-full rounded-xl bg-brand py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={!isConnected || isPending || steps.length === 0 || !!blockingError}
+              className={`mt-3 w-full rounded-xl py-3 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                blockingError
+                  ? "bg-text-tertiary"
+                  : "bg-brand hover:bg-brand-hover"
+              }`}
             >
               {!isConnected
                 ? "Connect Wallet"
-                : isPending
-                  ? approvalStep > 0
-                    ? `Approving (${approvalStep}/${totalApprovals})...`
-                    : "Confirming..."
-                  : showConfirm
-                    ? `Confirm & Execute (${steps.length} actions)`
-                    : `Execute Bundle (${steps.length} actions)`}
+                : blockingError
+                  ? "Cannot Execute"
+                  : isPending
+                    ? approvalStep > 0
+                      ? `Approving (${approvalStep}/${totalApprovals})...`
+                      : "Confirming..."
+                    : showConfirm
+                      ? `Confirm & Execute (${steps.length} actions)`
+                      : `Execute Bundle (${steps.length} actions)`}
             </button>
           </div>
         </div>
