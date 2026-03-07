@@ -137,7 +137,7 @@ export const generalAdapterAbi = [
     inputs: [
       { name: "vault", type: "address" },
       { name: "assets", type: "uint256" },
-      { name: "maxSharePriceE27", type: "uint256" },
+      { name: "minSharePriceE27", type: "uint256" },
       { name: "receiver", type: "address" },
       { name: "owner", type: "address" },
     ],

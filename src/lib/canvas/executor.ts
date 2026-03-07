@@ -84,7 +84,7 @@ function requireValidAddress(addr: unknown, label: string): `0x${string}` {
  *
  * maxSharePriceE27 = uint256.max → accept any price when depositing
  * minSharePriceE27 = 0          → accept any price when borrowing
- * maxSharePriceE27 = uint256.max → accept any price when withdrawing
+ * minSharePriceE27 = 0          → accept any price when withdrawing
  *
  * The user confirms the exact asset amount, which is the real protection.
  */
@@ -264,7 +264,7 @@ export function buildExecutionBundle(
             args: [
               vaultAddr,
               raw,
-              MAX_UINT256, // permissive: accept any share price
+              0n, // minSharePriceE27 = 0 → accept any share price
               userAddress,
               userAddress,
             ],
@@ -581,7 +581,7 @@ export function buildPreSwapBundle(
           data: encodeFunctionData({
             abi: generalAdapterAbi,
             functionName: "erc4626Withdraw",
-            args: [vaultAddr, raw, MAX_UINT256, userAddress, userAddress],
+            args: [vaultAddr, raw, 0n, userAddress, userAddress],
           }),
           value: 0n,
           skipRevert: false,

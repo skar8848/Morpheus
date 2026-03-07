@@ -292,7 +292,7 @@ export default function TransactionBundle({
             args: [
               vault.address as `0x${string}`,
               rawAssets,
-              MAX_UINT256, // permissive: accept any share price
+              0n, // minSharePriceE27 = 0 → accept any share price
               address,
               address,
             ],
