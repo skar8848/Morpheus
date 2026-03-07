@@ -105,6 +105,13 @@ export async function signAndSubmitOrder(
 
   const order = quote.quote;
 
+  // Apply 1% slippage tolerance to buyAmount so solvers can fill at slightly worse price.
+  // Without slippage the order is a strict limit order at the exact quote price,
+  // which solvers often skip on small amounts.
+  const quotedBuy = BigInt(order.buyAmount);
+  const minBuyAmount = quotedBuy - quotedBuy / 100n; // 1% slippage
+  const minBuyAmountStr = minBuyAmount.toString();
+
   // EIP-712 signature
   const signature = await signTypedData(wagmiConfig, {
     domain: {
@@ -120,7 +127,7 @@ export async function signAndSubmitOrder(
       buyToken: order.buyToken as `0x${string}`,
       receiver: (order.receiver || userAddress) as `0x${string}`,
       sellAmount: BigInt(order.sellAmount),
-      buyAmount: BigInt(order.buyAmount),
+      buyAmount: minBuyAmount,
       validTo: order.validTo,
       appData: order.appData as `0x${string}`,
       feeAmount: 0n,
@@ -141,7 +148,7 @@ export async function signAndSubmitOrder(
       buyToken: order.buyToken,
       receiver: order.receiver || userAddress,
       sellAmount: order.sellAmount,
-      buyAmount: order.buyAmount,
+      buyAmount: minBuyAmountStr,
       validTo: order.validTo,
       appData: order.appData,
       feeAmount: "0",
