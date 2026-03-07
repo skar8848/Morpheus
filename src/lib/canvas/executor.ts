@@ -730,13 +730,22 @@ export function buildPostSwapBundle(
         }
       }
 
-      // Use actual swap output if available, otherwise fall back to user-specified amount
+      // Use the user-specified amount if set, capped at the actual swap output.
+      // If depositAll is true or no amount is set, deposit the full swap output.
       let rawAmount: bigint;
-      if (swapNodeId && swapResults.has(swapNodeId)) {
-        rawAmount = swapResults.get(swapNodeId)!;
+      const swapOutput = swapNodeId ? swapResults.get(swapNodeId) ?? 0n : 0n;
+      const userAmount = d.amount ? safeAmountToBigInt(d.amount, d.vault.asset.decimals) : 0n;
+
+      if (swapOutput > 0n) {
+        if (d.depositAll || userAmount <= 0n) {
+          rawAmount = swapOutput;
+        } else {
+          // Respect user amount, but cap at swap output
+          rawAmount = userAmount < swapOutput ? userAmount : swapOutput;
+        }
       } else {
         if (!d.amount) continue;
-        rawAmount = safeAmountToBigInt(d.amount, d.vault.asset.decimals);
+        rawAmount = userAmount;
       }
       if (rawAmount === 0n) continue;
 

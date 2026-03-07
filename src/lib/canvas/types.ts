@@ -56,6 +56,8 @@ export interface VaultDepositNodeData {
   vault: Vault | null;
   amount: string;
   amountUsd: number;
+  /** Deposit entire upstream swap output (default true when connected to swap) */
+  depositAll?: boolean;
   /** Per-source allocation percentages keyed by source node id */
   allocPcts?: Record<string, number>;
 }
