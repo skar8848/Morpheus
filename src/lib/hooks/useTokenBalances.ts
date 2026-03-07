@@ -44,7 +44,7 @@ export function useTokenBalances(assets: Asset[]): {
           .toString()
           .padStart(asset.decimals, "0")
           .slice(0, 6);
-        formatted = `${intPart}.${fracStr}`.replace(/\.?0+$/, "") || "0";
+        formatted = `${intPart}.${fracStr}`.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "") || "0";
       }
 
       return {

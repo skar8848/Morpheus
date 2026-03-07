@@ -43,6 +43,9 @@ export function useAddressPositions(
   const abortRef = useRef<AbortController | null>(null);
   const skipRef = useRef(0);
   const loadingMoreRef = useRef(false);
+  // Track current address to detect stale loadMore responses
+  const addressRef = useRef(address);
+  addressRef.current = address;
 
   // Initial fetch: positions + first page of transactions
   useEffect(() => {
@@ -119,6 +122,7 @@ export function useAddressPositions(
     }
 
     loadingMoreRef.current = true;
+    const fetchAddress = address; // capture for stale check
 
     morphoQuery<TransactionsResponse>(USER_TRANSACTIONS_QUERY, {
       userAddress: [address],
@@ -127,6 +131,8 @@ export function useAddressPositions(
       skip: skipRef.current,
     })
       .then((txData) => {
+        // Discard if address changed while fetching
+        if (addressRef.current !== fetchAddress) return;
         const newTxs = txData.transactions.items;
         setTransactions((prev) => [...prev, ...newTxs]);
         setHasMore(newTxs.length === TX_PAGE_SIZE && skipRef.current + TX_PAGE_SIZE < MAX_TRANSACTIONS);
