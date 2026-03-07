@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position, useReactFlow, useEdges, useNodes, type NodeProps } from "@xyflow/react";
 import Image from "next/image";
 import { useChain } from "@/lib/context/ChainContext";
@@ -19,6 +19,12 @@ interface UpstreamSource {
   loanAddress: string;
 }
 
+interface UpstreamSwapInfo {
+  nodeId: string;
+  tokenOutSymbol: string;
+  quoteOut: string; // human-readable estimated output
+}
+
 function VaultDepositNodeComponent({ id, data }: NodeProps) {
   const { updateNodeData, deleteElements } = useReactFlow();
   const { chainId } = useChain();
@@ -33,6 +39,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     const incomingEdges = edges.filter((e) => e.target === id);
     const sources: UpstreamSource[] = [];
     let loanAddr: string | null = null;
+    let swapInfo: UpstreamSwapInfo | null = null;
 
     for (const edge of incomingEdges) {
       const sourceNode = allNodes.find((n) => n.id === edge.source);
@@ -63,8 +70,14 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
 
       if (sd.type === "swap") {
         const tokenOut = sd.tokenOut as { address: string; symbol?: string } | null;
+        const quoteOut = (sd.quoteOut as string) ?? "";
         if (tokenOut?.address) {
           loanAddr = tokenOut.address;
+          swapInfo = {
+            nodeId: sourceNode.id,
+            tokenOutSymbol: tokenOut.symbol ?? "?",
+            quoteOut,
+          };
           sources.push({
             nodeId: sourceNode.id,
             label: `Swap → ${tokenOut.symbol ?? "?"}`,
@@ -103,11 +116,13 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
       }
     }
 
-    return { sources, connectedLoanAddress: loanAddr };
+    return { sources, connectedLoanAddress: loanAddr, swapInfo };
   }, [edges, allNodes, id]);
 
-  const { sources, connectedLoanAddress } = upstreamSources;
+  const { sources, connectedLoanAddress, swapInfo } = upstreamSources;
   const hasBorrowUpstream = sources.some((s) => s.borrowAmount > 0);
+  const hasSwapUpstream = !!swapInfo;
+  const swapQuoteNum = parseFloat(swapInfo?.quoteOut || "0");
 
   // For each borrow source, find sibling vault deposits and their allocations
   const siblingAllocations = useMemo(() => {
@@ -191,6 +206,18 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
       };
     });
   const totalDeposit = sourceDeposits.reduce((sum, s) => sum + s.depositAmount, 0);
+
+  // Auto-set depositAll when swap first connects
+  const prevSwapRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (swapInfo && swapInfo.nodeId !== prevSwapRef.current) {
+      prevSwapRef.current = swapInfo.nodeId;
+      if (d.depositAll === undefined) {
+        updateNodeData(id, { depositAll: true });
+      }
+    }
+    if (!swapInfo) prevSwapRef.current = null;
+  }, [swapInfo]);
 
   const truncateAddress = (addr: string) =>
     `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -302,7 +329,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
               </div>
             </div>
 
-            {/* Amount — multi-source sliders when borrow upstream, manual otherwise */}
+            {/* Amount — multi-source sliders when borrow upstream, swap-aware when swap upstream, manual otherwise */}
             {hasBorrowUpstream ? (
               <div className="nodrag space-y-2">
                 {sourceDeposits.map((src) => {
@@ -322,8 +349,6 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
                       amount: newTotal.toFixed(6),
                     });
                   };
-
-                  const overAllocated = src.pct > src.maxPct;
 
                   return (
                     <div key={src.nodeId} className="space-y-1">
@@ -374,6 +399,91 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
                     {totalDeposit.toFixed(4)} {d.vault?.asset.symbol ?? ""}
                   </span>
                 </div>
+              </div>
+            ) : hasSwapUpstream ? (
+              <div className="nodrag space-y-1.5">
+                {/* Deposit All toggle */}
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] text-text-tertiary">
+                    Deposit all swap output
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newVal = !d.depositAll;
+                      updateNodeData(id, {
+                        depositAll: newVal,
+                        amount: newVal ? "" : (swapQuoteNum > 0 ? swapQuoteNum.toFixed(6) : ""),
+                      });
+                    }}
+                    className={`relative h-4 w-7 rounded-full transition-colors ${
+                      d.depositAll !== false ? "bg-purple-400" : "bg-bg-secondary border border-border"
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${
+                        d.depositAll !== false ? "left-3.5" : "left-0.5"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* Estimated swap output */}
+                {swapQuoteNum > 0 && (
+                  <div className="rounded-lg bg-bg-primary px-2 py-1">
+                    <span className="text-[10px] text-text-tertiary">
+                      Est. swap output: ~{swapQuoteNum.toFixed(4)} {swapInfo?.tokenOutSymbol}
+                    </span>
+                  </div>
+                )}
+
+                {/* Custom amount when not depositing all */}
+                {d.depositAll === false && (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] text-text-tertiary">Amount</label>
+                      {swapQuoteNum > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => updateNodeData(id, { amount: swapQuoteNum.toFixed(6) })}
+                          className="text-[9px] text-text-tertiary hover:text-brand transition-colors"
+                        >
+                          MAX
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="number"
+                      placeholder="0.00"
+                      className="w-full rounded-lg border border-border bg-bg-secondary px-2 py-1.5 text-xs text-text-primary outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                      value={d.amount}
+                      onChange={(e) => updateNodeData(id, { amount: e.target.value })}
+                    />
+                    {swapQuoteNum > 0 && (
+                      <>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          value={Math.min(100, Math.round((parseFloat(d.amount || "0") / swapQuoteNum) * 100))}
+                          onChange={(e) => {
+                            const p = parseInt(e.target.value);
+                            updateNodeData(id, { amount: ((swapQuoteNum * p) / 100).toFixed(6) });
+                          }}
+                          className="w-full accent-purple-400"
+                        />
+                        <div className="flex items-center justify-between rounded-lg bg-bg-primary px-2 py-1">
+                          <span className="text-[10px] text-text-tertiary">
+                            {parseFloat(d.amount || "0").toFixed(4)} {d.vault?.asset.symbol ?? ""}
+                          </span>
+                          <span className="text-[10px] text-text-tertiary">
+                            of ~{swapQuoteNum.toFixed(4)}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
               </div>
             ) : (
               <div className="nodrag">
