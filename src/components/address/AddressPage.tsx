@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { isAddress } from "viem";
 import { useChain } from "@/lib/context/ChainContext";
 import { useAddressPositions } from "@/lib/hooks/useAddressPositions";
 import {
@@ -15,10 +16,12 @@ function parseAddress(input: string): string | null {
   const trimmed = input.trim();
   // Direct address
   const addrMatch = trimmed.match(/^(0x[a-fA-F0-9]{40})$/);
-  if (addrMatch) return addrMatch[1].toLowerCase();
-  // Etherscan URL: extract address from path
-  const urlMatch = trimmed.match(/\/address\/(0x[a-fA-F0-9]{40})/i);
-  if (urlMatch) return urlMatch[1].toLowerCase();
+  if (addrMatch && isAddress(addrMatch[1])) return addrMatch[1].toLowerCase();
+  // Etherscan/Basescan URL: enforce HTTPS + known domains
+  const urlMatch = trimmed.match(
+    /^https:\/\/(?:www\.)?(?:etherscan\.io|basescan\.org)\/address\/(0x[a-fA-F0-9]{40})/i
+  );
+  if (urlMatch && isAddress(urlMatch[1])) return urlMatch[1].toLowerCase();
   return null;
 }
 

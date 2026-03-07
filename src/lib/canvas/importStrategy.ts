@@ -313,13 +313,51 @@ export function saveImportedStrategy(strategy: ImportedStrategy) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(strategy));
 }
 
+/** Validate that an imported strategy has valid structure */
+function isValidImportedStrategy(data: unknown): data is ImportedStrategy {
+  if (!data || typeof data !== "object") return false;
+  const obj = data as Record<string, unknown>;
+
+  // Must have nodes array, edges array, sourceAddress string
+  if (!Array.isArray(obj.nodes) || !Array.isArray(obj.edges)) return false;
+  if (typeof obj.sourceAddress !== "string") return false;
+
+  // Limit size to prevent memory abuse
+  if (obj.nodes.length > 200 || obj.edges.length > 500) return false;
+
+  // Validate each node has required fields
+  for (const node of obj.nodes) {
+    if (!node || typeof node !== "object") return false;
+    const n = node as Record<string, unknown>;
+    if (typeof n.id !== "string") return false;
+    if (typeof n.type !== "string") return false;
+    if (!n.position || typeof n.position !== "object") return false;
+    if (!n.data || typeof n.data !== "object") return false;
+    const d = n.data as Record<string, unknown>;
+    if (typeof d.type !== "string") return false;
+  }
+
+  // Validate each edge has required fields
+  for (const edge of obj.edges) {
+    if (!edge || typeof edge !== "object") return false;
+    const e = edge as Record<string, unknown>;
+    if (typeof e.id !== "string") return false;
+    if (typeof e.source !== "string") return false;
+    if (typeof e.target !== "string") return false;
+  }
+
+  return true;
+}
+
 /** Load and consume (delete) an imported strategy from localStorage */
 export function consumeImportedStrategy(): ImportedStrategy | null {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return null;
   localStorage.removeItem(STORAGE_KEY);
   try {
-    return JSON.parse(raw) as ImportedStrategy;
+    const parsed = JSON.parse(raw);
+    if (!isValidImportedStrategy(parsed)) return null;
+    return parsed;
   } catch {
     return null;
   }

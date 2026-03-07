@@ -1,21 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import Image from "next/image";
 import type { Edge } from "@xyflow/react";
 import { useAccount, useSendTransaction } from "wagmi";
-import { encodeFunctionData } from "viem";
 import { useChain } from "@/lib/context/ChainContext";
 import { validateGraph } from "@/lib/canvas/validation";
+import {
+  buildExecutionBundle,
+  getRequiredApprovals,
+  buildApprovalTxs,
+} from "@/lib/canvas/executor";
 import { formatApy } from "@/lib/utils/format";
 import type { CanvasNode, CanvasNodeData } from "@/lib/canvas/types";
 import type { SupportedChainId } from "@/lib/web3/chains";
-import {
-  BUNDLER3,
-  GENERAL_ADAPTER1,
-  bundler3Abi,
-  generalAdapterAbi,
-} from "@/lib/constants/contracts";
+import { GENERAL_ADAPTER1 } from "@/lib/constants/contracts";
 
 interface ExecuteButtonProps {
   nodes: CanvasNode[];
@@ -47,6 +46,13 @@ const typeLabels: Record<string, string> = {
   swap: "SWAP",
 };
 
+/** Safe parseFloat */
+function safeFloat(val: string | undefined): number {
+  if (!val) return 0;
+  const n = parseFloat(val);
+  return isFinite(n) ? n : 0;
+}
+
 function topologicalSort(nodes: CanvasNode[], edges: Edge[]): CanvasNode[] {
   const adjList = new Map<string, string[]>();
   const inDegree = new Map<string, number>();
@@ -55,6 +61,7 @@ function topologicalSort(nodes: CanvasNode[], edges: Edge[]): CanvasNode[] {
     inDegree.set(node.id, 0);
   }
   for (const edge of edges) {
+    if (!adjList.has(edge.source) || !adjList.has(edge.target)) continue;
     adjList.get(edge.source)?.push(edge.target);
     inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
   }
@@ -84,8 +91,12 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   const [error, setError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [expanded, setExpanded] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [slippageBps, setSlippageBps] = useState(50); // 0.5% default
+  const [approvalStep, setApprovalStep] = useState<number>(0); // 0 = not started
+  const [totalApprovals, setTotalApprovals] = useState(0);
 
-  // Build visual steps from graph (same order as execution)
+  // Build visual steps from graph
   const steps = useMemo(() => {
     const sorted = topologicalSort(nodes, edges);
     const s: BundleStep[] = [];
@@ -95,33 +106,33 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
 
       switch (d.type) {
         case "vaultWithdraw": {
-          if (!d.position || !d.amount || parseFloat(d.amount) <= 0) break;
+          if (!d.position || safeFloat(d.amount) <= 0) break;
           s.push({
             label: `Withdraw from ${d.position.vault.name}`,
-            detail: `${parseFloat(d.amount).toFixed(4)} ${d.position.vault.asset.symbol}`,
+            detail: `${safeFloat(d.amount).toFixed(4)} ${d.position.vault.asset.symbol}`,
             type: "withdraw",
             icon: d.position.vault.asset.logoURI,
           });
           break;
         }
         case "supplyCollateral": {
-          if (!d.asset || !d.amount || parseFloat(d.amount) <= 0) break;
+          if (!d.asset || safeFloat(d.amount) <= 0) break;
           s.push({
             label: `Approve ${d.asset.symbol}`,
-            detail: `${parseFloat(d.amount).toFixed(4)} ${d.asset.symbol}`,
+            detail: `${safeFloat(d.amount).toFixed(4)} ${d.asset.symbol} to Bundler`,
             type: "approve",
             icon: d.asset.logoURI,
           });
           s.push({
             label: `Supply ${d.asset.symbol} collateral`,
-            detail: `${parseFloat(d.amount).toFixed(4)} ${d.asset.symbol}`,
+            detail: `${safeFloat(d.amount).toFixed(4)} ${d.asset.symbol}`,
             type: "supply",
             icon: d.asset.logoURI,
           });
           break;
         }
         case "borrow": {
-          if (!d.market || d.borrowAmount <= 0) break;
+          if (!d.market || !isFinite(d.borrowAmount) || d.borrowAmount <= 0) break;
           s.push({
             label: `Borrow ${d.market.loanAsset.symbol}`,
             detail: `$${d.borrowAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} — ${formatApy(d.market.state.netBorrowApy)}`,
@@ -141,10 +152,10 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           break;
         }
         case "vaultDeposit": {
-          if (!d.vault || !d.amount || parseFloat(d.amount) <= 0) break;
+          if (!d.vault || safeFloat(d.amount) <= 0) break;
           s.push({
             label: `Deposit into ${d.vault.name}`,
-            detail: `${parseFloat(d.amount).toFixed(4)} ${d.vault.asset.symbol} — ${formatApy(d.vault.state.netApy)}`,
+            detail: `${safeFloat(d.amount).toFixed(4)} ${d.vault.asset.symbol} — ${formatApy(d.vault.state.netApy)}`,
             type: "deposit",
             icon: d.vault.asset.logoURI,
           });
@@ -155,197 +166,89 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     return s;
   }, [nodes, edges]);
 
-  // Build and send the bundler transaction
-  const handleExecute = () => {
+  // Handle approval + execution flow
+  const handleExecute = useCallback(async () => {
     if (!address || !isConnected) return;
     setError(null);
     setTxHash(null);
+    setApprovalStep(0);
 
+    // 1. Validate
     const errors = validateGraph(nodes, edges);
     setValidationErrors(errors);
-    if (errors.length > 0) return;
+    if (errors.length > 0) {
+      setShowConfirm(false);
+      return;
+    }
+
+    // 2. If not confirmed yet, show confirmation
+    if (!showConfirm) {
+      setShowConfirm(true);
+      return;
+    }
 
     try {
-      const adapter = GENERAL_ADAPTER1[chainId as SupportedChainId];
-      const bundler = BUNDLER3[chainId as SupportedChainId];
-      if (!adapter || !bundler) {
+      const cid = chainId as SupportedChainId;
+      const adapter = GENERAL_ADAPTER1[cid];
+      if (!adapter) {
         setError("Chain not supported");
         return;
       }
 
-      const zeroHash =
-        "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
+      // 3. Send approval txs (one per token)
+      const approvals = getRequiredApprovals(nodes, edges, cid);
+      if (approvals.length > 0) {
+        setTotalApprovals(approvals.length);
+        const approveTxs = buildApprovalTxs(
+          approvals.map((a) => ({ token: a.token, amount: a.amount })),
+          adapter
+        );
 
-      const calls: {
-        to: `0x${string}`;
-        data: `0x${string}`;
-        value: bigint;
-        skipRevert: boolean;
-        callbackHash: `0x${string}`;
-      }[] = [];
-
-      let hasSwap = false;
-      const sorted = topologicalSort(nodes, edges);
-
-      for (const node of sorted) {
-        const d = node.data as CanvasNodeData;
-
-        switch (d.type) {
-          case "vaultWithdraw": {
-            if (!d.position || !d.amount || parseFloat(d.amount) <= 0) break;
-            const shares = BigInt(
-              Math.floor(parseFloat(d.amount) * 10 ** d.position.vault.asset.decimals)
-            );
-            calls.push({
-              to: adapter,
-              data: encodeFunctionData({
-                abi: generalAdapterAbi,
-                functionName: "erc4626Redeem",
-                args: [
-                  d.position.vault.address as `0x${string}`,
-                  shares,
-                  0n,
-                  address,
-                  address,
-                ],
-              }),
-              value: 0n,
-              skipRevert: false,
-              callbackHash: zeroHash,
-            });
-            break;
-          }
-
-          case "supplyCollateral": {
-            if (!d.asset || !d.amount || parseFloat(d.amount) <= 0) break;
-            const rawAmount = BigInt(
-              Math.floor(parseFloat(d.amount) * 10 ** d.asset.decimals)
-            );
-            // Transfer collateral to adapter
-            calls.push({
-              to: adapter,
-              data: encodeFunctionData({
-                abi: generalAdapterAbi,
-                functionName: "erc20TransferFrom",
-                args: [d.asset.address as `0x${string}`, adapter, rawAmount],
-              }),
-              value: 0n,
-              skipRevert: false,
-              callbackHash: zeroHash,
-            });
-
-            // Find downstream borrow market to supply collateral into
-            const downEdge = edges.find((e) => e.source === node.id);
-            if (downEdge) {
-              const borrowNode = nodes.find((n) => n.id === downEdge.target);
-              if (borrowNode) {
-                const bd = borrowNode.data as CanvasNodeData;
-                if (bd.type === "borrow" && bd.market) {
-                  const marketParams = {
-                    loanToken: bd.market.loanAsset.address as `0x${string}`,
-                    collateralToken: bd.market.collateralAsset.address as `0x${string}`,
-                    oracle: bd.market.oracle.address as `0x${string}`,
-                    irm: bd.market.irmAddress as `0x${string}`,
-                    lltv: BigInt(bd.market.lltv),
-                  };
-                  calls.push({
-                    to: adapter,
-                    data: encodeFunctionData({
-                      abi: generalAdapterAbi,
-                      functionName: "morphoSupplyCollateral",
-                      args: [marketParams, rawAmount, address, "0x"],
-                    }),
-                    value: 0n,
-                    skipRevert: false,
-                    callbackHash: zeroHash,
-                  });
-                }
+        for (let i = 0; i < approveTxs.length; i++) {
+          setApprovalStep(i + 1);
+          await new Promise<void>((resolve, reject) => {
+            sendTransaction(
+              {
+                to: approveTxs[i].to,
+                data: approveTxs[i].data,
+                value: 0n,
+              },
+              {
+                onSuccess: () => resolve(),
+                onError: (err) => reject(err),
               }
-            }
-            break;
-          }
-
-          case "borrow": {
-            if (!d.market || d.borrowAmount <= 0) break;
-            const rawBorrow = BigInt(
-              Math.floor(d.borrowAmount * 10 ** d.market.loanAsset.decimals)
             );
-            const marketParams = {
-              loanToken: d.market.loanAsset.address as `0x${string}`,
-              collateralToken: d.market.collateralAsset.address as `0x${string}`,
-              oracle: d.market.oracle.address as `0x${string}`,
-              irm: d.market.irmAddress as `0x${string}`,
-              lltv: BigInt(d.market.lltv),
-            };
-            calls.push({
-              to: adapter,
-              data: encodeFunctionData({
-                abi: generalAdapterAbi,
-                functionName: "morphoBorrow",
-                args: [marketParams, rawBorrow, 0n, 0n, address],
-              }),
-              value: 0n,
-              skipRevert: false,
-              callbackHash: zeroHash,
-            });
-            break;
-          }
-
-          case "vaultDeposit": {
-            if (!d.vault || !d.amount || parseFloat(d.amount) <= 0) break;
-            const rawDeposit = BigInt(
-              Math.floor(parseFloat(d.amount) * 10 ** d.vault.asset.decimals)
-            );
-            calls.push({
-              to: adapter,
-              data: encodeFunctionData({
-                abi: generalAdapterAbi,
-                functionName: "erc4626Deposit",
-                args: [
-                  d.vault.address as `0x${string}`,
-                  rawDeposit,
-                  BigInt("1000000000000000000000000000"),
-                  address,
-                ],
-              }),
-              value: 0n,
-              skipRevert: false,
-              callbackHash: zeroHash,
-            });
-            break;
-          }
-
-          case "swap": {
-            hasSwap = true;
-            break;
-          }
+          });
         }
       }
 
-      if (calls.length === 0 && !hasSwap) {
+      // 4. Build and send bundler tx
+      setApprovalStep(0);
+      const bundle = buildExecutionBundle(nodes, edges, address, cid, slippageBps);
+
+      if (bundle.calls.length === 0 && !bundle.hasSwap) {
         setError("No executable actions in graph");
         return;
       }
 
-      if (hasSwap) {
+      if (bundle.hasSwap) {
         setError(
           "Graph contains swap nodes. CowSwap orders will be submitted separately after the bundler tx."
         );
       }
 
-      if (calls.length > 0) {
+      if (bundle.calls.length > 0) {
         sendTransaction(
           {
-            to: bundler,
-            data: encodeFunctionData({
-              abi: bundler3Abi,
-              functionName: "multicall",
-              args: [calls],
-            }),
+            to: bundle.to,
+            data: bundle.data,
             value: 0n,
           },
           {
-            onSuccess: (hash) => setTxHash(hash),
+            onSuccess: (hash) => {
+              setTxHash(hash);
+              setShowConfirm(false);
+            },
             onError: (err) => setError(err.message),
           }
         );
@@ -353,9 +256,8 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to build bundle");
     }
-  };
+  }, [address, isConnected, nodes, edges, chainId, showConfirm, slippageBps, sendTransaction]);
 
-  // Count actionable nodes
   const actionCount = nodes.filter((n) => {
     const t = (n.data as { type: string }).type;
     return t !== "wallet" && t !== "position";
@@ -367,9 +269,8 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     <div
       className="absolute bottom-0 left-1/2 z-30 -translate-x-1/2"
       onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => setExpanded(false)}
+      onMouseLeave={() => { setExpanded(false); if (!showConfirm) setShowConfirm(false); }}
     >
-      {/* Collapsed tab — always visible, sticking out from the bottom */}
       <div
         className={`rounded-t-2xl border border-b-0 border-border bg-bg-card/95 shadow-2xl backdrop-blur-md transition-all duration-300 ${
           expanded ? "w-[520px]" : "w-[320px]"
@@ -392,29 +293,25 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           </span>
         </div>
 
-        {/* Expandable summary — slides down on hover */}
+        {/* Expandable content */}
         <div
           className={`overflow-hidden transition-all duration-300 ${
-            expanded ? "max-h-[500px] opacity-100" : "max-h-0 opacity-0"
+            expanded ? "max-h-[600px] opacity-100" : "max-h-0 opacity-0"
           }`}
         >
           <div className="border-t border-border px-5 py-4">
             {/* Steps timeline */}
             {steps.length > 0 ? (
               <div className="relative">
-                {/* Vertical line */}
                 <div className="absolute left-[11px] top-3 bottom-3 w-[2px] bg-gradient-to-b from-brand via-success to-purple-400 opacity-30" />
-
                 <div className="space-y-2">
                   {steps.map((step, i) => (
                     <div key={i} className="relative flex items-center gap-3">
-                      {/* Step number */}
                       <div
                         className={`relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${typeColors[step.type]}`}
                       >
                         {i + 1}
                       </div>
-                      {/* Step content */}
                       <div className="flex flex-1 items-center justify-between rounded-lg border border-border bg-bg-secondary px-3 py-2">
                         <div className="flex items-center gap-2">
                           <Image
@@ -450,6 +347,26 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               </p>
             )}
 
+            {/* Slippage setting */}
+            <div className="mt-3 flex items-center justify-between rounded-lg border border-border bg-bg-secondary px-3 py-2">
+              <span className="text-[10px] text-text-tertiary">Slippage Tolerance</span>
+              <div className="flex items-center gap-1">
+                {[50, 100, 200].map((bps) => (
+                  <button
+                    key={bps}
+                    onClick={() => setSlippageBps(bps)}
+                    className={`rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
+                      slippageBps === bps
+                        ? "bg-brand/20 text-brand"
+                        : "text-text-tertiary hover:text-text-primary"
+                    }`}
+                  >
+                    {(bps / 100).toFixed(1)}%
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Errors */}
             {validationErrors.length > 0 && (
               <div className="mt-3 rounded-lg border border-error/20 bg-error/5 px-3 py-2">
@@ -469,6 +386,25 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               </div>
             )}
 
+            {/* Confirmation warning */}
+            {showConfirm && !txHash && (
+              <div className="mt-3 rounded-lg border border-yellow-400/20 bg-yellow-400/5 px-3 py-2">
+                <p className="text-[10px] font-medium text-yellow-400">
+                  Review the steps above carefully. Click Execute again to sign.
+                </p>
+                <p className="mt-0.5 text-[9px] text-yellow-400/70">
+                  Slippage: {(slippageBps / 100).toFixed(1)}% — {steps.filter((s) => s.type === "approve").length} approval(s) + 1 bundled tx
+                </p>
+              </div>
+            )}
+
+            {/* Approval progress */}
+            {approvalStep > 0 && (
+              <div className="mt-3 rounded-lg border border-yellow-400/20 bg-yellow-400/5 px-3 py-2 text-[10px] text-yellow-400">
+                Approving token {approvalStep}/{totalApprovals}...
+              </div>
+            )}
+
             {/* Summary bar */}
             <div className="mt-3 flex items-center justify-between rounded-lg border border-border bg-bg-secondary px-3 py-2 text-[10px] text-text-tertiary">
               <span>{steps.length} action{steps.length !== 1 ? "s" : ""}</span>
@@ -484,12 +420,13 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               {!isConnected
                 ? "Connect Wallet"
                 : isPending
-                  ? "Confirming..."
-                  : `Execute Bundle (${steps.length} actions)`}
+                  ? approvalStep > 0
+                    ? `Approving (${approvalStep}/${totalApprovals})...`
+                    : "Confirming..."
+                  : showConfirm
+                    ? `Confirm & Execute (${steps.length} actions)`
+                    : `Execute Bundle (${steps.length} actions)`}
             </button>
-            <p className="mt-1.5 text-center text-[9px] text-text-tertiary">
-              Requires ERC-20 approval to Bundler adapter
-            </p>
           </div>
         </div>
       </div>
