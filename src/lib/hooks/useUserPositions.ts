@@ -15,6 +15,15 @@ import type {
 } from "../graphql/types";
 import { useChain } from "../context/ChainContext";
 
+function safeBigInt(value: unknown): bigint {
+  if (typeof value !== "string" && typeof value !== "number") return 0n;
+  try {
+    return BigInt(value);
+  } catch {
+    return 0n;
+  }
+}
+
 export function useUserPositions() {
   const { chainId } = useChain();
   const { address, isConnected } = useAccount();
@@ -57,16 +66,14 @@ export function useUserPositions() {
         // Filter out empty positions
         const activeMarkets = marketData.marketPositions.items.filter((p) => {
           if (!p.state) return false;
-          const hasBorrow =
-            p.state.borrowAssets && BigInt(p.state.borrowAssets) > 0n;
-          const hasSupply =
-            p.state.supplyAssets && BigInt(p.state.supplyAssets) > 0n;
-          const hasCollateral = BigInt(p.state.collateral) > 0n;
+          const hasBorrow = safeBigInt(p.state.borrowAssets) > 0n;
+          const hasSupply = safeBigInt(p.state.supplyAssets) > 0n;
+          const hasCollateral = safeBigInt(p.state.collateral) > 0n;
           return hasBorrow || hasSupply || hasCollateral;
         });
 
         const activeVaults = vaultData.vaultPositions.items.filter(
-          (p) => p.state && BigInt(p.state.shares) > 0n
+          (p) => p.state && safeBigInt(p.state.shares) > 0n
         );
 
         setMarketPositions(activeMarkets);

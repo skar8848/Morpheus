@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from "react";
 import Image from "next/image";
-import { useAccount, useSendTransaction } from "wagmi";
-import { encodeFunctionData } from "viem";
+import { useAccount, useSendTransaction, useChainId, useSwitchChain } from "wagmi";
+import { encodeFunctionData, parseUnits } from "viem";
 import type { Asset, Market, Vault } from "@/lib/graphql/types";
 import {
   BUNDLER3,
@@ -14,6 +14,21 @@ import {
 import type { SupportedChainId } from "@/lib/web3/chains";
 import { useChain } from "@/lib/context/ChainContext";
 import { formatUsd } from "@/lib/utils/format";
+
+const SLIPPAGE_BPS = 50; // 0.5%
+const E27 = 10n ** 27n;
+const maxSharePrice = E27 + (E27 * BigInt(SLIPPAGE_BPS)) / 10000n;
+const minSharePrice = E27 - (E27 * BigInt(SLIPPAGE_BPS)) / 10000n;
+
+function safeParseUnits(amount: string, decimals: number): bigint {
+  try {
+    const num = parseFloat(amount);
+    if (!isFinite(num) || num <= 0) return 0n;
+    return parseUnits(amount, decimals);
+  } catch {
+    return 0n;
+  }
+}
 
 interface BundleStep {
   label: string;
@@ -49,6 +64,8 @@ export default function TransactionBundle({
 }: TransactionBundleProps) {
   const { address, isConnected } = useAccount();
   const { chainId } = useChain();
+  const walletChainId = useChainId();
+  const { switchChainAsync } = useSwitchChain();
   const { sendTransaction, isPending } = useSendTransaction();
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -145,14 +162,26 @@ export default function TransactionBundle({
     vaultAllocations,
   ]);
 
-  const handleExecute = () => {
+  const handleExecute = async () => {
     if (!address || !isConnected) return;
     setError(null);
     setTxHash(null);
 
     try {
-      const adapter = GENERAL_ADAPTER1[chainId as SupportedChainId];
-      const bundler = BUNDLER3[chainId as SupportedChainId];
+      const cid = chainId as SupportedChainId;
+
+      // C1 fix: Verify wallet is on the correct chain
+      if (walletChainId !== chainId) {
+        try {
+          await switchChainAsync({ chainId: cid });
+        } catch {
+          setError(`Please switch your wallet to chain ${chainId}`);
+          return;
+        }
+      }
+
+      const adapter = GENERAL_ADAPTER1[cid];
+      const bundler = BUNDLER3[cid];
       if (!adapter || !bundler) {
         setError("Chain not supported");
         return;
@@ -169,13 +198,12 @@ export default function TransactionBundle({
       const zeroHash =
         "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
 
-      // Encode withdraw calls
+      // Encode withdraw calls — with slippage protection (C3 fix)
       for (const vault of withdrawVaults) {
         const amount = withdrawAmounts[vault.address];
         if (!amount || parseFloat(amount) <= 0) continue;
-        const shares = BigInt(
-          Math.floor(parseFloat(amount) * 10 ** vault.asset.decimals)
-        );
+        const shares = safeParseUnits(amount, vault.asset.decimals);
+        if (shares === 0n) continue;
         calls.push({
           to: adapter,
           data: encodeFunctionData({
@@ -184,7 +212,7 @@ export default function TransactionBundle({
             args: [
               vault.address as `0x${string}`,
               shares,
-              0n,
+              minSharePrice, // C3 fix: slippage protection
               address,
               address,
             ],
@@ -206,9 +234,8 @@ export default function TransactionBundle({
         const amount = depositAmounts[asset.address];
         if (!amount || parseFloat(amount) <= 0) continue;
 
-        const rawAmount = BigInt(
-          Math.floor(parseFloat(amount) * 10 ** asset.decimals)
-        );
+        const rawAmount = safeParseUnits(amount, asset.decimals);
+        if (rawAmount === 0n) continue;
 
         const marketParams = {
           loanToken: market.loanAsset.address as `0x${string}`,
@@ -245,37 +272,46 @@ export default function TransactionBundle({
         });
       }
 
-      // Borrow from first selected market
+      // Borrow from first selected market — with slippage (C3 fix)
       if (
         borrowAmount > 0 &&
         selectedLoanAsset &&
         selectedMarkets.length > 0
       ) {
         const market = selectedMarkets[0];
-        const rawBorrow = BigInt(
-          Math.floor(borrowAmount * 10 ** selectedLoanAsset.decimals)
+        const rawBorrow = safeParseUnits(
+          String(borrowAmount),
+          selectedLoanAsset.decimals
         );
-        const marketParams = {
-          loanToken: market.loanAsset.address as `0x${string}`,
-          collateralToken: market.collateralAsset.address as `0x${string}`,
-          oracle: market.oracle.address as `0x${string}`,
-          irm: market.irmAddress as `0x${string}`,
-          lltv: BigInt(market.lltv),
-        };
-        calls.push({
-          to: adapter,
-          data: encodeFunctionData({
-            abi: generalAdapterAbi,
-            functionName: "morphoBorrow",
-            args: [marketParams, rawBorrow, 0n, 0n, address],
-          }),
-          value: 0n,
-          skipRevert: false,
-          callbackHash: zeroHash,
-        });
+        if (rawBorrow > 0n) {
+          const marketParams = {
+            loanToken: market.loanAsset.address as `0x${string}`,
+            collateralToken: market.collateralAsset.address as `0x${string}`,
+            oracle: market.oracle.address as `0x${string}`,
+            irm: market.irmAddress as `0x${string}`,
+            lltv: BigInt(market.lltv),
+          };
+          calls.push({
+            to: adapter,
+            data: encodeFunctionData({
+              abi: generalAdapterAbi,
+              functionName: "morphoBorrow",
+              args: [
+                marketParams,
+                rawBorrow,
+                0n, // shares = 0 → borrow by assets
+                minSharePrice, // C3 fix: slippage protection
+                address,
+              ],
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: zeroHash,
+          });
+        }
       }
 
-      // Deposit into vaults using allocations
+      // Deposit into vaults — with slippage (C3 fix)
       if (
         selectedVaults.length > 0 &&
         borrowAmount > 0 &&
@@ -291,9 +327,11 @@ export default function TransactionBundle({
             ? (borrowAmount * pct) / totalAlloc
             : borrowAmount / selectedVaults.length;
           if (vaultAmount <= 0) continue;
-          const rawVaultAmount = BigInt(
-            Math.floor(vaultAmount * 10 ** selectedLoanAsset.decimals)
+          const rawVaultAmount = safeParseUnits(
+            String(vaultAmount),
+            selectedLoanAsset.decimals
           );
+          if (rawVaultAmount === 0n) continue;
           calls.push({
             to: adapter,
             data: encodeFunctionData({
@@ -302,7 +340,7 @@ export default function TransactionBundle({
               args: [
                 vault.address as `0x${string}`,
                 rawVaultAmount,
-                BigInt("1000000000000000000000000000"),
+                maxSharePrice, // C3 fix: slippage protection
                 address,
               ],
             }),

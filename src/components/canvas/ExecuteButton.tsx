@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useRef } from "react";
 import Image from "next/image";
 import type { Edge } from "@xyflow/react";
-import { useAccount, useSendTransaction } from "wagmi";
+import { useAccount, useSendTransaction, useChainId, useSwitchChain } from "wagmi";
+import { waitForTransactionReceipt } from "wagmi/actions";
 import { useChain } from "@/lib/context/ChainContext";
 import { validateGraph } from "@/lib/canvas/validation";
 import {
@@ -15,6 +16,7 @@ import { formatApy } from "@/lib/utils/format";
 import type { CanvasNode, CanvasNodeData } from "@/lib/canvas/types";
 import type { SupportedChainId } from "@/lib/web3/chains";
 import { GENERAL_ADAPTER1 } from "@/lib/constants/contracts";
+import { wagmiConfig } from "@/lib/web3/config";
 
 interface ExecuteButtonProps {
   nodes: CanvasNode[];
@@ -86,6 +88,8 @@ function topologicalSort(nodes: CanvasNode[], edges: Edge[]): CanvasNode[] {
 export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   const { address, isConnected } = useAccount();
   const { chainId } = useChain();
+  const walletChainId = useChainId();
+  const { switchChainAsync } = useSwitchChain();
   const { sendTransaction, isPending } = useSendTransaction();
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +99,9 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   const [slippageBps, setSlippageBps] = useState(50); // 0.5% default
   const [approvalStep, setApprovalStep] = useState<number>(0); // 0 = not started
   const [totalApprovals, setTotalApprovals] = useState(0);
+
+  // Snapshot of nodes/edges at confirmation time (H2: prevent race condition)
+  const snapshotRef = useRef<{ nodes: CanvasNode[]; edges: Edge[] } | null>(null);
 
   // Build visual steps from graph
   const steps = useMemo(() => {
@@ -173,30 +180,53 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     setTxHash(null);
     setApprovalStep(0);
 
-    // 1. Validate
+    // 1. Validate current graph
     const errors = validateGraph(nodes, edges);
     setValidationErrors(errors);
     if (errors.length > 0) {
       setShowConfirm(false);
+      snapshotRef.current = null;
       return;
     }
 
-    // 2. If not confirmed yet, show confirmation
+    // 2. If not confirmed yet, snapshot and show confirmation (H2 fix)
     if (!showConfirm) {
+      snapshotRef.current = {
+        nodes: JSON.parse(JSON.stringify(nodes)),
+        edges: JSON.parse(JSON.stringify(edges)),
+      };
       setShowConfirm(true);
       return;
     }
 
+    // Use the snapshot from confirmation step, not current (potentially stale) state
+    const execNodes = snapshotRef.current?.nodes ?? nodes;
+    const execEdges = snapshotRef.current?.edges ?? edges;
+
     try {
       const cid = chainId as SupportedChainId;
+
+      // C1 fix: Verify wallet is on the correct chain
+      if (walletChainId !== chainId) {
+        try {
+          await switchChainAsync({ chainId: cid });
+        } catch {
+          setError(`Please switch your wallet to chain ${chainId}`);
+          return;
+        }
+      }
+
       const adapter = GENERAL_ADAPTER1[cid];
       if (!adapter) {
         setError("Chain not supported");
         return;
       }
 
-      // 3. Send approval txs (one per token)
-      const approvals = getRequiredApprovals(nodes, edges, cid);
+      // H6 fix: helper to verify address hasn't changed
+      const currentAddress = address;
+
+      // 3. Send approval txs (one per token) — wait for confirmations (H3 fix)
+      const approvals = getRequiredApprovals(execNodes, execEdges, cid);
       if (approvals.length > 0) {
         setTotalApprovals(approvals.length);
         const approveTxs = buildApprovalTxs(
@@ -206,7 +236,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
 
         for (let i = 0; i < approveTxs.length; i++) {
           setApprovalStep(i + 1);
-          await new Promise<void>((resolve, reject) => {
+          const hash = await new Promise<`0x${string}`>((resolve, reject) => {
             sendTransaction(
               {
                 to: approveTxs[i].to,
@@ -214,17 +244,27 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
                 value: 0n,
               },
               {
-                onSuccess: () => resolve(),
+                onSuccess: (h) => resolve(h),
                 onError: (err) => reject(err),
               }
             );
           });
+
+          // H3 fix: Wait for approval to be confirmed on-chain before proceeding
+          await waitForTransactionReceipt(wagmiConfig, { hash, confirmations: 1 });
         }
       }
 
-      // 4. Build and send bundler tx
+      // H6 fix: Check address hasn't changed during approval flow
+      if (address !== currentAddress) {
+        setError("Wallet address changed during execution. Aborting.");
+        setApprovalStep(0);
+        return;
+      }
+
+      // 4. Build and send bundler tx (using snapshot)
       setApprovalStep(0);
-      const bundle = buildExecutionBundle(nodes, edges, address, cid, slippageBps);
+      const bundle = buildExecutionBundle(execNodes, execEdges, address, cid, slippageBps);
 
       if (bundle.calls.length === 0 && !bundle.hasSwap) {
         setError("No executable actions in graph");
@@ -248,6 +288,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
             onSuccess: (hash) => {
               setTxHash(hash);
               setShowConfirm(false);
+              snapshotRef.current = null;
             },
             onError: (err) => setError(err.message),
           }
@@ -256,7 +297,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to build bundle");
     }
-  }, [address, isConnected, nodes, edges, chainId, showConfirm, slippageBps, sendTransaction]);
+  }, [address, isConnected, nodes, edges, chainId, walletChainId, showConfirm, slippageBps, sendTransaction, switchChainAsync]);
 
   const actionCount = nodes.filter((n) => {
     const t = (n.data as { type: string }).type;
