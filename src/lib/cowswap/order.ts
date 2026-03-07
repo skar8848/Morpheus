@@ -123,7 +123,7 @@ export async function signAndSubmitOrder(
       buyAmount: BigInt(order.buyAmount),
       validTo: order.validTo,
       appData: order.appData as `0x${string}`,
-      feeAmount: BigInt(order.feeAmount),
+      feeAmount: 0n,
       kind: order.kind,
       partiallyFillable: order.partiallyFillable,
       sellTokenBalance: order.sellTokenBalance,
@@ -132,6 +132,7 @@ export async function signAndSubmitOrder(
   });
 
   // Submit to CowSwap orderbook
+  // feeAmount must be "0" in v2 — fee is embedded in sellAmount vs sellAmountBeforeFee
   const submitRes = await fetch(`${apiBase}/orders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -143,7 +144,7 @@ export async function signAndSubmitOrder(
       buyAmount: order.buyAmount,
       validTo: order.validTo,
       appData: order.appData,
-      feeAmount: order.feeAmount,
+      feeAmount: "0",
       kind: order.kind,
       partiallyFillable: order.partiallyFillable,
       sellTokenBalance: order.sellTokenBalance,
