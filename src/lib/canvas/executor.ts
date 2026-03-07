@@ -421,6 +421,33 @@ export function buildExecutionBundle(
   return { to: bundler, data: txData, calls, hasSwap };
 }
 
+/**
+ * Get approvals needed only for pre-swap operations (excludes post-swap vault deposits).
+ */
+export function getPreSwapApprovals(
+  nodes: CanvasNode[],
+  edges: Edge[],
+  chainId: SupportedChainId
+): { token: `0x${string}`; symbol: string; amount: bigint }[] {
+  const postSwapIds = getPostSwapNodeIds(nodes, edges);
+  const swapIds = new Set(
+    nodes
+      .filter((n) => (n.data as { type?: string }).type === "swap")
+      .map((n) => n.id)
+  );
+  const preNodes = nodes.filter(
+    (n) => !postSwapIds.has(n.id) && !swapIds.has(n.id)
+  );
+  const preEdges = edges.filter(
+    (e) =>
+      !postSwapIds.has(e.source) &&
+      !postSwapIds.has(e.target) &&
+      !swapIds.has(e.source) &&
+      !swapIds.has(e.target)
+  );
+  return getRequiredApprovals(preNodes, preEdges, chainId);
+}
+
 // ---------------------------------------------------------------------------
 // Two-phase execution: pre-swap bundler → CowSwap orders → post-swap bundler
 // ---------------------------------------------------------------------------

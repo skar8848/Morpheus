@@ -4,7 +4,7 @@ import { useMemo, useState, useCallback, useRef } from "react";
 import Image from "next/image";
 import type { Edge } from "@xyflow/react";
 import { useAccount, useSendTransaction, useChainId, useSwitchChain } from "wagmi";
-import { waitForTransactionReceipt } from "wagmi/actions";
+import { readContract, waitForTransactionReceipt } from "wagmi/actions";
 import { useChain } from "@/lib/context/ChainContext";
 import { validateGraph } from "@/lib/canvas/validation";
 import {
@@ -14,6 +14,7 @@ import {
   getSwapDetails,
   buildPreSwapBundle,
   buildPostSwapBundle,
+  getPreSwapApprovals,
 } from "@/lib/canvas/executor";
 import {
   getCowQuote,
@@ -116,6 +117,35 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   // Track wallet address via ref for reliable detection during async flow
   const addressRef = useRef(address);
   addressRef.current = address;
+
+  /** Check on-chain allowance and filter out approvals that are already sufficient. */
+  const filterNeededApprovals = useCallback(
+    async (
+      approvals: { token: `0x${string}`; amount: bigint }[],
+      owner: `0x${string}`,
+      spender: `0x${string}`
+    ) => {
+      const needed: { token: `0x${string}`; amount: bigint }[] = [];
+      for (const a of approvals) {
+        try {
+          const allowance = await readContract(wagmiConfig, {
+            address: a.token,
+            abi: erc20Abi,
+            functionName: "allowance",
+            args: [owner, spender],
+          });
+          if ((allowance as bigint) < a.amount) {
+            needed.push(a);
+          }
+        } catch {
+          // RPC error — include approval to be safe
+          needed.push(a);
+        }
+      }
+      return needed;
+    },
+    []
+  );
 
   // Build visual steps from graph
   const steps = useMemo(() => {
@@ -242,6 +272,26 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         return;
       }
 
+      // Retry wrapper for waitForTransactionReceipt (RPC can be flaky)
+      const waitWithRetry = async (hash: `0x${string}`, retries = 3) => {
+        for (let attempt = 0; attempt < retries; attempt++) {
+          try {
+            return await waitForTransactionReceipt(wagmiConfig, {
+              hash,
+              confirmations: 1,
+              timeout: 60_000,
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : "";
+            const isNetwork = msg.includes("Failed to fetch") || msg.includes("HTTP request failed");
+            if (!isNetwork || attempt === retries - 1) throw err;
+            // Wait before retry
+            await new Promise((r) => setTimeout(r, 3000));
+          }
+        }
+        throw new Error("Receipt check failed after retries");
+      };
+
       // Helper: send approval txs and wait for confirmation
       const sendApprovals = async (
         approveTxs: { to: `0x${string}`; data: `0x${string}` }[]
@@ -255,13 +305,17 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               { onSuccess: (h) => resolve(h), onError: (err) => reject(err) }
             );
           });
-          const receipt = await waitForTransactionReceipt(wagmiConfig, {
-            hash,
-            confirmations: 1,
-            timeout: 120_000,
-          });
-          if (receipt.status === "reverted") {
-            throw new Error(`Approval ${i + 1}/${approveTxs.length} reverted on-chain`);
+          try {
+            const receipt = await waitWithRetry(hash);
+            if (receipt.status === "reverted") {
+              throw new Error(`Approval ${i + 1}/${approveTxs.length} reverted on-chain`);
+            }
+          } catch (err) {
+            // If receipt check fails but tx was mined, the allowance check
+            // on retry will skip this approval. Safe to continue.
+            const msg = err instanceof Error ? err.message : "";
+            if (msg.includes("reverted")) throw err;
+            console.warn(`Receipt check failed for approval tx ${hash}, continuing...`);
           }
         }
         setApprovalStep(0);
@@ -279,11 +333,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           );
         });
         setTxHash(bundleHash);
-        const receipt = await waitForTransactionReceipt(wagmiConfig, {
-          hash: bundleHash,
-          confirmations: 1,
-          timeout: 120_000,
-        });
+        const receipt = await waitWithRetry(bundleHash);
         if (receipt.status === "reverted") {
           setTxHash(null);
           throw new Error("Bundle transaction reverted on-chain");
@@ -297,12 +347,14 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         // ---- No swaps: single-phase execution (original flow) ----
         const approvals = getRequiredApprovals(execNodes, execEdges, cid);
         if (approvals.length > 0) {
-          await sendApprovals(
-            buildApprovalTxs(
-              approvals.map((a) => ({ token: a.token, amount: a.amount })),
-              adapter
-            )
+          const needed = await filterNeededApprovals(
+            approvals.map((a) => ({ token: a.token, amount: a.amount })),
+            currentAddress,
+            adapter
           );
+          if (needed.length > 0) {
+            await sendApprovals(buildApprovalTxs(needed, adapter));
+          }
         }
 
         if (addressRef.current !== address) {
@@ -327,16 +379,17 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         // Phase 1: Pre-swap bundler operations (supply, borrow, etc.)
         const preSwapBundle = buildPreSwapBundle(execNodes, execEdges, currentAddress, cid);
         if (preSwapBundle.calls.length > 0) {
-          // Approvals for pre-swap operations
-          const preApprovals = getRequiredApprovals(execNodes, execEdges, cid);
-          // Filter to only pre-swap tokens (exclude post-swap vault deposit tokens)
+          // Only approve tokens needed for pre-swap operations (not post-swap vault deposits)
+          const preApprovals = getPreSwapApprovals(execNodes, execEdges, cid);
           if (preApprovals.length > 0) {
-            await sendApprovals(
-              buildApprovalTxs(
-                preApprovals.map((a) => ({ token: a.token, amount: a.amount })),
-                adapter
-              )
+            const needed = await filterNeededApprovals(
+              preApprovals.map((a) => ({ token: a.token, amount: a.amount })),
+              currentAddress,
+              adapter
             );
+            if (needed.length > 0) {
+              await sendApprovals(buildApprovalTxs(needed, adapter));
+            }
           }
           setSwapStatus("Executing pre-swap operations...");
           await sendBundle(preSwapBundle);
@@ -348,14 +401,22 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         for (let i = 0; i < swaps.length; i++) {
           const swap = swaps[i];
 
-          // 2a. Approve sell token to CowSwap VaultRelayer
-          setSwapStatus(`Approving ${swap.sellSymbol} for CowSwap...`);
-          const approveData = encodeFunctionData({
-            abi: erc20Abi,
-            functionName: "approve",
-            args: [vaultRelayer, BigInt(swap.sellAmountWei)],
-          });
-          await sendApprovals([{ to: swap.sellToken, data: approveData }]);
+          // 2a. Approve sell token to CowSwap VaultRelayer (skip if already approved)
+          setSwapStatus(`Checking ${swap.sellSymbol} allowance...`);
+          const sellNeeded = await filterNeededApprovals(
+            [{ token: swap.sellToken, amount: BigInt(swap.sellAmountWei) }],
+            currentAddress,
+            vaultRelayer
+          );
+          if (sellNeeded.length > 0) {
+            setSwapStatus(`Approving ${swap.sellSymbol} for CowSwap...`);
+            const approveData = encodeFunctionData({
+              abi: erc20Abi,
+              functionName: "approve",
+              args: [vaultRelayer, BigInt(swap.sellAmountWei)],
+            });
+            await sendApprovals([{ to: swap.sellToken, data: approveData }]);
+          }
 
           // 2b. Get fresh quote with real user address
           setSwapStatus(`Getting CowSwap quote for ${swap.sellSymbol} → ${swap.buySymbol}...`);
@@ -395,15 +456,17 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         );
 
         if (postBundle.calls.length > 0) {
-          // Approve received tokens to bundler adapter
+          // Approve received tokens to bundler adapter (skip already approved)
           if (postBundle.approvals.length > 0) {
-            setSwapStatus("Approving received tokens for deposit...");
-            await sendApprovals(
-              buildApprovalTxs(
-                postBundle.approvals.map((a) => ({ token: a.token, amount: a.amount })),
-                adapter
-              )
+            const postNeeded = await filterNeededApprovals(
+              postBundle.approvals.map((a) => ({ token: a.token, amount: a.amount })),
+              currentAddress,
+              adapter
             );
+            if (postNeeded.length > 0) {
+              setSwapStatus("Approving received tokens for deposit...");
+              await sendApprovals(buildApprovalTxs(postNeeded, adapter));
+            }
           }
 
           setSwapStatus("Depositing into vault...");
@@ -420,7 +483,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     } finally {
       setApprovalStep(0);
     }
-  }, [address, isConnected, nodes, edges, chainId, walletChainId, showConfirm, sendTransaction, switchChainAsync]);
+  }, [address, isConnected, nodes, edges, chainId, walletChainId, showConfirm, sendTransaction, switchChainAsync, filterNeededApprovals]);
 
   const actionCount = nodes.filter((n) => {
     const t = (n.data as { type: string }).type;
