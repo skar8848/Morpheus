@@ -434,32 +434,35 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
             }
           }
 
-          // 2a. Approve sell token to CowSwap VaultRelayer (skip if already approved)
-          setSwapStatus(`Checking ${swap.sellSymbol} allowance...`);
-          const sellNeeded = await filterNeededApprovals(
-            [{ token: swap.sellToken, amount: BigInt(swap.sellAmountWei) }],
-            currentAddress,
-            vaultRelayer
-          );
-          if (sellNeeded.length > 0) {
-            setSwapStatus(`Approving ${swap.sellSymbol} for CowSwap...`);
-            const approveData = encodeFunctionData({
-              abi: erc20Abi,
-              functionName: "approve",
-              args: [vaultRelayer, BigInt(swap.sellAmountWei)],
-            });
-            await sendApprovals([{ to: swap.sellToken, data: approveData }]);
-          }
+          // 2a + 2b: Approve sell token & fetch quote in parallel
+          setSwapStatus(`Preparing ${swap.sellSymbol} → ${swap.buySymbol}...`);
 
-          // 2b. Get fresh quote with real user address
-          setSwapStatus(`Getting CowSwap quote for ${swap.sellSymbol} → ${swap.buySymbol}...`);
-          const quote = await getCowQuote(
+          const approvalPromise = (async () => {
+            const sellNeeded = await filterNeededApprovals(
+              [{ token: swap.sellToken, amount: BigInt(swap.sellAmountWei) }],
+              currentAddress,
+              vaultRelayer
+            );
+            if (sellNeeded.length > 0) {
+              setSwapStatus(`Approving ${swap.sellSymbol} for CowSwap...`);
+              const approveData = encodeFunctionData({
+                abi: erc20Abi,
+                functionName: "approve",
+                args: [vaultRelayer, BigInt(swap.sellAmountWei)],
+              });
+              await sendApprovals([{ to: swap.sellToken, data: approveData }]);
+            }
+          })();
+
+          const quotePromise = getCowQuote(
             cid,
             swap.sellToken,
             swap.buyToken,
             swap.sellAmountWei,
             currentAddress
           );
+
+          const [, quote] = await Promise.all([approvalPromise, quotePromise]);
 
           // 2c. Sign and submit order
           setSwapStatus(`Sign CowSwap order: ${swap.sellSymbol} → ${swap.buySymbol}...`);
