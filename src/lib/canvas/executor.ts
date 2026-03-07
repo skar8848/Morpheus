@@ -4,6 +4,7 @@ import type { CanvasNode } from "./types";
 import type {
   SupplyCollateralNodeData,
   BorrowNodeData,
+  SwapNodeData,
   VaultDepositNodeData,
   VaultWithdrawNodeData,
 } from "./types";
@@ -418,4 +419,338 @@ export function buildExecutionBundle(
   });
 
   return { to: bundler, data: txData, calls, hasSwap };
+}
+
+// ---------------------------------------------------------------------------
+// Two-phase execution: pre-swap bundler → CowSwap orders → post-swap bundler
+// ---------------------------------------------------------------------------
+
+export interface SwapDetail {
+  nodeId: string;
+  sellToken: `0x${string}`;
+  buyToken: `0x${string}`;
+  sellAmountWei: string;
+  sellSymbol: string;
+  buySymbol: string;
+  sellDecimals: number;
+  buyDecimals: number;
+}
+
+/**
+ * Find all node IDs that are downstream of swap nodes (including swap nodes themselves).
+ */
+function getPostSwapNodeIds(nodes: CanvasNode[], edges: Edge[]): Set<string> {
+  const swapIds = new Set(
+    nodes
+      .filter((n) => (n.data as { type?: string }).type === "swap")
+      .map((n) => n.id)
+  );
+
+  const postSwap = new Set<string>();
+  const queue = [...swapIds];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    for (const edge of edges) {
+      if (edge.source === id && !postSwap.has(edge.target)) {
+        postSwap.add(edge.target);
+        queue.push(edge.target);
+      }
+    }
+  }
+
+  return postSwap;
+}
+
+/**
+ * Extract swap details from graph nodes for CowSwap order submission.
+ */
+export function getSwapDetails(
+  nodes: CanvasNode[],
+  edges: Edge[]
+): SwapDetail[] {
+  const sorted = topologicalSort(nodes, edges);
+  const swaps: SwapDetail[] = [];
+
+  for (const node of sorted) {
+    const d = node.data as unknown as SwapNodeData;
+    if (d.type !== "swap") continue;
+    if (!d.tokenIn?.address || !d.tokenOut?.address || !d.amountIn) continue;
+
+    const amountInNum = parseFloat(d.amountIn);
+    if (!isFinite(amountInNum) || amountInNum <= 0) continue;
+
+    // String-based BigInt conversion (same as useCowQuote)
+    const parts = d.amountIn.split(".");
+    const intPart = parts[0] || "0";
+    const fracPart = (parts[1] || "")
+      .slice(0, d.tokenIn.decimals)
+      .padEnd(d.tokenIn.decimals, "0");
+    const sellAmountWei = BigInt(intPart + fracPart).toString();
+
+    swaps.push({
+      nodeId: node.id,
+      sellToken: d.tokenIn.address as `0x${string}`,
+      buyToken: d.tokenOut.address as `0x${string}`,
+      sellAmountWei,
+      sellSymbol: d.tokenIn.symbol,
+      buySymbol: d.tokenOut.symbol,
+      sellDecimals: d.tokenIn.decimals,
+      buyDecimals: d.tokenOut.decimals,
+    });
+  }
+
+  return swaps;
+}
+
+/**
+ * Build a bundler multicall for only the pre-swap operations
+ * (everything NOT downstream of a swap node).
+ */
+export function buildPreSwapBundle(
+  nodes: CanvasNode[],
+  edges: Edge[],
+  userAddress: `0x${string}`,
+  chainId: SupportedChainId
+): { to: `0x${string}`; data: `0x${string}`; calls: BundlerCall[] } {
+  const postSwapIds = getPostSwapNodeIds(nodes, edges);
+  const swapIds = new Set(
+    nodes
+      .filter((n) => (n.data as { type?: string }).type === "swap")
+      .map((n) => n.id)
+  );
+
+  // Filter to only pre-swap nodes
+  const preNodes = nodes.filter(
+    (n) => !postSwapIds.has(n.id) && !swapIds.has(n.id)
+  );
+  const preEdges = edges.filter(
+    (e) =>
+      !postSwapIds.has(e.source) &&
+      !postSwapIds.has(e.target) &&
+      !swapIds.has(e.source) &&
+      !swapIds.has(e.target)
+  );
+
+  const adapter = GENERAL_ADAPTER1[chainId];
+  const bundler = BUNDLER3[chainId];
+  if (!adapter || !bundler) throw new Error("Chain not supported");
+
+  // Reuse the normal build but with filtered nodes
+  // We call buildExecutionBundle which validates — but the filtered graph
+  // may not pass validation (missing connections). Build manually instead.
+  const sorted = topologicalSort(preNodes, preEdges);
+  const calls: BundlerCall[] = [];
+
+  for (const node of sorted) {
+    const data = node.data as { type?: string };
+    // Reuse the same switch logic — only non-swap types will be here
+    switch (data.type) {
+      case "vaultWithdraw": {
+        const d = node.data as unknown as VaultWithdrawNodeData;
+        if (!d.position?.vault?.address || !d.amount) break;
+        const vaultAddr = requireValidAddress(d.position.vault.address, "vault withdraw");
+        const raw = safeAmountToBigInt(d.amount, d.position.vault.asset.decimals);
+        if (raw === 0n) break;
+        calls.push({
+          to: adapter,
+          data: encodeFunctionData({
+            abi: generalAdapterAbi,
+            functionName: "erc4626Withdraw",
+            args: [vaultAddr, raw, MAX_UINT256, userAddress, userAddress],
+          }),
+          value: 0n,
+          skipRevert: false,
+          callbackHash: ZERO_HASH,
+        });
+        break;
+      }
+      case "supplyCollateral": {
+        const d = node.data as unknown as SupplyCollateralNodeData;
+        if (!d.asset?.address || !d.amount) break;
+        const assetAddr = requireValidAddress(d.asset.address, "supply collateral asset");
+        const rawAmount = safeAmountToBigInt(d.amount, d.asset.decimals);
+        if (rawAmount === 0n) break;
+        const downEdge = preEdges.find((e) => e.source === node.id);
+        const borrowNode = downEdge ? preNodes.find((n) => n.id === downEdge.target) : null;
+        const bd = borrowNode ? (borrowNode.data as unknown as BorrowNodeData) : null;
+        if (bd?.type === "borrow" && bd.market) {
+          const loanToken = requireValidAddress(bd.market.loanAsset.address, "loan token");
+          const collateralToken = requireValidAddress(bd.market.collateralAsset.address, "collateral token");
+          const oracle = requireValidAddress(bd.market.oracle.address, "oracle");
+          const irm = requireValidAddress(bd.market.irmAddress, "IRM");
+          const lltv = safeBigInt(bd.market.lltv);
+          if (lltv === 0n) break;
+          calls.push({
+            to: adapter,
+            data: encodeFunctionData({
+              abi: generalAdapterAbi,
+              functionName: "erc20TransferFrom",
+              args: [assetAddr, adapter, rawAmount],
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: ZERO_HASH,
+          });
+          calls.push({
+            to: adapter,
+            data: encodeFunctionData({
+              abi: generalAdapterAbi,
+              functionName: "morphoSupplyCollateral",
+              args: [{ loanToken, collateralToken, oracle, irm, lltv }, rawAmount, userAddress, "0x"],
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: ZERO_HASH,
+          });
+        }
+        break;
+      }
+      case "borrow": {
+        const d = node.data as unknown as BorrowNodeData;
+        if (!d.market || !isFinite(d.borrowAmount) || d.borrowAmount <= 0) break;
+        const rawAmount = safeAmountToBigInt(d.borrowAmount, d.market.loanAsset.decimals);
+        if (rawAmount === 0n) break;
+        const loanToken = requireValidAddress(d.market.loanAsset.address, "loan token");
+        const collateralToken = requireValidAddress(d.market.collateralAsset.address, "collateral token");
+        const oracle = requireValidAddress(d.market.oracle.address, "oracle");
+        const irm = requireValidAddress(d.market.irmAddress, "IRM");
+        const lltv = safeBigInt(d.market.lltv);
+        if (lltv === 0n) break;
+        calls.push({
+          to: adapter,
+          data: encodeFunctionData({
+            abi: generalAdapterAbi,
+            functionName: "morphoBorrow",
+            args: [{ loanToken, collateralToken, oracle, irm, lltv }, rawAmount, 0n, 0n, userAddress],
+          }),
+          value: 0n,
+          skipRevert: false,
+          callbackHash: ZERO_HASH,
+        });
+        break;
+      }
+    }
+  }
+
+  const txData = encodeFunctionData({
+    abi: bundler3Abi,
+    functionName: "multicall",
+    args: [calls],
+  });
+
+  return { to: bundler, data: txData, calls };
+}
+
+/**
+ * Build a bundler multicall for post-swap operations (e.g., vault deposits).
+ * Uses actual received amounts from CowSwap fills instead of estimated amounts.
+ *
+ * @param swapResults - Map of swap nodeId → actual received amount in raw wei
+ */
+export function buildPostSwapBundle(
+  nodes: CanvasNode[],
+  edges: Edge[],
+  userAddress: `0x${string}`,
+  chainId: SupportedChainId,
+  swapResults: Map<string, bigint>
+): {
+  to: `0x${string}`;
+  data: `0x${string}`;
+  calls: BundlerCall[];
+  approvals: { token: `0x${string}`; symbol: string; amount: bigint }[];
+} {
+  const postSwapIds = getPostSwapNodeIds(nodes, edges);
+  const adapter = GENERAL_ADAPTER1[chainId];
+  const bundler = BUNDLER3[chainId];
+  if (!adapter || !bundler) throw new Error("Chain not supported");
+
+  const postNodes = nodes.filter((n) => postSwapIds.has(n.id));
+  const postEdges = edges.filter(
+    (e) => postSwapIds.has(e.source) || postSwapIds.has(e.target)
+  );
+
+  const sorted = topologicalSort(postNodes, postEdges);
+  const calls: BundlerCall[] = [];
+  const approvalMap = new Map<string, { token: `0x${string}`; symbol: string; amount: bigint }>();
+
+  const addApproval = (address: string, symbol: string, amount: bigint) => {
+    if (!isAddress(address) || amount <= 0n) return;
+    const key = address.toLowerCase();
+    const existing = approvalMap.get(key);
+    let newAmount = (existing?.amount ?? 0n) + amount;
+    if (newAmount > MAX_UINT256) newAmount = MAX_UINT256;
+    approvalMap.set(key, { token: address as `0x${string}`, symbol, amount: newAmount });
+  };
+
+  for (const node of sorted) {
+    const data = node.data as { type?: string };
+
+    if (data.type === "vaultDeposit") {
+      const d = node.data as unknown as VaultDepositNodeData;
+      if (!d.vault?.address) break;
+      const vaultAddr = requireValidAddress(d.vault.address, "vault deposit");
+      const vaultAssetAddr = requireValidAddress(d.vault.asset.address, "vault deposit asset");
+
+      // Find upstream swap node to get actual received amount
+      const upEdge = edges.find((e) => e.target === node.id);
+      const upSourceId = upEdge?.source;
+      // Walk back through the graph to find the swap node
+      let swapNodeId: string | null = null;
+      if (upSourceId) {
+        const upNode = nodes.find((n) => n.id === upSourceId);
+        if ((upNode?.data as { type?: string })?.type === "swap") {
+          swapNodeId = upSourceId;
+        }
+      }
+
+      // Use actual swap output if available, otherwise fall back to user-specified amount
+      let rawAmount: bigint;
+      if (swapNodeId && swapResults.has(swapNodeId)) {
+        rawAmount = swapResults.get(swapNodeId)!;
+      } else {
+        if (!d.amount) continue;
+        rawAmount = safeAmountToBigInt(d.amount, d.vault.asset.decimals);
+      }
+      if (rawAmount === 0n) continue;
+
+      addApproval(d.vault.asset.address, d.vault.asset.symbol, rawAmount);
+
+      calls.push({
+        to: adapter,
+        data: encodeFunctionData({
+          abi: generalAdapterAbi,
+          functionName: "erc20TransferFrom",
+          args: [vaultAssetAddr, adapter, rawAmount],
+        }),
+        value: 0n,
+        skipRevert: false,
+        callbackHash: ZERO_HASH,
+      });
+
+      calls.push({
+        to: adapter,
+        data: encodeFunctionData({
+          abi: generalAdapterAbi,
+          functionName: "erc4626Deposit",
+          args: [vaultAddr, rawAmount, MAX_UINT256, userAddress],
+        }),
+        value: 0n,
+        skipRevert: false,
+        callbackHash: ZERO_HASH,
+      });
+    }
+  }
+
+  const txData = encodeFunctionData({
+    abi: bundler3Abi,
+    functionName: "multicall",
+    args: [calls],
+  });
+
+  return {
+    to: bundler,
+    data: txData,
+    calls,
+    approvals: Array.from(approvalMap.values()),
+  };
 }

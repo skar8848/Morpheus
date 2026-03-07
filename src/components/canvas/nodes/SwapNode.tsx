@@ -1,18 +1,54 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position, useReactFlow, useEdges, useNodes, type NodeProps } from "@xyflow/react";
 import Image from "next/image";
+import { erc20Abi, isAddress } from "viem";
+import { readContracts } from "wagmi/actions";
 import { useChain } from "@/lib/context/ChainContext";
 import { useAllAssets } from "@/lib/hooks/useAllAssets";
 import { useTokenBalances } from "@/lib/hooks/useTokenBalances";
 import { useCowQuote } from "@/lib/hooks/useCowQuote";
+import { wagmiConfig } from "@/lib/web3/config";
 import type { SwapNodeData } from "@/lib/canvas/types";
 import type { Asset } from "@/lib/graphql/types";
+import type { SupportedChainId } from "@/lib/web3/chains";
 import NodeShell from "./NodeShell";
 import SearchSelect from "./SearchSelect";
 
 type AssetInfo = { address: string; symbol: string; logoURI: string; decimals: number; name: string };
+
+/** Fetch ERC-20 name/symbol/decimals from chain for a contract address */
+async function fetchTokenInfo(
+  address: `0x${string}`,
+  chainId: number
+): Promise<Asset | null> {
+  try {
+    const results = await readContracts(wagmiConfig, {
+      contracts: [
+        { address, abi: erc20Abi, functionName: "name", chainId: chainId as SupportedChainId },
+        { address, abi: erc20Abi, functionName: "symbol", chainId: chainId as SupportedChainId },
+        { address, abi: erc20Abi, functionName: "decimals", chainId: chainId as SupportedChainId },
+      ],
+    });
+
+    const name = results[0]?.status === "success" ? (results[0].result as string) : null;
+    const symbol = results[1]?.status === "success" ? (results[1].result as string) : null;
+    const decimals = results[2]?.status === "success" ? (results[2].result as number) : null;
+
+    if (!symbol || decimals === null) return null;
+
+    return {
+      name: name ?? symbol,
+      symbol,
+      decimals,
+      address,
+      logoURI: "",
+    };
+  } catch {
+    return null;
+  }
+}
 
 function SwapNodeComponent({ id, data }: NodeProps) {
   const { updateNodeData, deleteElements } = useReactFlow();
@@ -21,8 +57,9 @@ function SwapNodeComponent({ id, data }: NodeProps) {
   const edges = useEdges();
   const allNodes = useNodes();
   const { assets, loading: assetsLoading } = useAllAssets();
-
-  const isMainnet = chainId === 1;
+  const [importLoading, setImportLoading] = useState(false);
+  // Custom imported tokens (not in Morpho markets)
+  const [customTokens, setCustomTokens] = useState<Asset[]>([]);
 
   // Detect upstream asset + amount
   const { upstreamAsset, upstreamAmount } = useMemo(() => {
@@ -115,19 +152,48 @@ function SwapNodeComponent({ id, data }: NodeProps) {
     }
   }, [exceedsBalance]);
 
+  // Merged asset options: known assets + custom imported tokens
+  const allTokens = useMemo(() => {
+    const merged = new Map<string, Asset>();
+    for (const a of assets) merged.set(a.address.toLowerCase(), a);
+    for (const a of customTokens) merged.set(a.address.toLowerCase(), a);
+    return Array.from(merged.values());
+  }, [assets, customTokens]);
+
   const assetOptions = useMemo(
-    () => assets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
-    [assets]
+    () => allTokens.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI || undefined })),
+    [allTokens]
   );
 
-  // CowSwap quote
+  // Handle import of a custom token by contract address
+  const handleImportAddress = useCallback(
+    async (address: string) => {
+      if (!isAddress(address)) return;
+      setImportLoading(true);
+      try {
+        const token = await fetchTokenInfo(address as `0x${string}`, chainId);
+        if (token) {
+          setCustomTokens((prev) => {
+            if (prev.some((t) => t.address.toLowerCase() === address.toLowerCase())) return prev;
+            return [...prev, token];
+          });
+        }
+      } finally {
+        setImportLoading(false);
+      }
+    },
+    [chainId]
+  );
+
+  // CowSwap quote — works on all supported chains
   const { quote, loading: quoteLoading } = useCowQuote({
     tokenIn: d.tokenIn?.address,
     tokenOut: d.tokenOut?.address,
     amountIn: d.amountIn,
     decimalsIn: d.tokenIn?.decimals ?? 18,
     decimalsOut: d.tokenOut?.decimals ?? 18,
-    enabled: isMainnet && !!d.tokenIn && !!d.tokenOut && currentAmountIn > 0,
+    chainId,
+    enabled: !!d.tokenIn && !!d.tokenOut && currentAmountIn > 0,
   });
 
   // Persist quote to node data so downstream nodes can read it
@@ -150,12 +216,6 @@ function SwapNodeComponent({ id, data }: NodeProps) {
       invalid={exceedsBalance}
     >
       <div className="space-y-2">
-        {!isMainnet && (
-          <div className="rounded-lg border border-yellow-400/20 bg-yellow-400/5 px-2 py-1.5 text-[10px] text-yellow-400">
-            CowSwap — Ethereum mainnet only
-          </div>
-        )}
-
         {/* Token In */}
         <div>
           <div className="flex items-center justify-between">
@@ -173,10 +233,12 @@ function SwapNodeComponent({ id, data }: NodeProps) {
               options={assetOptions}
               value={d.tokenIn?.address ?? ""}
               onChange={(addr) => {
-                const token = assets.find((a) => a.address === addr) ?? null;
+                const token = allTokens.find((a) => a.address === addr) ?? null;
                 updateNodeData(id, { tokenIn: token });
               }}
-              placeholder="Search token..."
+              onImportAddress={handleImportAddress}
+              importLoading={importLoading}
+              placeholder="Search or paste address..."
             />
           )}
         </div>
@@ -264,30 +326,34 @@ function SwapNodeComponent({ id, data }: NodeProps) {
               options={assetOptions}
               value={d.tokenOut?.address ?? ""}
               onChange={(addr) => {
-                const token = assets.find((a) => a.address === addr) ?? null;
+                const token = allTokens.find((a) => a.address === addr) ?? null;
                 updateNodeData(id, { tokenOut: token });
               }}
-              placeholder="Search token..."
+              onImportAddress={handleImportAddress}
+              importLoading={importLoading}
+              placeholder="Search or paste address..."
             />
           )}
         </div>
 
         {/* Quote display */}
-        {isMainnet && d.tokenIn && d.tokenOut && currentAmountIn > 0 && (
+        {d.tokenIn && d.tokenOut && currentAmountIn > 0 && (
           <div className="rounded-lg bg-bg-secondary px-2 py-1.5">
             <span className="text-[10px] text-text-tertiary">Estimated output</span>
             {quoteLoading ? (
               <div className="mt-0.5 h-4 animate-pulse rounded bg-bg-primary" />
             ) : quote ? (
               <div className="flex items-center gap-1.5">
-                <Image
-                  src={d.tokenOut.logoURI}
-                  alt={d.tokenOut.symbol}
-                  width={14}
-                  height={14}
-                  className="rounded-full"
-                  unoptimized
-                />
+                {d.tokenOut.logoURI && (
+                  <Image
+                    src={d.tokenOut.logoURI}
+                    alt={d.tokenOut.symbol}
+                    width={14}
+                    height={14}
+                    className="rounded-full"
+                    unoptimized
+                  />
+                )}
                 <span className="text-xs font-medium text-text-primary">
                   {quote} {d.tokenOut.symbol}
                 </span>

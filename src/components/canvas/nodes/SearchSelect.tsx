@@ -13,14 +13,20 @@ interface SearchSelectProps {
   options: Option[];
   value: string;
   onChange: (value: string) => void;
+  onImportAddress?: (address: string) => void;
   placeholder?: string;
+  importLoading?: boolean;
 }
+
+const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 export default function SearchSelect({
   options,
   value,
   onChange,
+  onImportAddress,
   placeholder = "Search...",
+  importLoading = false,
 }: SearchSelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -29,11 +35,22 @@ export default function SearchSelect({
 
   const selected = options.find((o) => o.value === value);
 
+  // Filter by label or by address (value)
   const filtered = query
-    ? options.filter((o) =>
-        o.label.toLowerCase().includes(query.toLowerCase())
+    ? options.filter(
+        (o) =>
+          o.label.toLowerCase().includes(query.toLowerCase()) ||
+          o.value.toLowerCase().includes(query.toLowerCase())
       )
     : options;
+
+  // Detect if query is a valid address not in the list
+  const queryIsAddress = ADDRESS_RE.test(query.trim());
+  const addressNotInList =
+    queryIsAddress &&
+    !options.some(
+      (o) => o.value.toLowerCase() === query.trim().toLowerCase()
+    );
 
   // Close on outside click
   useEffect(() => {
@@ -85,7 +102,7 @@ export default function SearchSelect({
             <input
               ref={inputRef}
               type="text"
-              placeholder={placeholder}
+              placeholder="Search or paste address..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="w-full bg-transparent text-xs text-text-primary outline-none placeholder:text-text-tertiary"
@@ -94,9 +111,27 @@ export default function SearchSelect({
 
           {/* Options */}
           <div className="max-h-40 overflow-y-auto py-1">
-            {filtered.length === 0 ? (
+            {/* Import from CA button */}
+            {addressNotInList && onImportAddress && (
+              <button
+                type="button"
+                onClick={() => {
+                  onImportAddress(query.trim());
+                  // Don't close — wait for import to complete
+                }}
+                disabled={importLoading}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-xs text-brand transition-colors hover:bg-bg-secondary"
+              >
+                <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full border border-brand text-[8px] font-bold">+</span>
+                <span className="flex-1 text-left">
+                  {importLoading ? "Importing..." : `Import ${query.trim().slice(0, 6)}...${query.trim().slice(-4)}`}
+                </span>
+              </button>
+            )}
+
+            {filtered.length === 0 && !addressNotInList ? (
               <div className="px-2 py-1.5 text-[10px] text-text-tertiary">
-                No results
+                No results — try pasting a contract address
               </div>
             ) : (
               filtered.map((o) => (

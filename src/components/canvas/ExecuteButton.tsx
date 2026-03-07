@@ -11,11 +11,22 @@ import {
   buildExecutionBundle,
   getRequiredApprovals,
   buildApprovalTxs,
+  getSwapDetails,
+  buildPreSwapBundle,
+  buildPostSwapBundle,
 } from "@/lib/canvas/executor";
+import {
+  getCowQuote,
+  signAndSubmitOrder,
+  pollOrderUntilFilled,
+  COW_VAULT_RELAYER,
+} from "@/lib/cowswap/order";
 import { formatApy } from "@/lib/utils/format";
 import type { CanvasNode, CanvasNodeData } from "@/lib/canvas/types";
 import type { SupportedChainId } from "@/lib/web3/chains";
 import { GENERAL_ADAPTER1 } from "@/lib/constants/contracts";
+import { erc20Abi } from "viem";
+import { encodeFunctionData } from "viem";
 import { wagmiConfig } from "@/lib/web3/config";
 
 interface ExecuteButtonProps {
@@ -98,6 +109,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [approvalStep, setApprovalStep] = useState<number>(0); // 0 = not started
   const [totalApprovals, setTotalApprovals] = useState(0);
+  const [swapStatus, setSwapStatus] = useState<string | null>(null);
 
   // Snapshot of nodes/edges at confirmation time
   const snapshotRef = useRef<{ nodes: CanvasNode[]; edges: Edge[] } | null>(null);
@@ -224,102 +236,185 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         return;
       }
 
-      // 3. Send approval txs (one per token)
-      const approvals = getRequiredApprovals(execNodes, execEdges, cid);
-      if (approvals.length > 0) {
-        setTotalApprovals(approvals.length);
-        const approveTxs = buildApprovalTxs(
-          approvals.map((a) => ({ token: a.token, amount: a.amount })),
-          adapter
-        );
-
-        for (let i = 0; i < approveTxs.length; i++) {
-          setApprovalStep(i + 1);
-          const hash = await new Promise<`0x${string}`>((resolve, reject) => {
-            sendTransaction(
-              {
-                to: approveTxs[i].to,
-                data: approveTxs[i].data,
-                value: 0n,
-              },
-              {
-                onSuccess: (h) => resolve(h),
-                onError: (err) => reject(err),
-              }
-            );
-          });
-
-          // Wait for approval to be confirmed on-chain before proceeding
-          const approvalReceipt = await waitForTransactionReceipt(wagmiConfig, {
-            hash,
-            confirmations: 1,
-            timeout: 120_000, // 2 minute timeout
-          });
-
-          if (approvalReceipt.status === "reverted") {
-            setError(`Approval ${i + 1}/${approveTxs.length} reverted on-chain`);
-            return;
-          }
-        }
-      }
-
-      // Check address hasn't changed during async approval flow (via ref, not stale closure)
-      if (addressRef.current !== address) {
-        setError("Wallet address changed during execution. Aborting.");
-        return;
-      }
-
-      // 4. Build and send bundler tx (using snapshot)
       const currentAddress = addressRef.current;
       if (!currentAddress) {
         setError("Wallet disconnected during execution");
         return;
       }
-      const bundle = buildExecutionBundle(execNodes, execEdges, currentAddress, cid);
 
-      if (bundle.calls.length === 0 && !bundle.hasSwap) {
-        setError("No executable actions in graph");
-        return;
-      }
+      // Helper: send approval txs and wait for confirmation
+      const sendApprovals = async (
+        approveTxs: { to: `0x${string}`; data: `0x${string}` }[]
+      ) => {
+        setTotalApprovals(approveTxs.length);
+        for (let i = 0; i < approveTxs.length; i++) {
+          setApprovalStep(i + 1);
+          const hash = await new Promise<`0x${string}`>((resolve, reject) => {
+            sendTransaction(
+              { to: approveTxs[i].to, data: approveTxs[i].data, value: 0n },
+              { onSuccess: (h) => resolve(h), onError: (err) => reject(err) }
+            );
+          });
+          const receipt = await waitForTransactionReceipt(wagmiConfig, {
+            hash,
+            confirmations: 1,
+            timeout: 120_000,
+          });
+          if (receipt.status === "reverted") {
+            throw new Error(`Approval ${i + 1}/${approveTxs.length} reverted on-chain`);
+          }
+        }
+        setApprovalStep(0);
+      };
 
-      if (bundle.hasSwap) {
-        setError(
-          "Graph contains swap nodes. CowSwap orders will be submitted separately after the bundler tx."
-        );
-      }
-
-      if (bundle.calls.length > 0) {
+      // Helper: send bundler multicall and wait for confirmation
+      const sendBundle = async (
+        bundle: { to: `0x${string}`; data: `0x${string}`; calls: { to: string }[] }
+      ) => {
+        if (bundle.calls.length === 0) return;
         const bundleHash = await new Promise<`0x${string}`>((resolve, reject) => {
           sendTransaction(
-            {
-              to: bundle.to,
-              data: bundle.data,
-              value: 0n,
-            },
-            {
-              onSuccess: (h) => resolve(h),
-              onError: (err) => reject(err),
-            }
+            { to: bundle.to, data: bundle.data, value: 0n },
+            { onSuccess: (h) => resolve(h), onError: (err) => reject(err) }
           );
         });
-
         setTxHash(bundleHash);
-
-        // Verify the bundler tx was confirmed on-chain
         const receipt = await waitForTransactionReceipt(wagmiConfig, {
           hash: bundleHash,
           confirmations: 1,
           timeout: 120_000,
         });
-
         if (receipt.status === "reverted") {
           setTxHash(null);
-          setError("Bundle transaction reverted on-chain");
+          throw new Error("Bundle transaction reverted on-chain");
+        }
+      };
+
+      // Detect if graph contains swaps
+      const swaps = getSwapDetails(execNodes, execEdges);
+
+      if (swaps.length === 0) {
+        // ---- No swaps: single-phase execution (original flow) ----
+        const approvals = getRequiredApprovals(execNodes, execEdges, cid);
+        if (approvals.length > 0) {
+          await sendApprovals(
+            buildApprovalTxs(
+              approvals.map((a) => ({ token: a.token, amount: a.amount })),
+              adapter
+            )
+          );
         }
 
-        setShowConfirm(false);
-        snapshotRef.current = null;
+        if (addressRef.current !== address) {
+          setError("Wallet address changed during execution. Aborting.");
+          return;
+        }
+
+        const bundle = buildExecutionBundle(execNodes, execEdges, currentAddress, cid);
+        if (bundle.calls.length === 0) {
+          setError("No executable actions in graph");
+          return;
+        }
+        await sendBundle(bundle);
+      } else {
+        // ---- Two-phase execution: pre-swap → CowSwap → post-swap ----
+        const vaultRelayer = COW_VAULT_RELAYER[cid];
+        if (!vaultRelayer) {
+          setError("CowSwap not supported on this chain");
+          return;
+        }
+
+        // Phase 1: Pre-swap bundler operations (supply, borrow, etc.)
+        const preSwapBundle = buildPreSwapBundle(execNodes, execEdges, currentAddress, cid);
+        if (preSwapBundle.calls.length > 0) {
+          // Approvals for pre-swap operations
+          const preApprovals = getRequiredApprovals(execNodes, execEdges, cid);
+          // Filter to only pre-swap tokens (exclude post-swap vault deposit tokens)
+          if (preApprovals.length > 0) {
+            await sendApprovals(
+              buildApprovalTxs(
+                preApprovals.map((a) => ({ token: a.token, amount: a.amount })),
+                adapter
+              )
+            );
+          }
+          setSwapStatus("Executing pre-swap operations...");
+          await sendBundle(preSwapBundle);
+        }
+
+        // Phase 2: CowSwap orders
+        const swapResults = new Map<string, bigint>();
+
+        for (let i = 0; i < swaps.length; i++) {
+          const swap = swaps[i];
+
+          // 2a. Approve sell token to CowSwap VaultRelayer
+          setSwapStatus(`Approving ${swap.sellSymbol} for CowSwap...`);
+          const approveData = encodeFunctionData({
+            abi: erc20Abi,
+            functionName: "approve",
+            args: [vaultRelayer, BigInt(swap.sellAmountWei)],
+          });
+          await sendApprovals([{ to: swap.sellToken, data: approveData }]);
+
+          // 2b. Get fresh quote with real user address
+          setSwapStatus(`Getting CowSwap quote for ${swap.sellSymbol} → ${swap.buySymbol}...`);
+          const quote = await getCowQuote(
+            cid,
+            swap.sellToken,
+            swap.buyToken,
+            swap.sellAmountWei,
+            currentAddress
+          );
+
+          // 2c. Sign and submit order
+          setSwapStatus(`Sign CowSwap order: ${swap.sellSymbol} → ${swap.buySymbol}...`);
+          const orderUid = await signAndSubmitOrder(cid, quote, currentAddress);
+
+          // 2d. Poll until filled
+          setSwapStatus(`Waiting for CowSwap fill (${swap.sellSymbol} → ${swap.buySymbol})...`);
+          const result = await pollOrderUntilFilled(cid, orderUid, (status) => {
+            setSwapStatus(`CowSwap: ${status} (${swap.sellSymbol} → ${swap.buySymbol})`);
+          });
+
+          swapResults.set(swap.nodeId, BigInt(result.executedBuyAmount));
+        }
+
+        // Phase 3: Post-swap bundler operations (vault deposits with actual amounts)
+        if (addressRef.current !== address) {
+          setError("Wallet address changed during execution. Aborting.");
+          return;
+        }
+
+        const postBundle = buildPostSwapBundle(
+          execNodes,
+          execEdges,
+          currentAddress,
+          cid,
+          swapResults
+        );
+
+        if (postBundle.calls.length > 0) {
+          // Approve received tokens to bundler adapter
+          if (postBundle.approvals.length > 0) {
+            setSwapStatus("Approving received tokens for deposit...");
+            await sendApprovals(
+              buildApprovalTxs(
+                postBundle.approvals.map((a) => ({ token: a.token, amount: a.amount })),
+                adapter
+              )
+            );
+          }
+
+          setSwapStatus("Depositing into vault...");
+          await sendBundle(postBundle);
+        }
+
+        setSwapStatus(null);
       }
+
+      setShowConfirm(false);
+      snapshotRef.current = null;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to build bundle");
     } finally {
@@ -451,6 +546,13 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
             {approvalStep > 0 && (
               <div className="mt-3 rounded-lg border border-yellow-400/20 bg-yellow-400/5 px-3 py-2 text-[10px] text-yellow-400">
                 Approving token {approvalStep}/{totalApprovals}...
+              </div>
+            )}
+
+            {/* Swap status */}
+            {swapStatus && (
+              <div className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-[10px] text-amber-400">
+                {swapStatus}
               </div>
             )}
 

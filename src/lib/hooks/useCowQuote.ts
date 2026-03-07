@@ -2,12 +2,18 @@
 
 import { useState, useEffect, useRef } from "react";
 
+const COW_API_BASE: Record<number, string> = {
+  1: "https://api.cow.fi/mainnet/api/v1",
+  8453: "https://api.cow.fi/base/api/v1",
+};
+
 interface UseCowQuoteParams {
   tokenIn: string | undefined;
   tokenOut: string | undefined;
   amountIn: string;
   decimalsIn: number;
   decimalsOut: number;
+  chainId: number;
   enabled: boolean;
 }
 
@@ -19,7 +25,7 @@ interface UseCowQuoteResult {
 
 /**
  * Debounced CowSwap quote via their order book API.
- * Ethereum mainnet only — caller should gate `enabled` on chainId === 1.
+ * Supports Ethereum mainnet and Base.
  */
 export function useCowQuote({
   tokenIn,
@@ -27,6 +33,7 @@ export function useCowQuote({
   amountIn,
   decimalsIn,
   decimalsOut,
+  chainId,
   enabled,
 }: UseCowQuoteParams): UseCowQuoteResult {
   const [quote, setQuote] = useState<string | null>(null);
@@ -40,7 +47,8 @@ export function useCowQuote({
     if (timerRef.current) clearTimeout(timerRef.current);
     abortRef.current?.abort();
 
-    if (!enabled || !tokenIn || !tokenOut || !amountIn || parseFloat(amountIn) <= 0) {
+    const apiBase = COW_API_BASE[chainId];
+    if (!enabled || !apiBase || !tokenIn || !tokenOut || !amountIn || parseFloat(amountIn) <= 0) {
       setQuote(null);
       setLoading(false);
       setError(null);
@@ -65,7 +73,7 @@ export function useCowQuote({
           return raw.toString();
         })();
 
-        const res = await fetch("https://api.cow.fi/mainnet/api/v1/quote", {
+        const res = await fetch(`${apiBase}/quote`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
@@ -120,7 +128,7 @@ export function useCowQuote({
       if (timerRef.current) clearTimeout(timerRef.current);
       abortRef.current?.abort();
     };
-  }, [tokenIn, tokenOut, amountIn, decimalsIn, decimalsOut, enabled]);
+  }, [tokenIn, tokenOut, amountIn, decimalsIn, decimalsOut, chainId, enabled]);
 
   return { quote, loading, error };
 }
