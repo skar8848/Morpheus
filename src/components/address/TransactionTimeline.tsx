@@ -190,6 +190,10 @@ export default function TransactionTimeline({
   );
 }
 
+function isValidTxHash(hash: string): boolean {
+  return /^0x[a-f0-9]{64}$/i.test(hash);
+}
+
 function TransactionRow({ tx }: { tx: MorphoTransaction }) {
   const details = getTransactionDetails(tx);
   const label = TX_LABELS[tx.type] ?? tx.type;
@@ -202,9 +206,13 @@ function TransactionRow({ tx }: { tx: MorphoTransaction }) {
     tx.type === "MetaMorphoDeposit" ||
     tx.type === "MarketRepay";
 
+  const txUrl = isValidTxHash(tx.hash)
+    ? `https://etherscan.io/tx/${tx.hash}`
+    : undefined;
+
   return (
     <a
-      href={`https://etherscan.io/tx/${tx.hash}`}
+      href={txUrl}
       target="_blank"
       rel="noopener noreferrer"
       className="flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-bg-secondary"
