@@ -56,9 +56,9 @@ body {
   50% { box-shadow: 0 0 12px var(--brand), 0 0 24px rgba(41, 115, 255, 0.4); }
 }
 
-/* Animated dash for connectors */
+/* Animated dash for connectors — offset must be a multiple of dasharray total (6+3=9) */
 @keyframes dash-flow {
-  to { stroke-dashoffset: -20; }
+  to { stroke-dashoffset: -18; }
 }
 
 /* React Flow dark theme overrides */
