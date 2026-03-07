@@ -27,17 +27,9 @@ interface AddressData {
 }
 
 const TX_PAGE_SIZE = 50;
-const MAX_TRANSACTIONS = 1000;
+import { safeBigInt } from "../utils/bigint";
 
-/** Safely convert API string to BigInt, returns 0n on failure */
-function safeBigInt(value: unknown): bigint {
-  if (typeof value !== "string" && typeof value !== "number") return 0n;
-  try {
-    return BigInt(value);
-  } catch {
-    return 0n;
-  }
-}
+const MAX_TRANSACTIONS = 1000;
 
 export function useAddressPositions(
   address: string | null,

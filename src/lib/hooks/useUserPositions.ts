@@ -14,15 +14,7 @@ import type {
   UserVaultPositionsResponse,
 } from "../graphql/types";
 import { useChain } from "../context/ChainContext";
-
-function safeBigInt(value: unknown): bigint {
-  if (typeof value !== "string" && typeof value !== "number") return 0n;
-  try {
-    return BigInt(value);
-  } catch {
-    return 0n;
-  }
-}
+import { safeBigInt } from "../utils/bigint";
 
 export function useUserPositions() {
   const { chainId } = useChain();

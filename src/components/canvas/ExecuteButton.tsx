@@ -250,8 +250,12 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
             );
           });
 
-          // H3 fix: Wait for approval to be confirmed on-chain before proceeding
-          await waitForTransactionReceipt(wagmiConfig, { hash, confirmations: 1 });
+          // Wait for approval to be confirmed on-chain before proceeding
+          await waitForTransactionReceipt(wagmiConfig, {
+            hash,
+            confirmations: 1,
+            timeout: 120_000, // 2 minute timeout
+          });
         }
       }
 
@@ -264,7 +268,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
 
       // 4. Build and send bundler tx (using snapshot)
       setApprovalStep(0);
-      const bundle = buildExecutionBundle(execNodes, execEdges, address, cid, slippageBps);
+      const bundle = buildExecutionBundle(execNodes, execEdges, address, cid);
 
       if (bundle.calls.length === 0 && !bundle.hasSwap) {
         setError("No executable actions in graph");

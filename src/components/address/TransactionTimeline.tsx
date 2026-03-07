@@ -2,7 +2,13 @@
 
 import Image from "next/image";
 import { formatUsd } from "@/lib/utils/format";
+import { useChain } from "@/lib/context/ChainContext";
 import type { MorphoTransaction, TransactionType } from "@/lib/graphql/types";
+
+const EXPLORER_BASE: Record<number, string> = {
+  1: "https://etherscan.io",
+  8453: "https://basescan.org",
+};
 
 interface Props {
   transactions: MorphoTransaction[];
@@ -157,6 +163,8 @@ export default function TransactionTimeline({
   loadMore,
   hasMore,
 }: Props) {
+  const { chainId } = useChain();
+  const explorerBase = EXPLORER_BASE[chainId] ?? "https://etherscan.io";
   const grouped = groupByDate(transactions);
 
   return (
@@ -171,7 +179,7 @@ export default function TransactionTimeline({
             <div className="mb-2 text-[11px] font-medium text-text-tertiary">{date}</div>
             <div className="space-y-1">
               {txs.map((tx) => (
-                <TransactionRow key={tx.id} tx={tx} />
+                <TransactionRow key={tx.id} tx={tx} explorerBase={explorerBase} />
               ))}
             </div>
           </div>
@@ -194,7 +202,7 @@ function isValidTxHash(hash: string): boolean {
   return /^0x[a-f0-9]{64}$/i.test(hash);
 }
 
-function TransactionRow({ tx }: { tx: MorphoTransaction }) {
+function TransactionRow({ tx, explorerBase }: { tx: MorphoTransaction; explorerBase: string }) {
   const details = getTransactionDetails(tx);
   const label = TX_LABELS[tx.type] ?? tx.type;
   const dotColor = TX_COLORS[tx.type] ?? "bg-gray-400";
@@ -207,7 +215,7 @@ function TransactionRow({ tx }: { tx: MorphoTransaction }) {
     tx.type === "MarketRepay";
 
   const txUrl = isValidTxHash(tx.hash)
-    ? `https://etherscan.io/tx/${tx.hash}`
+    ? `${explorerBase}/tx/${tx.hash}`
     : undefined;
 
   return (

@@ -10,15 +10,18 @@ import {
   GENERAL_ADAPTER1,
   bundler3Abi,
   generalAdapterAbi,
+  erc20Abi,
 } from "@/lib/constants/contracts";
 import type { SupportedChainId } from "@/lib/web3/chains";
 import { useChain } from "@/lib/context/ChainContext";
 import { formatUsd } from "@/lib/utils/format";
+import { safeBigInt } from "@/lib/utils/bigint";
+import { waitForTransactionReceipt } from "wagmi/actions";
+import { wagmiConfig } from "@/lib/web3/config";
 
-const SLIPPAGE_BPS = 50; // 0.5%
-const E27 = 10n ** 27n;
-const maxSharePrice = E27 + (E27 * BigInt(SLIPPAGE_BPS)) / 10000n;
-const minSharePrice = E27 - (E27 * BigInt(SLIPPAGE_BPS)) / 10000n;
+// Permissive share price bounds — we can't know vault share prices without
+// on-chain reads, so using 1:1 base would reject mature vaults.
+const MAX_UINT256 = 2n ** 256n - 1n;
 
 function safeParseUnits(amount: string, decimals: number): bigint {
   try {
@@ -69,6 +72,8 @@ export default function TransactionBundle({
   const { sendTransaction, isPending } = useSendTransaction();
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [approvalStep, setApprovalStep] = useState(0);
+  const [totalApprovals, setTotalApprovals] = useState(0);
 
   // Build the visual steps
   const steps = useMemo(() => {
@@ -187,6 +192,46 @@ export default function TransactionBundle({
         return;
       }
 
+      // Send real approval transactions for each collateral token
+      const approvalTokens: { token: `0x${string}`; symbol: string; amount: bigint }[] = [];
+      for (const asset of selectedAssets) {
+        const amount = depositAmounts[asset.address];
+        if (!amount || parseFloat(amount) <= 0) continue;
+        const raw = safeParseUnits(amount, asset.decimals);
+        if (raw === 0n) continue;
+        approvalTokens.push({ token: asset.address as `0x${string}`, symbol: asset.symbol, amount: raw });
+      }
+
+      if (approvalTokens.length > 0) {
+        setTotalApprovals(approvalTokens.length);
+        for (let i = 0; i < approvalTokens.length; i++) {
+          setApprovalStep(i + 1);
+          const hash = await new Promise<`0x${string}`>((resolve, reject) => {
+            sendTransaction(
+              {
+                to: approvalTokens[i].token,
+                data: encodeFunctionData({
+                  abi: erc20Abi,
+                  functionName: "approve",
+                  args: [adapter, approvalTokens[i].amount],
+                }),
+                value: 0n,
+              },
+              {
+                onSuccess: (h) => resolve(h),
+                onError: (err) => reject(err),
+              }
+            );
+          });
+          await waitForTransactionReceipt(wagmiConfig, {
+            hash,
+            confirmations: 1,
+            timeout: 120_000,
+          });
+        }
+        setApprovalStep(0);
+      }
+
       const calls: {
         to: `0x${string}`;
         data: `0x${string}`;
@@ -198,21 +243,21 @@ export default function TransactionBundle({
       const zeroHash =
         "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
 
-      // Encode withdraw calls — with slippage protection (C3 fix)
+      // Withdraw using erc4626Withdraw (takes asset amounts, not shares)
       for (const vault of withdrawVaults) {
         const amount = withdrawAmounts[vault.address];
         if (!amount || parseFloat(amount) <= 0) continue;
-        const shares = safeParseUnits(amount, vault.asset.decimals);
-        if (shares === 0n) continue;
+        const rawAssets = safeParseUnits(amount, vault.asset.decimals);
+        if (rawAssets === 0n) continue;
         calls.push({
           to: adapter,
           data: encodeFunctionData({
             abi: generalAdapterAbi,
-            functionName: "erc4626Redeem",
+            functionName: "erc4626Withdraw",
             args: [
               vault.address as `0x${string}`,
-              shares,
-              minSharePrice, // C3 fix: slippage protection
+              rawAssets,
+              MAX_UINT256, // permissive: accept any share price
               address,
               address,
             ],
@@ -242,7 +287,7 @@ export default function TransactionBundle({
           collateralToken: market.collateralAsset.address as `0x${string}`,
           oracle: market.oracle.address as `0x${string}`,
           irm: market.irmAddress as `0x${string}`,
-          lltv: BigInt(market.lltv),
+          lltv: safeBigInt(market.lltv),
         };
 
         // Transfer collateral to adapter
@@ -289,7 +334,7 @@ export default function TransactionBundle({
             collateralToken: market.collateralAsset.address as `0x${string}`,
             oracle: market.oracle.address as `0x${string}`,
             irm: market.irmAddress as `0x${string}`,
-            lltv: BigInt(market.lltv),
+            lltv: safeBigInt(market.lltv),
           };
           calls.push({
             to: adapter,
@@ -300,7 +345,7 @@ export default function TransactionBundle({
                 marketParams,
                 rawBorrow,
                 0n, // shares = 0 → borrow by assets
-                minSharePrice, // C3 fix: slippage protection
+                0n, // permissive: accept any share price
                 address,
               ],
             }),
@@ -340,7 +385,7 @@ export default function TransactionBundle({
               args: [
                 vault.address as `0x${string}`,
                 rawVaultAmount,
-                maxSharePrice, // C3 fix: slippage protection
+                MAX_UINT256, // permissive: accept any share price
                 address,
               ],
             }),
@@ -488,7 +533,9 @@ export default function TransactionBundle({
             {!isConnected
               ? "Connect Wallet to Execute"
               : isPending
-                ? "Confirming..."
+                ? approvalStep > 0
+                  ? `Approving (${approvalStep}/${totalApprovals})...`
+                  : "Confirming..."
                 : `Execute Bundle (${steps.length} actions)`}
           </button>
           <p className="mt-2 text-center text-[10px] text-text-tertiary">

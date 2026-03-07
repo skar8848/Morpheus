@@ -130,4 +130,17 @@ export const generalAdapterAbi = [
     ],
     outputs: [],
   },
+  {
+    name: "erc4626Withdraw",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "vault", type: "address" },
+      { name: "assets", type: "uint256" },
+      { name: "maxSharePriceE27", type: "uint256" },
+      { name: "receiver", type: "address" },
+      { name: "owner", type: "address" },
+    ],
+    outputs: [],
+  },
 ] as const;

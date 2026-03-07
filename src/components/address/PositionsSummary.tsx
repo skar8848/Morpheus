@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { formatApy, formatUsd, formatTokenAmount, formatLltv } from "@/lib/utils/format";
+import { safeBigInt } from "@/lib/utils/bigint";
 import type { UserMarketPosition, UserVaultPosition } from "@/lib/graphql/types";
 
 interface Props {
@@ -12,13 +13,13 @@ interface Props {
 export default function PositionsSummary({ marketPositions, vaultPositions }: Props) {
   // Separate borrows from supply-only
   const borrowPositions = marketPositions.filter(
-    (p) => p.state?.borrowAssets && BigInt(p.state.borrowAssets) > 0n
+    (p) => p.state?.borrowAssets && safeBigInt(p.state.borrowAssets) > 0n
   );
   const supplyPositions = marketPositions.filter(
     (p) =>
       p.state?.supplyAssets &&
-      BigInt(p.state.supplyAssets) > 0n &&
-      (!p.state.borrowAssets || BigInt(p.state.borrowAssets) === 0n)
+      safeBigInt(p.state.supplyAssets) > 0n &&
+      (!p.state.borrowAssets || safeBigInt(p.state.borrowAssets) === 0n)
   );
 
   return (

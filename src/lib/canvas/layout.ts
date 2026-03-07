@@ -3,6 +3,7 @@ import type {
   UserMarketPosition,
   UserVaultPosition,
 } from "@/lib/graphql/types";
+import { safeBigInt } from "@/lib/utils/bigint";
 
 const COLUMN_X = {
   wallet: 50,
@@ -42,7 +43,7 @@ export function buildInitialLayout(
 
   // Borrow positions
   const borrowPositions = marketPositions.filter(
-    (p) => p.state && p.state.borrowAssets && BigInt(p.state.borrowAssets) > 0n
+    (p) => p.state && p.state.borrowAssets && safeBigInt(p.state.borrowAssets) > 0n
   );
   borrowPositions.forEach((pos, i) => {
     nodes.push({
@@ -81,8 +82,8 @@ export function buildInitialLayout(
     (p) =>
       p.state &&
       p.state.supplyAssets &&
-      BigInt(p.state.supplyAssets) > 0n &&
-      !(p.state.borrowAssets && BigInt(p.state.borrowAssets) > 0n)
+      safeBigInt(p.state.supplyAssets) > 0n &&
+      !(p.state.borrowAssets && safeBigInt(p.state.borrowAssets) > 0n)
   );
   const offsetY = borrowPositions.length * ROW_SPACING;
   supplyPositions.forEach((pos, i) => {

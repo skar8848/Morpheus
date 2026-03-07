@@ -5,6 +5,7 @@ import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import type { Market, UserMarketPosition } from "@/lib/graphql/types";
 import { formatApy, formatLltv, formatTokenAmount, formatUsd } from "@/lib/utils/format";
+import { safeBigInt } from "@/lib/utils/bigint";
 
 interface BorrowMarketCardProps {
   market: Market;
@@ -82,7 +83,7 @@ export default function BorrowMarketCard({
       {existingPosition?.state && (
         <div className="mt-3 flex items-center gap-3 rounded-lg bg-brand/5 border border-brand/20 px-3 py-2 text-xs">
           <span className="text-brand font-medium">Active position</span>
-          {existingPosition.state.borrowAssets && BigInt(existingPosition.state.borrowAssets) > 0n && (
+          {existingPosition.state.borrowAssets && safeBigInt(existingPosition.state.borrowAssets) > 0n && (
             <span className="text-text-secondary">
               Borrowed:{" "}
               <span className="text-text-primary font-medium">
@@ -92,7 +93,7 @@ export default function BorrowMarketCard({
               </span>
             </span>
           )}
-          {BigInt(existingPosition.state.collateral) > 0n && (
+          {safeBigInt(existingPosition.state.collateral) > 0n && (
             <span className="text-text-secondary">
               Collateral:{" "}
               <span className="text-text-primary font-medium">

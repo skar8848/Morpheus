@@ -28,8 +28,6 @@ interface BundlerCall {
 const ZERO_HASH =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
 
-/** Default slippage tolerance: 0.5% */
-const DEFAULT_SLIPPAGE_BPS = 50; // 0.5% = 50 basis points
 
 /**
  * Safely convert a human-readable amount to raw BigInt using string-based
@@ -78,34 +76,18 @@ function requireValidAddress(addr: unknown, label: string): `0x${string}` {
 }
 
 /**
- * Compute maxSharePriceE27 for vault deposit with slippage tolerance.
- * sharePriceE27 ≈ (assets * 1e27) / shares
- * We allow up to (1 + slippage) × current price.
- * Conservative default: use 1.005e27 (0.5% above 1:1)
+ * Permissive share price bounds.
+ * We cannot know the vault's current share price without an on-chain read,
+ * so using a 1:1 base would reject transactions for any mature vault where
+ * the share price has appreciated beyond slippage tolerance.
+ *
+ * maxSharePriceE27 = uint256.max → accept any price when depositing
+ * minSharePriceE27 = 0          → accept any price when borrowing
+ * maxSharePriceE27 = uint256.max → accept any price when withdrawing
+ *
+ * The user confirms the exact asset amount, which is the real protection.
  */
-function clampSlippage(slippageBps: number): number {
-  if (!Number.isInteger(slippageBps) || slippageBps < 1) return DEFAULT_SLIPPAGE_BPS;
-  if (slippageBps > 5000) return 5000; // Cap at 50%
-  return slippageBps;
-}
-
-function maxSharePriceWithSlippage(slippageBps: number = DEFAULT_SLIPPAGE_BPS): bigint {
-  const bps = clampSlippage(slippageBps);
-  const base = 10n ** 27n;
-  const slippage = (base * BigInt(bps)) / 10000n;
-  return base + slippage;
-}
-
-/**
- * Compute minSharePriceE27 for vault redeem with slippage tolerance.
- * We accept down to (1 - slippage) × 1:1 price.
- */
-function minSharePriceWithSlippage(slippageBps: number = DEFAULT_SLIPPAGE_BPS): bigint {
-  const bps = clampSlippage(slippageBps);
-  const base = 10n ** 27n;
-  const slippage = (base * BigInt(bps)) / 10000n;
-  return base - slippage;
-}
+const MAX_UINT256 = 2n ** 256n - 1n;
 
 /**
  * Topological sort of nodes based on edges.
@@ -232,8 +214,7 @@ export function buildExecutionBundle(
   nodes: CanvasNode[],
   edges: Edge[],
   userAddress: `0x${string}`,
-  chainId: SupportedChainId,
-  slippageBps: number = DEFAULT_SLIPPAGE_BPS
+  chainId: SupportedChainId
 ): {
   to: `0x${string}`;
   data: `0x${string}`;
@@ -270,15 +251,17 @@ export function buildExecutionBundle(
         const raw = safeAmountToBigInt(d.amount, d.position.vault.asset.decimals);
         if (raw === 0n) break;
 
+        // Use erc4626Withdraw (takes assets) instead of erc4626Redeem (takes shares)
+        // because the user inputs an asset amount, not a share amount.
         calls.push({
           to: adapter,
           data: encodeFunctionData({
             abi: generalAdapterAbi,
-            functionName: "erc4626Redeem",
+            functionName: "erc4626Withdraw",
             args: [
               vaultAddr,
               raw,
-              minSharePriceWithSlippage(slippageBps),
+              MAX_UINT256, // permissive: accept any share price
               userAddress,
               userAddress,
             ],
@@ -366,7 +349,7 @@ export function buildExecutionBundle(
               marketParams,
               rawAmount,
               0n, // shares = 0 → borrow by assets
-              minSharePriceWithSlippage(slippageBps),
+              0n, // permissive: accept any share price
               userAddress,
             ],
           }),
@@ -392,7 +375,7 @@ export function buildExecutionBundle(
             args: [
               vaultAddr,
               rawAmount,
-              maxSharePriceWithSlippage(slippageBps),
+              MAX_UINT256, // permissive: accept any share price
               userAddress,
             ],
           }),

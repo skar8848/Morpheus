@@ -11,6 +11,7 @@ import {
   formatTokenAmount,
   formatLltv,
 } from "@/lib/utils/format";
+import { safeBigInt } from "@/lib/utils/bigint";
 
 interface ActivePositionsProps {
   marketPositions: UserMarketPosition[];
@@ -26,14 +27,14 @@ export default function ActivePositions({
   error,
 }: ActivePositionsProps) {
   const borrowPositions = marketPositions.filter(
-    (p) => p.state && p.state.borrowAssets && BigInt(p.state.borrowAssets) > 0n
+    (p) => p.state && p.state.borrowAssets && safeBigInt(p.state.borrowAssets) > 0n
   );
   const supplyPositions = marketPositions.filter(
     (p) =>
-      p.state && p.state.supplyAssets && BigInt(p.state.supplyAssets) > 0n
+      p.state && p.state.supplyAssets && safeBigInt(p.state.supplyAssets) > 0n
   );
   const collateralPositions = marketPositions.filter(
-    (p) => p.state && BigInt(p.state.collateral) > 0n
+    (p) => p.state && safeBigInt(p.state.collateral) > 0n
   );
 
   const isEmpty =
@@ -127,7 +128,7 @@ export default function ActivePositions({
 
                     <div className="flex items-center gap-6 text-right">
                       {/* Collateral */}
-                      {pos.state && BigInt(pos.state.collateral) > 0n && (
+                      {pos.state && safeBigInt(pos.state.collateral) > 0n && (
                         <div>
                           <p className="text-xs text-text-tertiary">Collateral</p>
                           <p className="text-sm font-medium text-text-primary">

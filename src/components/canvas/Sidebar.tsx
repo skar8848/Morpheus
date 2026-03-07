@@ -4,6 +4,7 @@ import { useState, type DragEvent } from "react";
 import Image from "next/image";
 import { useUserPositions } from "@/lib/hooks/useUserPositions";
 import { formatUsd, formatApy, formatTokenAmount } from "@/lib/utils/format";
+import { safeBigInt } from "@/lib/utils/bigint";
 import { DRAGGABLE_NODE_TYPES, NODE_COLORS } from "@/lib/canvas/types";
 
 interface SidebarProps {
@@ -21,10 +22,10 @@ export default function Sidebar({ onAddPosition, highlightType }: SidebarProps) 
   };
 
   const borrowPositions = marketPositions.filter(
-    (p) => p.state && p.state.borrowAssets && BigInt(p.state.borrowAssets) > 0n
+    (p) => p.state && p.state.borrowAssets && safeBigInt(p.state.borrowAssets) > 0n
   );
   const vaultPos = vaultPositions.filter(
-    (p) => p.state && BigInt(p.state.shares) > 0n
+    (p) => p.state && safeBigInt(p.state.shares) > 0n
   );
 
   return (

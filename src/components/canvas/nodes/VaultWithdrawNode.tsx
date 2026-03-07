@@ -5,6 +5,7 @@ import { Handle, Position, useReactFlow, type NodeProps } from "@xyflow/react";
 import Image from "next/image";
 import { useUserPositions } from "@/lib/hooks/useUserPositions";
 import { formatApy, formatUsd, formatTokenAmount } from "@/lib/utils/format";
+import { safeBigInt } from "@/lib/utils/bigint";
 import type { VaultWithdrawNodeData } from "@/lib/canvas/types";
 import NodeShell from "./NodeShell";
 import SearchSelect from "./SearchSelect";
@@ -15,7 +16,7 @@ function VaultWithdrawNodeComponent({ id, data }: NodeProps) {
   const d = data as unknown as VaultWithdrawNodeData;
 
   const activeVaults = vaultPositions.filter(
-    (p) => p.state && BigInt(p.state.shares) > 0n
+    (p) => p.state && safeBigInt(p.state.shares) > 0n
   );
 
   const positionOptions = useMemo(

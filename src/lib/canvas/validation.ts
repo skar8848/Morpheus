@@ -33,6 +33,9 @@ export function isValidConnection(
 
   if (!sourceNode || !targetNode) return false;
 
+  // Reject self-loops
+  if (connection.source === connection.target) return false;
+
   const sourceType = (sourceNode.data as { type?: string }).type;
   const targetType = (targetNode.data as { type?: string }).type;
 
@@ -103,6 +106,19 @@ export function validateGraph(
 ): string[] {
   const errors: string[] = [];
 
+  // --- Self-loop and duplicate edge detection ---
+  const seenEdges = new Set<string>();
+  for (const edge of edges) {
+    if (edge.source === edge.target) {
+      errors.push(`Edge ${edge.id}: self-loop not allowed`);
+    }
+    const edgeKey = `${edge.source}->${edge.target}`;
+    if (seenEdges.has(edgeKey)) {
+      errors.push(`Duplicate edge: ${edge.source} → ${edge.target}`);
+    }
+    seenEdges.add(edgeKey);
+  }
+
   // --- Cycle detection via topological sort ---
   const inDegree = new Map<string, number>();
   const adjList = new Map<string, string[]>();
@@ -116,6 +132,7 @@ export function validateGraph(
       errors.push(`Edge ${edge.id}: references non-existent node`);
       continue;
     }
+    if (edge.source === edge.target) continue; // skip self-loops (already reported)
     adjList.get(edge.source)?.push(edge.target);
     inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
   }

@@ -5,18 +5,11 @@ import type {
   UserVaultPosition,
 } from "@/lib/graphql/types";
 
+import { safeBigInt } from "@/lib/utils/bigint";
+
 const COL = { wallet: 50, supply: 380, borrow: 710, vault: 1040 };
 const ROW_GAP = 220;
 const START_Y = 80;
-
-function safeBigInt(value: unknown): bigint {
-  if (typeof value !== "string" && typeof value !== "number") return 0n;
-  try {
-    return BigInt(value);
-  } catch {
-    return 0n;
-  }
-}
 
 const STORAGE_KEY = "morpho-canvas-import";
 
