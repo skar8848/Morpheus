@@ -17,6 +17,7 @@ import { edgeTypes } from "./edges";
 import { useCanvasState } from "@/lib/canvas/useCanvasState";
 import { useChain } from "@/lib/context/ChainContext";
 import { isValidConnection, getConnectionHint } from "@/lib/canvas/validation";
+import { organizeLayout } from "@/lib/canvas/layout";
 import { VALID_CONNECTIONS, DRAGGABLE_NODE_TYPES, NODE_SHORTCUTS, NODE_COLORS, type CanvasNode } from "@/lib/canvas/types";
 import Sidebar from "./Sidebar";
 import ExecuteButton from "./ExecuteButton";
@@ -687,6 +688,26 @@ export default function CanvasPage() {
             </svg>
           </button>
         </div>
+        {/* Organize */}
+        <button
+          onClick={() => {
+            pushHistory();
+            const organized = organizeLayout(nodes as CanvasNode[], edges);
+            setNodes(organized);
+            setTimeout(() => reactFlowInstance.current?.fitView({ padding: 0.2 }), 100);
+          }}
+          className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-card/90 px-3 py-1.5 text-[10px] text-text-tertiary transition-colors hover:text-brand"
+          title="Auto-organize layout"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+            <rect x="1" y="2" width="4" height="3" rx="0.5" stroke="currentColor" strokeWidth="1.2" />
+            <rect x="6" y="6.5" width="4" height="3" rx="0.5" stroke="currentColor" strokeWidth="1.2" />
+            <rect x="11" y="2" width="4" height="3" rx="0.5" stroke="currentColor" strokeWidth="1.2" />
+            <rect x="11" y="11" width="4" height="3" rx="0.5" stroke="currentColor" strokeWidth="1.2" />
+            <path d="M5 3.5h1M10 8h1M10 8v-4.5h1M10 8v4.5h1" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          </svg>
+          Organize
+        </button>
         <button
           onClick={() => {
             const viewport = document.querySelector(".react-flow__viewport") as HTMLElement;
