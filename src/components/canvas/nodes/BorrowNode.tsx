@@ -138,13 +138,17 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
     });
   }, [d.market?.uniqueKey, d.ltvPercent, depositUsd, loanAssetPrice]);
 
-  // Market liquidity check — warn if borrow exceeds available liquidity
+  // Market liquidity check — use LIVE data from useMarkets, not the stale d.market snapshot
   const availableLiquidity = useMemo(() => {
-    if (!d.market?.state?.liquidityAssets) return null;
-    const raw = Number(d.market.state.liquidityAssets);
+    if (!d.market) return null;
+    // Find the live version of the selected market
+    const liveMarket = markets.find((m) => m.uniqueKey === d.market!.uniqueKey);
+    const liquidityStr = liveMarket?.state?.liquidityAssets ?? d.market.state?.liquidityAssets;
+    if (!liquidityStr) return null;
+    const raw = Number(liquidityStr);
     if (!isFinite(raw) || raw <= 0) return 0;
     return raw / 10 ** d.market.loanAsset.decimals;
-  }, [d.market]);
+  }, [d.market, markets]);
   const exceedsLiquidity = availableLiquidity !== null && d.borrowAmount > 0 && d.borrowAmount > availableLiquidity;
 
   // Persist to node data so edges + ExecuteButton can read it
