@@ -29,7 +29,6 @@ export default function Navbar() {
   const morphoBase = slug === "base" ? "https://app.morpho.org/base" : "https://app.morpho.org";
   const tabs = [
     { href: `/${slug}/canvas`, label: "Canvas" },
-    { href: `/${slug}/migrate`, label: "Migrate" },
     { href: `/${slug}/address`, label: "Address" },
     { href: morphoBase, label: "Go to Morpho", external: true },
   ];
