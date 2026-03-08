@@ -4,7 +4,7 @@ import { useMemo, useState, useCallback, useRef } from "react";
 import Image from "next/image";
 import type { Edge } from "@xyflow/react";
 import { useAccount, useSendTransaction, useChainId, useSwitchChain } from "wagmi";
-import { readContract, waitForTransactionReceipt } from "wagmi/actions";
+import { readContract, waitForTransactionReceipt, estimateGas } from "wagmi/actions";
 import { useChain } from "@/lib/context/ChainContext";
 import { validateGraph } from "@/lib/canvas/validation";
 import {
@@ -337,6 +337,27 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         bundle: { to: `0x${string}`; data: `0x${string}`; calls: { to: string }[] }
       ) => {
         if (bundle.calls.length === 0) return;
+
+        // Simulate first to avoid wasting gas on reverts
+        try {
+          await estimateGas(wagmiConfig, {
+            to: bundle.to,
+            data: bundle.data,
+            value: 0n,
+            account: currentAddress,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // Extract revert reason if available
+          if (msg.includes("insufficient liquidity")) {
+            throw new Error("Simulation failed: insufficient market liquidity");
+          }
+          if (msg.includes("insufficient balance")) {
+            throw new Error("Simulation failed: insufficient token balance");
+          }
+          throw new Error(`Simulation failed — transaction would revert. ${msg.slice(0, 120)}`);
+        }
+
         const bundleHash = await new Promise<`0x${string}`>((resolve, reject) => {
           sendTransaction(
             { to: bundle.to, data: bundle.data, value: 0n },
