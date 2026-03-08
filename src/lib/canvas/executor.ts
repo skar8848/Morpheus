@@ -175,7 +175,17 @@ export function getRequiredApprovals(
     if (data.type === "vaultDeposit") {
       const d = node.data as unknown as VaultDepositNodeData;
       if (!d.vault?.address || !d.amount) continue;
-      const raw = safeAmountToBigInt(d.amount, d.vault.asset.decimals);
+      let raw = safeAmountToBigInt(d.amount, d.vault.asset.decimals);
+      // Cap at upstream borrow amount to match executor behavior
+      const upEdge = edges.find((e) => e.target === node.id);
+      if (upEdge) {
+        const upNode = nodes.find((n) => n.id === upEdge.source);
+        const upData = upNode?.data as unknown as BorrowNodeData | undefined;
+        if (upData?.type === "borrow" && upData.market && upData.borrowAmount > 0) {
+          const borrowRaw = safeAmountToBigInt(upData.borrowAmount, upData.market.loanAsset.decimals);
+          if (borrowRaw > 0n && raw > borrowRaw) raw = borrowRaw;
+        }
+      }
       addApproval(d.vault.asset.address, d.vault.asset.symbol, raw);
     }
 
@@ -241,6 +251,8 @@ export function buildExecutionBundle(
   const sorted = topologicalSort(nodes, edges);
   const calls: BundlerCall[] = [];
   let hasSwap = false;
+  // Track actual raw borrow amounts per node to cap downstream deposits
+  const borrowRawAmounts = new Map<string, bigint>();
 
   for (const node of sorted) {
     const data = node.data as { type?: string };
@@ -334,6 +346,9 @@ export function buildExecutionBundle(
         const rawAmount = safeAmountToBigInt(d.borrowAmount, d.market.loanAsset.decimals);
         if (rawAmount === 0n) break;
 
+        // Track for downstream deposit capping
+        borrowRawAmounts.set(node.id, rawAmount);
+
         const loanToken = requireValidAddress(d.market.loanAsset.address, "loan token");
         const collateralToken = requireValidAddress(d.market.collateralAsset.address, "collateral token");
         const oracle = requireValidAddress(d.market.oracle.address, "oracle");
@@ -368,8 +383,17 @@ export function buildExecutionBundle(
         if (!d.vault?.address || !d.amount) break;
         const vaultAddr = requireValidAddress(d.vault.address, "vault deposit");
         const vaultAssetAddr = requireValidAddress(d.vault.asset.address, "vault deposit asset");
-        const rawAmount = safeAmountToBigInt(d.amount, d.vault.asset.decimals);
+        let rawAmount = safeAmountToBigInt(d.amount, d.vault.asset.decimals);
         if (rawAmount === 0n) break;
+
+        // Cap deposit at upstream borrow amount to avoid rounding mismatch
+        const upEdge = edges.find((e) => e.target === node.id);
+        if (upEdge) {
+          const upBorrow = borrowRawAmounts.get(upEdge.source);
+          if (upBorrow !== undefined && rawAmount > upBorrow) {
+            rawAmount = upBorrow;
+          }
+        }
 
         // Always pull tokens from user into adapter before depositing.
         calls.push({
