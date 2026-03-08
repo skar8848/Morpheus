@@ -10,6 +10,7 @@ interface NodeShellProps {
   onDelete?: () => void;
   invalid?: boolean;
   dimmed?: boolean;
+  loading?: boolean;
 }
 
 export default function NodeShell({
@@ -19,6 +20,7 @@ export default function NodeShell({
   onDelete,
   invalid,
   dimmed,
+  loading,
 }: NodeShellProps) {
   const accent = NODE_COLORS[nodeType] ?? "#6b7079";
 
@@ -39,9 +41,17 @@ export default function NodeShell({
         className="flex items-center justify-between rounded-t-xl px-3 py-2"
         style={{ backgroundColor: `${accent}18` }}
       >
-        <span className="text-xs font-semibold" style={{ color: accent }}>
-          {title}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-semibold" style={{ color: accent }}>
+            {title}
+          </span>
+          {loading && (
+            <span
+              className="h-1.5 w-1.5 animate-pulse rounded-full"
+              style={{ backgroundColor: accent }}
+            />
+          )}
+        </div>
         {onDelete && (
           <button
             onClick={onDelete}

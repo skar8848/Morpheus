@@ -94,11 +94,11 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
 
   // Fetch real prices from Morpho API
   const allAddresses = useMemo(() => assets.map((a) => a.address), [assets]);
-  const { prices } = useAssetPrices(allAddresses);
+  const { prices, loading: pricesLoading } = useAssetPrices(allAddresses);
 
   // Fetch wallet balance for selected asset
   const selectedAssets = useMemo(() => (d.asset ? [d.asset] : []), [d.asset]);
-  const { assetsWithBalances } = useTokenBalances(selectedAssets);
+  const { assetsWithBalances, isLoading: balanceLoading } = useTokenBalances(selectedAssets);
   const walletBalance = parseFloat(assetsWithBalances[0]?.balance ?? "0");
 
   // Fill wallet input amounts + compute total
@@ -155,6 +155,7 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
       title="Supply Collateral"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
       invalid={exceedsBalance}
+      loading={pricesLoading || balanceLoading}
     >
       <div className="space-y-2">
         {/* Warning: upstream asset not supported as collateral */}
@@ -203,9 +204,13 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
         {d.asset && (hasWalletInput || upstreamInputs.length === 0) && (
           <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-2 py-1">
             <span className="text-[10px] text-text-tertiary">Wallet</span>
-            <span className="text-[10px] text-text-secondary">
-              {walletBalance.toFixed(4)} {d.asset.symbol}
-            </span>
+            {balanceLoading ? (
+              <div className="h-3 w-16 animate-pulse rounded bg-bg-primary" />
+            ) : (
+              <span className="text-[10px] text-text-secondary">
+                {walletBalance.toFixed(4)} {d.asset.symbol}
+              </span>
+            )}
           </div>
         )}
 
@@ -297,11 +302,13 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
             <span className="text-xs font-medium text-text-primary">
               {d.asset.symbol}
             </span>
-            {priceUsd > 0 && (
+            {pricesLoading ? (
+              <div className="ml-auto h-3 w-12 animate-pulse rounded bg-bg-primary" />
+            ) : priceUsd > 0 ? (
               <span className="ml-auto text-[10px] text-text-tertiary">
                 ${priceUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </span>
-            )}
+            ) : null}
           </div>
         )}
       </div>

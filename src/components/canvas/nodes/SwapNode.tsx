@@ -214,6 +214,7 @@ function SwapNodeComponent({ id, data }: NodeProps) {
       title="Swap (CowSwap)"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
       invalid={exceedsBalance}
+      loading={assetsLoading || quoteLoading}
     >
       <div className="space-y-2">
         {/* Token In */}

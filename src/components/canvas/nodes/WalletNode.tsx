@@ -28,7 +28,7 @@ function WalletNodeComponent({ id, data }: NodeProps) {
   );
 
   return (
-    <NodeShell nodeType="wallet" title="Wallet" dimmed={!isUsed}>
+    <NodeShell nodeType="wallet" title="Wallet" dimmed={!isUsed} loading={isLoading}>
       <div className="space-y-2">
         {/* Address */}
         <div className="flex items-center justify-between">

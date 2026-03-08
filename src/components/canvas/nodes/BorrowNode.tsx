@@ -188,6 +188,7 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
       title="Borrow"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
       invalid={exceedsLiquidity}
+      loading={loanAssetsLoading || marketsLoading}
     >
       <div className="space-y-2">
         {/* No connection hint */}

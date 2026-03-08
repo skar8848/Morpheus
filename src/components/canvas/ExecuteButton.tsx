@@ -75,6 +75,11 @@ function safeFloat(val: string | undefined): number {
   return isFinite(n) ? n : 0;
 }
 
+/** Format number with . for decimal, , for thousands */
+function fmtNum(val: number, decimals = 4): string {
+  return val.toLocaleString("en-US", { maximumFractionDigits: decimals, minimumFractionDigits: 0 });
+}
+
 function topologicalSort(nodes: CanvasNode[], edges: Edge[]): CanvasNode[] {
   const adjList = new Map<string, string[]>();
   const inDegree = new Map<string, number>();
@@ -184,7 +189,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           if (!d.position || safeFloat(d.amount) <= 0) break;
           s.push({
             label: `Withdraw from ${d.position.vault.name}`,
-            detail: `${safeFloat(d.amount).toFixed(4)} ${d.position.vault.asset.symbol}`,
+            detail: `${fmtNum(safeFloat(d.amount))} ${d.position.vault.asset.symbol}`,
             type: "withdraw",
             icon: d.position.vault.asset.logoURI,
           });
@@ -194,13 +199,13 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           if (!d.asset || safeFloat(d.amount) <= 0) break;
           s.push({
             label: `Approve ${d.asset.symbol}`,
-            detail: `${safeFloat(d.amount).toFixed(4)} ${d.asset.symbol} to Bundler`,
+            detail: `${fmtNum(safeFloat(d.amount))} ${d.asset.symbol} to Bundler`,
             type: "approve",
             icon: d.asset.logoURI,
           });
           s.push({
             label: `Supply ${d.asset.symbol} collateral`,
-            detail: `${safeFloat(d.amount).toFixed(4)} ${d.asset.symbol}`,
+            detail: `${fmtNum(safeFloat(d.amount))} ${d.asset.symbol}`,
             type: "supply",
             icon: d.asset.logoURI,
           });
@@ -210,7 +215,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           if (!d.market || !isFinite(d.borrowAmount) || d.borrowAmount <= 0) break;
           s.push({
             label: `Borrow ${d.market.loanAsset.symbol}`,
-            detail: `${d.borrowAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${d.market.loanAsset.symbol} ($${d.borrowAmountUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}) — ${formatApy(d.market.state.netBorrowApy)}`,
+            detail: `${fmtNum(d.borrowAmount, 6)} ${d.market.loanAsset.symbol} ($${fmtNum(d.borrowAmountUsd, 2)}) — ${formatApy(d.market.state.netBorrowApy)}`,
             type: "borrow",
             icon: d.market.loanAsset.logoURI,
           });
@@ -220,7 +225,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           if (!d.tokenIn || !d.tokenOut) break;
           s.push({
             label: `Swap ${d.tokenIn.symbol} → ${d.tokenOut.symbol}`,
-            detail: d.amountIn ? `${d.amountIn} ${d.tokenIn.symbol}` : "Pending quote",
+            detail: d.amountIn ? `${fmtNum(safeFloat(d.amountIn))} ${d.tokenIn.symbol}` : "Pending quote",
             type: "swap",
             icon: d.tokenIn.logoURI,
           });
@@ -232,7 +237,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           if (!d.depositAll && safeFloat(d.amount) <= 0) break;
           const depositDetail = d.depositAll
             ? `All swap output → ${d.vault.asset.symbol} — ${formatApy(d.vault.state.netApy)}`
-            : `${safeFloat(d.amount).toFixed(4)} ${d.vault.asset.symbol} — ${formatApy(d.vault.state.netApy)}`;
+            : `${fmtNum(safeFloat(d.amount))} ${d.vault.asset.symbol} — ${formatApy(d.vault.state.netApy)}`;
           s.push({
             label: `Deposit into ${d.vault.name}`,
             detail: depositDetail,
@@ -245,7 +250,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           if (!d.market || safeFloat(d.amount) <= 0) break;
           s.push({
             label: `Repay ${d.market.loanAsset.symbol}`,
-            detail: `${safeFloat(d.amount).toFixed(4)} ${d.market.loanAsset.symbol} — ${formatApy(d.market.state.netBorrowApy)}`,
+            detail: `${fmtNum(safeFloat(d.amount))} ${d.market.loanAsset.symbol} — ${formatApy(d.market.state.netBorrowApy)}`,
             type: "repay",
             icon: d.market.loanAsset.logoURI,
           });
@@ -684,55 +689,80 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
             {/* Steps timeline */}
             {steps.length > 0 ? (
               <div className="relative max-h-[280px] overflow-y-auto pr-1 scrollbar-thin">
-                <div className={`absolute left-[11px] top-3 bottom-3 w-[2px] bg-gradient-to-b from-brand via-success to-purple-400 opacity-30 ${isExecuting && !txHash ? "animate-pulse" : ""}`} />
-                <div className="space-y-2">
-                  {steps.map((step, i) => (
-                    <div key={i} className="relative flex items-center gap-3">
-                      <div
-                        className={`relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${
-                          txHash ? "border-success/40 bg-success/10 text-success" : typeColors[step.type]
-                        }`}
-                      >
-                        {txHash ? (
-                          <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-                            <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        ) : isExecuting ? (
-                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="animate-spin">
-                            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeOpacity="0.25" />
-                            <path d="M14 8a6 6 0 00-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                          </svg>
-                        ) : (
-                          i + 1
-                        )}
-                      </div>
-                      <div className="flex flex-1 items-center justify-between rounded-lg border border-border bg-bg-secondary px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <Image
-                            src={step.icon}
-                            alt=""
-                            width={16}
-                            height={16}
-                            className="rounded-full"
-                            unoptimized
+                <div className="space-y-0">
+                  {steps.map((step, i) => {
+                    const done = !!txHash;
+                    const isLast = i === steps.length - 1;
+
+                    return (
+                      <div key={i} className="relative flex items-start gap-3">
+                        {/* Vertical connector — between circles, not through them */}
+                        {!isLast && (
+                          <div
+                            className={`absolute left-[11px] top-6 w-[2px] ${
+                              done ? "bg-success/40" : "border-l-2 border-dashed border-border bg-transparent"
+                            }`}
+                            style={{ height: "calc(100% - 4px)" }}
                           />
-                          <div>
-                            <p className="text-xs font-medium text-text-primary">
-                              {step.label}
-                            </p>
-                            <p className="text-[10px] text-text-tertiary">
-                              {step.detail}
-                            </p>
-                          </div>
-                        </div>
-                        <span
-                          className={`ml-2 shrink-0 rounded-md px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wider ${typeColors[step.type]}`}
+                        )}
+                        {/* Circle */}
+                        <div
+                          className={`relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                            done
+                              ? "border border-success/40 bg-success/10 text-success"
+                              : isExecuting
+                                ? "border border-border bg-bg-secondary text-text-tertiary"
+                                : "border border-border bg-bg-secondary text-text-tertiary"
+                          }`}
                         >
-                          {typeLabels[step.type]}
-                        </span>
+                          {done ? (
+                            <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                              <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          ) : isExecuting ? (
+                            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="animate-spin text-text-tertiary">
+                              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeOpacity="0.2" />
+                              <path d="M14 8a6 6 0 00-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                            </svg>
+                          ) : (
+                            i + 1
+                          )}
+                        </div>
+                        {/* Step card */}
+                        <div className={`mb-2 flex flex-1 items-center justify-between rounded-lg border px-3 py-2 ${
+                          done ? "border-success/20 bg-success/5" : "border-border bg-bg-secondary"
+                        }`}>
+                          <div className="flex items-center gap-2">
+                            <Image
+                              src={step.icon}
+                              alt=""
+                              width={16}
+                              height={16}
+                              className="rounded-full"
+                              unoptimized
+                            />
+                            <div>
+                              <p className={`text-xs font-medium ${done ? "text-success" : "text-text-primary"}`}>
+                                {step.label}
+                              </p>
+                              <p className="text-[10px] text-text-tertiary">
+                                {step.detail}
+                              </p>
+                            </div>
+                          </div>
+                          <span
+                            className={`ml-2 shrink-0 rounded-md px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wider ${
+                              done
+                                ? "border-success/20 bg-success/5 text-success"
+                                : "border-border bg-bg-primary text-text-tertiary"
+                            }`}
+                          >
+                            {typeLabels[step.type]}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ) : (

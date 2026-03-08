@@ -34,6 +34,7 @@ function VaultWithdrawNodeComponent({ id, data }: NodeProps) {
       nodeType="vaultWithdraw"
       title="Vault Withdraw"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
+      loading={loading}
     >
       <div className="space-y-2">
         {/* Position selector */}

@@ -47,6 +47,7 @@ function RepayNodeComponent({ id, data }: NodeProps) {
       nodeType="repay"
       title="Repay"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
+      loading={loading}
     >
       <Handle
         type="target"

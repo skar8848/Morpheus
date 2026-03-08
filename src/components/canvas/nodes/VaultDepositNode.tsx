@@ -240,6 +240,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
       nodeType="vaultDeposit"
       title="Vault Deposit"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
+      loading={vaultsLoading}
     >
       <div className="space-y-2">
         {/* Hint when not connected */}
