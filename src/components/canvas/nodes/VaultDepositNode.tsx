@@ -207,6 +207,19 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     });
   const totalDeposit = sourceDeposits.reduce((sum, s) => sum + s.depositAmount, 0);
 
+  // Auto-sync totalDeposit from upstream borrows to node data amount
+  const prevTotalRef = useRef<number>(0);
+  useEffect(() => {
+    if (hasBorrowUpstream && totalDeposit > 0 && d.vault) {
+      const currentAmount = parseFloat(d.amount || "0");
+      // Update when total changes (upstream borrow amount changed, slider moved, etc.)
+      if (Math.abs(totalDeposit - currentAmount) > 1e-8 && Math.abs(totalDeposit - prevTotalRef.current) > 1e-8) {
+        prevTotalRef.current = totalDeposit;
+        updateNodeData(id, { amount: totalDeposit.toFixed(6) });
+      }
+    }
+  }, [totalDeposit, hasBorrowUpstream, d.vault]);
+
   // Auto-set depositAll when swap first connects
   const prevSwapRef = useRef<string | null>(null);
   useEffect(() => {
