@@ -3,7 +3,7 @@
 import { useMemo, useState, useCallback, useRef } from "react";
 import Image from "next/image";
 import type { Edge } from "@xyflow/react";
-import { useAccount, useSendTransaction, useChainId, useSwitchChain } from "wagmi";
+import { useAccount, useSendTransaction, useSwitchChain } from "wagmi";
 import { readContract, waitForTransactionReceipt, estimateGas } from "wagmi/actions";
 import { useChain } from "@/lib/context/ChainContext";
 import { validateGraph } from "@/lib/canvas/validation";
@@ -106,9 +106,8 @@ function topologicalSort(nodes: CanvasNode[], edges: Edge[]): CanvasNode[] {
 }
 
 export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, chainId: walletChainId } = useAccount();
   const { chainId } = useChain();
-  const walletChainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
   const { sendTransaction, isPending } = useSendTransaction();
   const [txHash, setTxHash] = useState<string | null>(null);

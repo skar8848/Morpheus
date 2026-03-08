@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useAccount, useConnect, useDisconnect, useChainId, useSwitchChain } from "wagmi";
+import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { injected } from "wagmi/connectors";
 import NavTab from "./NavTab";
 import { useChain } from "@/lib/context/ChainContext";
@@ -14,7 +14,6 @@ export default function Navbar() {
   const { address, isConnected } = useAccount();
   const { connect } = useConnect();
   const { disconnect } = useDisconnect();
-  const walletChainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
   const [chainMenuOpen, setChainMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -24,7 +23,8 @@ export default function Navbar() {
   }, []);
 
   const currentChain = CHAIN_CONFIGS.find((c) => c.slug === slug) ?? CHAIN_CONFIGS[0];
-  const wrongChain = isConnected && walletChainId !== currentChain.chainId;
+  const { chainId: walletChainId } = useAccount();
+  const wrongChain = isConnected && walletChainId !== undefined && walletChainId !== currentChain.chainId;
 
   const tabs = [
     { href: `/${slug}/explore`, label: "Explore" },
