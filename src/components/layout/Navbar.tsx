@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useAccount, useConnect, useDisconnect } from "wagmi";
+import { useAccount, useConnect, useDisconnect, useChainId, useSwitchChain } from "wagmi";
 import { injected } from "wagmi/connectors";
 import NavTab from "./NavTab";
 import { useChain } from "@/lib/context/ChainContext";
@@ -14,6 +14,8 @@ export default function Navbar() {
   const { address, isConnected } = useAccount();
   const { connect } = useConnect();
   const { disconnect } = useDisconnect();
+  const walletChainId = useChainId();
+  const { switchChainAsync } = useSwitchChain();
   const [chainMenuOpen, setChainMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
 
@@ -22,6 +24,7 @@ export default function Navbar() {
   }, []);
 
   const currentChain = CHAIN_CONFIGS.find((c) => c.slug === slug) ?? CHAIN_CONFIGS[0];
+  const wrongChain = isConnected && walletChainId !== currentChain.chainId;
 
   const tabs = [
     { href: `/${slug}/explore`, label: "Explore" },
@@ -90,14 +93,34 @@ export default function Navbar() {
             </svg>
           </button>
 
+          {/* Wrong network banner */}
+          {mounted && wrongChain && (
+            <button
+              onClick={async () => {
+                try { await switchChainAsync({ chainId: currentChain.chainId }); } catch { /* user rejected */ }
+              }}
+              className="ml-2 flex items-center gap-1.5 rounded-xl border border-orange-400/30 bg-orange-400/10 px-3 py-2 text-xs font-medium text-orange-400 transition-colors hover:bg-orange-400/20"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                <path d="M8 1l7 13H1L8 1z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+                <path d="M8 6v3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                <circle cx="8" cy="11.5" r="0.6" fill="currentColor" />
+              </svg>
+              Switch to {currentChain.label}
+            </button>
+          )}
+
           {chainMenuOpen && (
             <div className="absolute right-0 top-full mt-1 w-40 rounded-xl border border-border bg-bg-secondary py-1 shadow-lg">
               {CHAIN_CONFIGS.map((chain) => (
                 <button
                   key={chain.slug}
-                  onClick={() => {
+                  onClick={async () => {
                     setChainMenuOpen(false);
                     router.push(`/${chain.slug}/strategy`);
+                    if (isConnected) {
+                      try { await switchChainAsync({ chainId: chain.chainId }); } catch { /* user rejected */ }
+                    }
                   }}
                   className={`flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-bg-card ${
                     chain.slug === slug

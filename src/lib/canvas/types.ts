@@ -69,6 +69,14 @@ export interface VaultWithdrawNodeData {
   amount: string;
 }
 
+export interface RepayNodeData {
+  [key: string]: unknown;
+  type: "repay";
+  market: Market | null;
+  amount: string;
+  amountUsd: number;
+}
+
 export interface PositionNodeData {
   [key: string]: unknown;
   type: "position";
@@ -86,6 +94,7 @@ export type CanvasNodeData =
   | SwapNodeData
   | VaultDepositNodeData
   | VaultWithdrawNodeData
+  | RepayNodeData
   | PositionNodeData;
 
 export type CanvasNode = Node<CanvasNodeData>;
@@ -93,12 +102,13 @@ export type CanvasNode = Node<CanvasNodeData>;
 // --- Valid connections ---
 
 export const VALID_CONNECTIONS: Record<string, string[]> = {
-  wallet: ["supplyCollateral", "swap"],
+  wallet: ["supplyCollateral", "swap", "repay"],
   supplyCollateral: ["borrow", "vaultDeposit"],
   borrow: ["swap", "vaultDeposit"],
-  swap: ["vaultDeposit", "supplyCollateral", "wallet"],
+  swap: ["vaultDeposit", "supplyCollateral", "wallet", "repay"],
   vaultDeposit: [],
-  vaultWithdraw: ["swap", "vaultDeposit", "supplyCollateral"],
+  vaultWithdraw: ["swap", "vaultDeposit", "supplyCollateral", "repay"],
+  repay: [],
   position: ["vaultWithdraw", "supplyCollateral", "swap"],
 };
 
@@ -111,6 +121,7 @@ export const NODE_COLORS: Record<string, string> = {
   swap: "#f59e0b",
   vaultDeposit: "#a855f7",
   vaultWithdraw: "#f97316",
+  repay: "#ef4444",
   position: "#6b7079",
 };
 
@@ -122,6 +133,7 @@ export const DRAGGABLE_NODE_TYPES = [
   { type: "swap", label: "Swap (CowSwap)", icon: "S", shortcut: "X" },
   { type: "vaultDeposit", label: "Vault Deposit", icon: "V", shortcut: "D" },
   { type: "vaultWithdraw", label: "Vault Withdraw", icon: "W", shortcut: "W" },
+  { type: "repay", label: "Repay", icon: "R", shortcut: "R" },
 ] as const;
 
 /** Keyboard shortcut → node type mapping (lowercase key) */

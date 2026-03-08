@@ -73,6 +73,50 @@ function AnimatedEdgeComponent({
     return isUpstreamBlocked(source, nodesMap, edgesMap);
   })();
 
+  // Compute flow label from source node data
+  const flowLabel = (() => {
+    const nodesMap = new Map<string, Record<string, unknown>>();
+    for (const n of allNodes) nodesMap.set(n.id, n.data as Record<string, unknown>);
+    const srcData = nodesMap.get(source);
+    if (!srcData) return null;
+    const type = srcData.type as string;
+    const fmt = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 4 });
+    switch (type) {
+      case "supplyCollateral": {
+        const asset = srcData.asset as { symbol?: string } | null;
+        const amount = parseFloat(srcData.amount as string);
+        if (!asset?.symbol || !isFinite(amount) || amount <= 0) return null;
+        return `${fmt(amount)} ${asset.symbol}`;
+      }
+      case "borrow": {
+        const market = srcData.market as { loanAsset?: { symbol?: string } } | null;
+        const amount = srcData.borrowAmount as number;
+        if (!market?.loanAsset?.symbol || !isFinite(amount) || amount <= 0) return null;
+        return `${fmt(amount)} ${market.loanAsset.symbol}`;
+      }
+      case "swap": {
+        const tokenOut = srcData.tokenOut as { symbol?: string } | null;
+        const quoteOut = parseFloat(srcData.quoteOut as string);
+        if (!tokenOut?.symbol || !isFinite(quoteOut) || quoteOut <= 0) return null;
+        return `${fmt(quoteOut)} ${tokenOut.symbol}`;
+      }
+      case "vaultWithdraw": {
+        const pos = srcData.position as { vault?: { asset?: { symbol?: string } } } | null;
+        const amount = parseFloat(srcData.amount as string);
+        if (!pos?.vault?.asset?.symbol || !isFinite(amount) || amount <= 0) return null;
+        return `${fmt(amount)} ${pos.vault.asset.symbol}`;
+      }
+      case "repay": {
+        const market = srcData.market as { loanAsset?: { symbol?: string } } | null;
+        const amount = parseFloat(srcData.amount as string);
+        if (!market?.loanAsset?.symbol || !isFinite(amount) || amount <= 0) return null;
+        return `${fmt(amount)} ${market.loanAsset.symbol}`;
+      }
+      default:
+        return null;
+    }
+  })();
+
   const enter = useCallback(() => {
     if (leaveTimer.current) {
       clearTimeout(leaveTimer.current);
@@ -140,9 +184,31 @@ function AnimatedEdgeComponent({
         onMouseLeave={leave}
         style={{ pointerEvents: "stroke", cursor: "pointer" }}
       />
-      {/* Delete button */}
-      {hovered && (
-        <EdgeLabelRenderer>
+      {/* Flow label + delete button */}
+      <EdgeLabelRenderer>
+        {/* Flow amount label — always visible */}
+        {flowLabel && !hovered && (
+          <div
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - 14}px)`,
+              pointerEvents: "none",
+            }}
+            className="nodrag nopan"
+          >
+            <span
+              className={`rounded-md px-1.5 py-0.5 text-[9px] font-medium backdrop-blur-sm transition-opacity ${
+                blocked
+                  ? "bg-bg-secondary/80 text-text-tertiary"
+                  : "bg-bg-card/90 text-text-secondary border border-border/50"
+              }`}
+            >
+              {flowLabel}
+            </span>
+          </div>
+        )}
+        {/* Delete button — on hover */}
+        {hovered && (
           <div
             onMouseEnter={enter}
             onMouseLeave={leave}
@@ -153,22 +219,29 @@ function AnimatedEdgeComponent({
               padding: 8,
             }}
           >
-            <button
-              onClick={() => deleteElements({ edges: [{ id }] })}
-              className="nodrag nopan flex h-5 w-5 items-center justify-center rounded-full border border-error/40 bg-bg-card text-error shadow-lg transition-transform hover:scale-110"
-            >
-              <svg width="8" height="8" viewBox="0 0 10 10" fill="none">
-                <path
-                  d="M1 1L9 9M9 1L1 9"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
+            <div className="flex flex-col items-center gap-1">
+              {flowLabel && (
+                <span className="rounded-md border border-border/50 bg-bg-card/90 px-1.5 py-0.5 text-[9px] font-medium text-text-secondary backdrop-blur-sm">
+                  {flowLabel}
+                </span>
+              )}
+              <button
+                onClick={() => deleteElements({ edges: [{ id }] })}
+                className="nodrag nopan flex h-5 w-5 items-center justify-center rounded-full border border-error/40 bg-bg-card text-error shadow-lg transition-transform hover:scale-110"
+              >
+                <svg width="8" height="8" viewBox="0 0 10 10" fill="none">
+                  <path
+                    d="M1 1L9 9M9 1L1 9"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            </div>
           </div>
-        </EdgeLabelRenderer>
-      )}
+        )}
+      </EdgeLabelRenderer>
     </>
   );
 }

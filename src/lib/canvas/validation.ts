@@ -247,6 +247,29 @@ export function validateGraph(
           errors.push(`Vault deposit node: no amount`);
         break;
       }
+      case "repay": {
+        const d = node.data as {
+          market?: {
+            loanAsset?: { address?: string; decimals?: number };
+            collateralAsset?: { address?: string };
+            oracle?: { address?: string };
+            irmAddress?: string;
+            lltv?: string;
+          };
+          amount?: string;
+        };
+        if (!d.market) {
+          errors.push(`Repay node: no market selected`);
+        } else {
+          if (!isValidAddr(d.market.loanAsset?.address))
+            errors.push(`Repay node: invalid loan asset address`);
+          if (!isValidAddr(d.market.collateralAsset?.address))
+            errors.push(`Repay node: invalid collateral address`);
+        }
+        if (safeParseAmount(d.amount) <= 0)
+          errors.push(`Repay node: no amount set`);
+        break;
+      }
       case "vaultWithdraw": {
         const d = node.data as {
           position?: { vault?: { address?: string; asset?: { decimals?: number } } };
@@ -270,7 +293,7 @@ export function validateGraph(
   // Check for disconnected non-wallet/position nodes
   for (const node of nodes) {
     const data = node.data as { type?: string };
-    if (data.type === "wallet" || data.type === "position" || data.type === "vaultWithdraw") continue;
+    if (data.type === "wallet" || data.type === "position" || data.type === "vaultWithdraw" || data.type === "repay") continue;
 
     const hasIncoming = edges.some((e) => e.target === node.id);
     if (!hasIncoming) {

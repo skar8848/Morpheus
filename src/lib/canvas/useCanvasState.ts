@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   useNodesState,
   useEdgesState,
@@ -33,9 +33,11 @@ export function useCanvasState() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const initialized = useRef(false);
 
-  // --- Undo history ---
+  // --- Undo / Redo history ---
   const historyRef = useRef<SavedGraph[]>([]);
+  const redoRef = useRef<SavedGraph[]>([]);
   const skipHistoryRef = useRef(false);
+  const [historyVersion, setHistoryVersion] = useState(0);
 
   const pushHistory = useCallback(() => {
     // Snapshot current state before a destructive action
@@ -46,15 +48,43 @@ export function useCanvasState() {
     if (historyRef.current.length > MAX_HISTORY) {
       historyRef.current.shift();
     }
+    // New action clears redo stack
+    redoRef.current = [];
+    setHistoryVersion((v) => v + 1);
   }, [nodes, edges]);
 
   const undo = useCallback(() => {
     const prev = historyRef.current.pop();
     if (!prev) return;
+    // Save current state for redo
+    redoRef.current.push({
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    });
     skipHistoryRef.current = true;
     setNodes(prev.nodes);
     setEdges(prev.edges);
-  }, [setNodes, setEdges]);
+    setHistoryVersion((v) => v + 1);
+  }, [nodes, edges, setNodes, setEdges]);
+
+  const redo = useCallback(() => {
+    const next = redoRef.current.pop();
+    if (!next) return;
+    // Save current state for undo
+    historyRef.current.push({
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    });
+    skipHistoryRef.current = true;
+    setNodes(next.nodes);
+    setEdges(next.edges);
+    setHistoryVersion((v) => v + 1);
+  }, [nodes, edges, setNodes, setEdges]);
+
+  const canUndo = historyRef.current.length > 0;
+  const canRedo = redoRef.current.length > 0;
+  // Force re-evaluation when historyVersion changes
+  void historyVersion;
 
   const STORAGE_KEY = `morpho-canvas-${chainId}`;
 
@@ -167,6 +197,9 @@ export function useCanvasState() {
         case "vaultWithdraw":
           data = { type: "vaultWithdraw", position: null, amount: "" };
           break;
+        case "repay":
+          data = { type: "repay", market: null, amount: "", amountUsd: 0 };
+          break;
         default:
           return;
       }
@@ -177,6 +210,7 @@ export function useCanvasState() {
         swap: "swapNode",
         vaultDeposit: "vaultDepositNode",
         vaultWithdraw: "vaultWithdrawNode",
+        repay: "repayNode",
       };
 
       const newNode: CanvasNode = {
@@ -270,6 +304,9 @@ export function useCanvasState() {
     updateNodeData,
     clearGraph,
     undo,
+    redo,
+    canUndo,
+    canRedo,
     pushHistory,
     setNodes,
     setEdges,

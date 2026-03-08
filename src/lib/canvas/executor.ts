@@ -7,6 +7,7 @@ import type {
   SwapNodeData,
   VaultDepositNodeData,
   VaultWithdrawNodeData,
+  RepayNodeData,
 } from "./types";
 import {
   BUNDLER3,
@@ -187,6 +188,14 @@ export function getRequiredApprovals(
         }
       }
       addApproval(d.vault.asset.address, d.vault.asset.symbol, raw);
+    }
+
+    // Repay: needs approval for the loan token (user → adapter)
+    if (data.type === "repay") {
+      const d = node.data as unknown as RepayNodeData;
+      if (!d.market?.loanAsset?.address || !d.amount) continue;
+      const raw = safeAmountToBigInt(d.amount, d.market.loanAsset.decimals);
+      addApproval(d.market.loanAsset.address, d.market.loanAsset.symbol, raw);
     }
 
     // VaultWithdraw: adapter needs approval on vault shares (vault address is the ERC-20 share token)
@@ -419,6 +428,49 @@ export function buildExecutionBundle(
               MAX_UINT256, // permissive: accept any share price
               userAddress,
             ],
+          }),
+          value: 0n,
+          skipRevert: false,
+          callbackHash: ZERO_HASH,
+        });
+        break;
+      }
+
+      case "repay": {
+        const d = node.data as unknown as RepayNodeData;
+        if (!d.market || !d.amount) break;
+        const rawAmount = safeAmountToBigInt(d.amount, d.market.loanAsset.decimals);
+        if (rawAmount === 0n) break;
+
+        const loanToken = requireValidAddress(d.market.loanAsset.address, "loan token");
+        const collateralToken = requireValidAddress(d.market.collateralAsset.address, "collateral token");
+        const oracle = requireValidAddress(d.market.oracle.address, "oracle");
+        const irm = requireValidAddress(d.market.irmAddress, "IRM");
+        const lltv = safeBigInt(d.market.lltv);
+        if (lltv === 0n) break;
+
+        const marketParams = { loanToken, collateralToken, oracle, irm, lltv };
+
+        // Transfer loan tokens from user to adapter
+        calls.push({
+          to: adapter,
+          data: encodeFunctionData({
+            abi: generalAdapterAbi,
+            functionName: "erc20TransferFrom",
+            args: [loanToken, adapter, rawAmount],
+          }),
+          value: 0n,
+          skipRevert: false,
+          callbackHash: ZERO_HASH,
+        });
+
+        // Repay on behalf of user
+        calls.push({
+          to: adapter,
+          data: encodeFunctionData({
+            abi: generalAdapterAbi,
+            functionName: "morphoRepay",
+            args: [marketParams, rawAmount, 0n, MAX_UINT256, "0x"],
           }),
           value: 0n,
           skipRevert: false,

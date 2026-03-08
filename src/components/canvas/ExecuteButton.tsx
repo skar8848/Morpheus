@@ -25,7 +25,7 @@ import {
 } from "@/lib/cowswap/order";
 import { formatApy } from "@/lib/utils/format";
 import type { CanvasNode, CanvasNodeData } from "@/lib/canvas/types";
-import type { SupportedChainId } from "@/lib/web3/chains";
+import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
 import { GENERAL_ADAPTER1 } from "@/lib/constants/contracts";
 import { erc20Abi } from "viem";
 import { encodeFunctionData } from "viem";
@@ -39,7 +39,7 @@ interface ExecuteButtonProps {
 interface BundleStep {
   label: string;
   detail: string;
-  type: "approve" | "withdraw" | "supply" | "borrow" | "deposit" | "swap";
+  type: "approve" | "withdraw" | "supply" | "borrow" | "deposit" | "swap" | "repay";
   icon: string;
 }
 
@@ -50,6 +50,7 @@ const typeColors: Record<string, string> = {
   borrow: "text-success border-success/20 bg-success/5",
   deposit: "text-purple-400 border-purple-400/20 bg-purple-400/5",
   swap: "text-amber-400 border-amber-400/20 bg-amber-400/5",
+  repay: "text-red-400 border-red-400/20 bg-red-400/5",
 };
 
 const typeLabels: Record<string, string> = {
@@ -59,6 +60,12 @@ const typeLabels: Record<string, string> = {
   borrow: "BORROW",
   deposit: "DEPOSIT",
   swap: "SWAP",
+  repay: "REPAY",
+};
+
+const EXPLORER_BASE: Record<number, string> = {
+  1: "https://etherscan.io",
+  8453: "https://basescan.org",
 };
 
 /** Safe parseFloat */
@@ -112,6 +119,22 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   const [approvalStep, setApprovalStep] = useState<number>(0); // 0 = not started
   const [totalApprovals, setTotalApprovals] = useState(0);
   const [swapStatus, setSwapStatus] = useState<string | null>(null);
+  const [isExecuting, setIsExecuting] = useState(false);
+
+  const wrongChain = isConnected && walletChainId !== chainId;
+  const expectedChainLabel = CHAIN_CONFIGS.find((c) => c.chainId === chainId)?.label ?? `Chain ${chainId}`;
+  const [isSwitching, setIsSwitching] = useState(false);
+
+  const handleSwitchChain = useCallback(async () => {
+    setIsSwitching(true);
+    try {
+      await switchChainAsync({ chainId: chainId as SupportedChainId });
+    } catch {
+      setError(`Failed to switch to ${expectedChainLabel}. Please switch manually in your wallet.`);
+    } finally {
+      setIsSwitching(false);
+    }
+  }, [chainId, expectedChainLabel, switchChainAsync]);
 
   // Track wallet address via ref for reliable detection during async flow
   const addressRef = useRef(address);
@@ -219,6 +242,16 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           });
           break;
         }
+        case "repay": {
+          if (!d.market || safeFloat(d.amount) <= 0) break;
+          s.push({
+            label: `Repay ${d.market.loanAsset.symbol}`,
+            detail: `${safeFloat(d.amount).toFixed(4)} ${d.market.loanAsset.symbol} — ${formatApy(d.market.state.netBorrowApy)}`,
+            type: "repay",
+            icon: d.market.loanAsset.logoURI,
+          });
+          break;
+        }
       }
     }
     return s;
@@ -248,6 +281,8 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     // H1 fix: Guard + lock IMMEDIATELY before any async work
     if (isExecutingRef.current) return;
     isExecutingRef.current = true;
+    setIsExecuting(true);
+    setExpanded(true);
 
     // C2 fix: Always use current graph state (not stale first-click snapshot)
     const execNodes = JSON.parse(JSON.stringify(nodes)) as CanvasNode[];
@@ -255,14 +290,12 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     try {
       const cid = chainId as SupportedChainId;
 
-      // C1 fix: Verify wallet is on the correct chain
+      // Hard block: refuse to execute on wrong chain
       if (walletChainId !== chainId) {
-        try {
-          await switchChainAsync({ chainId: cid });
-        } catch {
-          setError(`Please switch your wallet to chain ${chainId}`);
-          return;
-        }
+        setError(`Wrong network — switch to ${expectedChainLabel} before executing`);
+        isExecutingRef.current = false;
+        setIsExecuting(false);
+        return;
       }
 
       const adapter = GENERAL_ADAPTER1[cid];
@@ -276,6 +309,13 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         setError("Wallet disconnected during execution");
         return;
       }
+
+      // Helper: abort if chain changed mid-execution
+      const assertChain = () => {
+        if (walletChainId !== chainId) {
+          throw new Error(`Network changed during execution — expected ${expectedChainLabel}`);
+        }
+      };
 
       // Retry wrapper for waitForTransactionReceipt (RPC can be flaky)
       const waitWithRetry = async (hash: `0x${string}`, retries = 3) => {
@@ -378,6 +418,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
             adapter
           );
           if (needed.length > 0) {
+            assertChain();
             await sendApprovals(buildApprovalTxs(needed, adapter));
           }
         }
@@ -392,6 +433,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           setError("No executable actions in graph");
           return;
         }
+        assertChain();
         await sendBundle(bundle);
       } else {
         // ---- Two-phase execution: pre-swap → CowSwap → post-swap ----
@@ -413,6 +455,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               adapter
             );
             if (needed.length > 0) {
+              assertChain();
               await sendApprovals(buildApprovalTxs(needed, adapter));
             }
           }
@@ -422,6 +465,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
             return;
           }
           setSwapStatus("Executing pre-swap operations...");
+          assertChain();
           await sendBundle(preSwapBundle);
         }
 
@@ -475,6 +519,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               vaultRelayer
             );
             if (sellNeeded.length > 0) {
+              assertChain();
               setSwapStatus(`Approving ${swap.sellSymbol} for CowSwap...`);
               const approveData = encodeFunctionData({
                 abi: erc20Abi,
@@ -533,11 +578,13 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               adapter
             );
             if (postNeeded.length > 0) {
+              assertChain();
               setSwapStatus("Approving received tokens for deposit...");
               await sendApprovals(buildApprovalTxs(postNeeded, adapter));
             }
           }
 
+          assertChain();
           setSwapStatus("Depositing into vault...");
           await sendBundle(postBundle);
         }
@@ -551,6 +598,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     } finally {
       setApprovalStep(0);
       isExecutingRef.current = false;
+      setIsExecuting(false);
     }
   }, [address, isConnected, nodes, edges, chainId, walletChainId, showConfirm, sendTransaction, switchChainAsync, filterNeededApprovals]);
 
@@ -579,17 +627,26 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
 
   if (actionCount === 0) return null;
 
+  const explorerUrl = txHash
+    ? `${EXPLORER_BASE[chainId] ?? "https://etherscan.io"}/tx/${txHash}`
+    : null;
+
   return (
-    <div
-      className="absolute bottom-0 left-1/2 z-30 -translate-x-1/2"
-      onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => { setExpanded(false); if (!showConfirm) setShowConfirm(false); }}
-    >
+    <>
+      {/* Backdrop overlay during execution */}
+      {isExecuting && (
+        <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm transition-opacity" />
+      )}
       <div
-        className={`rounded-t-2xl border border-b-0 border-border bg-bg-card/95 shadow-2xl backdrop-blur-md transition-all duration-300 ${
-          expanded ? "w-[520px]" : "w-[320px]"
-        }`}
+        className={`absolute bottom-0 left-1/2 -translate-x-1/2 ${isExecuting ? "z-50" : "z-30"}`}
+        onMouseEnter={() => setExpanded(true)}
+        onMouseLeave={() => { if (!isExecuting) { setExpanded(false); if (!showConfirm) setShowConfirm(false); } }}
       >
+        <div
+          className={`rounded-t-2xl border border-b-0 border-border bg-bg-card/95 shadow-2xl backdrop-blur-md transition-all duration-300 ${
+            expanded || isExecuting ? "w-[520px]" : "w-[320px]"
+          }`}
+        >
         {/* Tab handle */}
         <div className="flex items-center justify-between px-5 py-3">
           <div className="flex items-center gap-3">
@@ -602,29 +659,53 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               Execute Strategy
             </span>
           </div>
-          <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand">
-            {steps.length} step{steps.length !== 1 ? "s" : ""}
-          </span>
+          {wrongChain ? (
+            <span className="flex items-center gap-1 rounded-full bg-orange-400/10 px-2 py-0.5 text-[10px] font-medium text-orange-400">
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+                <path d="M8 1l7 13H1L8 1z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+                <path d="M8 6v3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                <circle cx="8" cy="11.5" r="0.6" fill="currentColor" />
+              </svg>
+              Wrong network
+            </span>
+          ) : (
+            <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-medium text-brand">
+              {steps.length} step{steps.length !== 1 ? "s" : ""}
+            </span>
+          )}
         </div>
 
         {/* Expandable content */}
         <div
           className={`overflow-hidden transition-all duration-300 ${
-            expanded ? "max-h-[600px] opacity-100" : "max-h-0 opacity-0"
+            expanded || isExecuting ? "max-h-[600px] opacity-100" : "max-h-0 opacity-0"
           }`}
         >
           <div className="border-t border-border px-5 py-4">
             {/* Steps timeline */}
             {steps.length > 0 ? (
               <div className="relative">
-                <div className="absolute left-[11px] top-3 bottom-3 w-[2px] bg-gradient-to-b from-brand via-success to-purple-400 opacity-30" />
+                <div className={`absolute left-[11px] top-3 bottom-3 w-[2px] bg-gradient-to-b from-brand via-success to-purple-400 opacity-30 ${isExecuting && !txHash ? "animate-pulse" : ""}`} />
                 <div className="space-y-2">
                   {steps.map((step, i) => (
                     <div key={i} className="relative flex items-center gap-3">
                       <div
-                        className={`relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${typeColors[step.type]}`}
+                        className={`relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${
+                          txHash ? "border-success/40 bg-success/10 text-success" : typeColors[step.type]
+                        }`}
                       >
-                        {i + 1}
+                        {txHash ? (
+                          <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                            <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        ) : isExecuting ? (
+                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="animate-spin">
+                            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeOpacity="0.25" />
+                            <path d="M14 8a6 6 0 00-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                          </svg>
+                        ) : (
+                          i + 1
+                        )}
                       </div>
                       <div className="flex flex-1 items-center justify-between rounded-lg border border-border bg-bg-secondary px-3 py-2">
                         <div className="flex items-center gap-2">
@@ -675,8 +756,25 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               </div>
             )}
             {txHash && (
-              <div className="mt-3 rounded-lg border border-success/20 bg-success/5 px-3 py-2 text-[10px] text-success">
-                TX: {txHash.slice(0, 10)}...{txHash.slice(-8)}
+              <div className="mt-3 rounded-lg border border-success/20 bg-success/5 px-3 py-2">
+                <a
+                  href={explorerUrl ?? "#"}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-[10px] font-medium text-success transition-colors hover:text-success/80"
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                    <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
+                    <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Transaction confirmed
+                  <span className="text-success/60">
+                    {txHash.slice(0, 10)}...{txHash.slice(-6)}
+                  </span>
+                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none" className="ml-auto">
+                    <path d="M3.5 8.5l5-5M4.5 3.5h4v4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </a>
               </div>
             )}
 
@@ -719,31 +817,57 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               </div>
             )}
 
+            {/* Wrong chain warning + switch button */}
+            {wrongChain && (
+              <div className="mt-3 rounded-lg border border-orange-400/30 bg-orange-400/5 px-3 py-2.5">
+                <div className="flex items-center gap-2">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0 text-orange-400">
+                    <path d="M8 1l7 13H1L8 1z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+                    <path d="M8 6v3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    <circle cx="8" cy="12" r="0.75" fill="currentColor" />
+                  </svg>
+                  <p className="text-[10px] font-medium text-orange-400">
+                    Wrong network — your wallet is on a different chain
+                  </p>
+                </div>
+                <button
+                  onClick={handleSwitchChain}
+                  disabled={isSwitching}
+                  className="mt-2 w-full rounded-lg bg-orange-400 py-2 text-xs font-semibold text-black transition-colors hover:bg-orange-300 disabled:opacity-50"
+                >
+                  {isSwitching ? "Switching..." : `Switch to ${expectedChainLabel}`}
+                </button>
+              </div>
+            )}
+
             {/* Execute button */}
             <button
               onClick={handleExecute}
-              disabled={!isConnected || isPending || steps.length === 0 || !!blockingError}
+              disabled={!isConnected || isPending || steps.length === 0 || !!blockingError || wrongChain}
               className={`mt-3 w-full rounded-xl py-3 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                blockingError
+                blockingError || wrongChain
                   ? "bg-text-tertiary"
                   : "bg-brand hover:bg-brand-hover"
               }`}
             >
               {!isConnected
                 ? "Connect Wallet"
-                : blockingError
-                  ? "Cannot Execute"
-                  : isPending
-                    ? approvalStep > 0
-                      ? `Approving (${approvalStep}/${totalApprovals})...`
-                      : "Confirming..."
-                    : showConfirm
-                      ? `Confirm & Execute (${steps.length} actions)`
-                      : `Execute Bundle (${steps.length} actions)`}
+                : wrongChain
+                  ? `Switch to ${expectedChainLabel}`
+                  : blockingError
+                    ? "Cannot Execute"
+                    : isPending
+                      ? approvalStep > 0
+                        ? `Approving (${approvalStep}/${totalApprovals})...`
+                        : "Confirming..."
+                      : showConfirm
+                        ? `Confirm & Execute (${steps.length} actions)`
+                        : `Execute Bundle (${steps.length} actions)`}
             </button>
           </div>
         </div>
       </div>
     </div>
+    </>
   );
 }

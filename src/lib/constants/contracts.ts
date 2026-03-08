@@ -106,6 +106,29 @@ export const generalAdapterAbi = [
     outputs: [],
   },
   {
+    name: "morphoRepay",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "marketParams",
+        type: "tuple",
+        components: [
+          { name: "loanToken", type: "address" },
+          { name: "collateralToken", type: "address" },
+          { name: "oracle", type: "address" },
+          { name: "irm", type: "address" },
+          { name: "lltv", type: "uint256" },
+        ],
+      },
+      { name: "assets", type: "uint256" },
+      { name: "shares", type: "uint256" },
+      { name: "slippageAmount", type: "uint256" },
+      { name: "data", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
     name: "erc4626Deposit",
     type: "function",
     stateMutability: "nonpayable",

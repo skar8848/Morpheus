@@ -20,6 +20,7 @@ import { isValidConnection, getConnectionHint } from "@/lib/canvas/validation";
 import { VALID_CONNECTIONS, DRAGGABLE_NODE_TYPES, NODE_SHORTCUTS, NODE_COLORS, type CanvasNode } from "@/lib/canvas/types";
 import Sidebar from "./Sidebar";
 import ExecuteButton from "./ExecuteButton";
+import StrategyGauge from "./StrategyGauge";
 
 export default function CanvasPage() {
   const {
@@ -32,6 +33,9 @@ export default function CanvasPage() {
     deleteNode,
     clearGraph,
     undo,
+    redo,
+    canUndo,
+    canRedo,
     pushHistory,
     setEdges,
     setNodes,
@@ -310,7 +314,14 @@ export default function CanvasPage() {
       const tag = (event.target as HTMLElement).tagName;
       const inInput = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
 
-      // Ctrl+Z / Cmd+Z — always works
+      // Ctrl+Shift+Z / Cmd+Shift+Z or Ctrl+Y — redo
+      if ((event.metaKey || event.ctrlKey) && ((event.shiftKey && event.key === "z") || event.key === "y")) {
+        event.preventDefault();
+        redo();
+        return;
+      }
+
+      // Ctrl+Z / Cmd+Z — undo
       if ((event.metaKey || event.ctrlKey) && event.key === "z") {
         event.preventDefault();
         undo();
@@ -331,12 +342,14 @@ export default function CanvasPage() {
         return;
       }
 
-      // Node placement shortcuts (S/B/X/D/W)
-      const nodeType = NODE_SHORTCUTS[event.key.toLowerCase()];
-      if (nodeType) {
-        event.preventDefault();
-        setPlacingNodeType((prev) => (prev === nodeType ? null : nodeType));
-        return;
+      // Node placement shortcuts (S/B/X/D/W/R) — only bare keys, no modifiers
+      if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+        const nodeType = NODE_SHORTCUTS[event.key.toLowerCase()];
+        if (nodeType) {
+          event.preventDefault();
+          setPlacingNodeType((prev) => (prev === nodeType ? null : nodeType));
+          return;
+        }
       }
 
       if (event.key === "Delete" || event.key === "Backspace") {
@@ -351,19 +364,21 @@ export default function CanvasPage() {
     [nodes, deleteNode, undo]
   );
 
-  // Also listen globally for Ctrl+Z when canvas is focused
+  // Also listen globally for Ctrl+Z / Ctrl+Shift+Z when canvas is focused
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "z") {
-        if (reactFlowWrapper.current?.contains(document.activeElement)) {
-          e.preventDefault();
-          undo();
-        }
+      if (!reactFlowWrapper.current?.contains(document.activeElement)) return;
+      if ((e.metaKey || e.ctrlKey) && ((e.shiftKey && e.key === "z") || e.key === "y")) {
+        e.preventDefault();
+        redo();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "z") {
+        e.preventDefault();
+        undo();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [undo]);
+  }, [undo, redo]);
 
   // Close save/load dropdowns on outside click
   useEffect(() => {
@@ -555,6 +570,7 @@ export default function CanvasPage() {
       </ReactFlow>
 
       <ExecuteButton nodes={nodes as CanvasNode[]} edges={edges} />
+      <StrategyGauge nodes={nodes as CanvasNode[]} edges={edges} />
 
       {/* Placement mode indicator */}
       {placingNodeType && (
@@ -625,6 +641,7 @@ export default function CanvasPage() {
                 </p>
                 {[
                   ["Ctrl+Z", "Undo"],
+                  ["Ctrl+Shift+Z", "Redo"],
                   ["Delete", "Delete selected node"],
                   ["Escape", "Cancel placement"],
                   ["?", "Toggle this help"],
@@ -644,6 +661,32 @@ export default function CanvasPage() {
 
       {/* Top-right buttons */}
       <div className="absolute right-4 top-4 z-30 flex items-center gap-2">
+        {/* Undo / Redo */}
+        <div className="flex items-center rounded-lg border border-border bg-bg-card/90 overflow-hidden">
+          <button
+            onClick={undo}
+            disabled={!canUndo}
+            className="px-2 py-1.5 text-text-tertiary transition-colors hover:text-brand disabled:opacity-30 disabled:hover:text-text-tertiary"
+            title="Undo (Ctrl+Z)"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path d="M4 7h7a3 3 0 010 6H8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M7 4L4 7l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <div className="w-px h-4 bg-border" />
+          <button
+            onClick={redo}
+            disabled={!canRedo}
+            className="px-2 py-1.5 text-text-tertiary transition-colors hover:text-brand disabled:opacity-30 disabled:hover:text-text-tertiary"
+            title="Redo (Ctrl+Shift+Z)"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path d="M12 7H5a3 3 0 000 6h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M9 4l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
         <button
           onClick={() => {
             const viewport = document.querySelector(".react-flow__viewport") as HTMLElement;
