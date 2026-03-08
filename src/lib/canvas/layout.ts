@@ -120,8 +120,8 @@ export function buildInitialLayout(
  * Result: Wallet centered, branches fan out, convergent nodes (e.g. two
  * borrows → same vault) land at the midpoint of their sources.
  */
-const COL_GAP = 60; // gap between end of one column and start of next
-const ROW_GAP_MIN = 20; // minimum vertical gap between nodes in same column
+const COL_GAP = 100; // gap between end of one column and start of next
+const ROW_GAP_MIN = 40; // minimum vertical gap between nodes in same column
 
 export function organizeLayout(
   nodes: CanvasNode[],
