@@ -121,13 +121,13 @@ export function buildInitialLayout(
  * borrows → same vault) land at the midpoint of their sources.
  */
 const COL_GAP = 60; // gap between end of one column and start of next
-const ROW_GAP = 180;
+const ROW_GAP_MIN = 20; // minimum vertical gap between nodes in same column
 
 export function organizeLayout(
   nodes: CanvasNode[],
   edges: Edge[],
-  /** DOM-measured widths per node id (fall back to 280 if missing) */
-  nodeWidths?: Map<string, number>
+  /** DOM-measured sizes per node id { w, h } */
+  nodeSizes?: Map<string, { w: number; h: number }>
 ): CanvasNode[] {
   if (nodes.length === 0) return nodes;
 
@@ -176,6 +176,10 @@ export function organizeLayout(
   }
   const sortedCols = [...columns.keys()].sort((a, b) => a - b);
 
+  // --- Size helpers ---
+  const getW = (id: string) => nodeSizes?.get(id)?.w ?? 280;
+  const getH = (id: string) => nodeSizes?.get(id)?.h ?? 200;
+
   // --- Forward pass: place each column based on sources ---
   const yPos = new Map<string, number>();
 
@@ -198,8 +202,8 @@ export function organizeLayout(
       yPos.set(id, desired.get(id) ?? 0);
     }
 
-    // Resolve overlaps — spread apart then re-center on centroid
-    spreadAndCenter(ids, yPos);
+    // Resolve overlaps using actual node heights
+    spreadAndCenter(ids, yPos, getH);
   }
 
   // --- Center roots on their direct children ---
@@ -213,12 +217,10 @@ export function organizeLayout(
       }
     }
     rootIds.sort((a, b) => yPos.get(a)! - yPos.get(b)!);
-    spreadAndCenter(rootIds, yPos);
+    spreadAndCenter(rootIds, yPos, getH);
   }
 
   // --- Compute column X positions based on actual node widths ---
-  const getW = (id: string) => nodeWidths?.get(id) ?? 280;
-
   // Max width per column
   const colMaxWidth = new Map<number, number>();
   for (const col of sortedCols) {
@@ -251,18 +253,27 @@ export function organizeLayout(
   }));
 }
 
-/** Push overlapping nodes apart while keeping them centered on their original centroid. */
-function spreadAndCenter(ids: string[], yPos: Map<string, number>) {
+/**
+ * Push overlapping nodes apart using actual heights,
+ * then re-center the group on the original centroid.
+ */
+function spreadAndCenter(
+  ids: string[],
+  yPos: Map<string, number>,
+  getH: (id: string) => number
+) {
   if (ids.length <= 1) return;
 
   const centroid = ids.reduce((s, id) => s + yPos.get(id)!, 0) / ids.length;
 
-  // Push apart (top to bottom)
+  // Push apart: each node needs prev.y + prev.height + gap before it starts
   for (let i = 1; i < ids.length; i++) {
-    const prev = yPos.get(ids[i - 1])!;
-    const curr = yPos.get(ids[i])!;
-    if (curr < prev + ROW_GAP) {
-      yPos.set(ids[i], prev + ROW_GAP);
+    const prevY = yPos.get(ids[i - 1])!;
+    const prevH = getH(ids[i - 1]);
+    const minY = prevY + prevH + ROW_GAP_MIN;
+    const currY = yPos.get(ids[i])!;
+    if (currY < minY) {
+      yPos.set(ids[i], minY);
     }
   }
 

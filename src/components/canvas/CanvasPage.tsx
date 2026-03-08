@@ -167,6 +167,7 @@ export default function CanvasPage() {
 
   const GAP = 5; // px gap between nodes
   const isDragging = useRef(false);
+  const isOrganizing = useRef(false);
 
   /** Get real node bounding box from DOM */
   const getNodeRect = useCallback((nodeId: string, pos: { x: number; y: number }) => {
@@ -436,10 +437,10 @@ export default function CanvasPage() {
     if (!container) return;
 
     const observer = new ResizeObserver(() => {
-      if (isDragging.current) return;
+      if (isDragging.current || isOrganizing.current) return;
       if (resizeDebounce.current) clearTimeout(resizeDebounce.current);
       resizeDebounce.current = setTimeout(() => {
-        if (isDragging.current) return;
+        if (isDragging.current || isOrganizing.current) return;
         setNodes((nds) => {
           const rects = nds.map((n) => ({ id: n.id, ...getNodeRect(n.id, n.position) }));
           let changed = false;
@@ -692,15 +693,20 @@ export default function CanvasPage() {
         <button
           onClick={() => {
             pushHistory();
-            // Measure real DOM widths for proper column alignment
-            const widths = new Map<string, number>();
+            // Measure real DOM sizes for proper alignment
+            const sizes = new Map<string, { w: number; h: number }>();
             for (const n of nodes) {
               const el = document.querySelector(`[data-id="${n.id}"]`) as HTMLElement | null;
-              if (el) widths.set(n.id, el.offsetWidth);
+              if (el) sizes.set(n.id, { w: el.offsetWidth, h: el.offsetHeight });
             }
-            const organized = organizeLayout(nodes as CanvasNode[], edges, widths);
+            // Pause ResizeObserver collision detection during organize
+            isOrganizing.current = true;
+            const organized = organizeLayout(nodes as CanvasNode[], edges, sizes);
             setNodes(organized);
-            setTimeout(() => reactFlowInstance.current?.fitView({ padding: 0.2 }), 100);
+            setTimeout(() => {
+              reactFlowInstance.current?.fitView({ padding: 0.2 });
+              isOrganizing.current = false;
+            }, 500);
           }}
           className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-card/90 px-3 py-1.5 text-[10px] text-text-tertiary transition-colors hover:text-brand"
           title="Auto-organize layout"
