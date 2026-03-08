@@ -108,13 +108,20 @@ export function buildInitialLayout(
 }
 
 /**
- * Auto-organize nodes into clean columns based on graph depth.
- * Roots (no incoming edges) at column 0, then BFS outward.
+ * Auto-organize into a clean tree layout.
+ *
+ * Algorithm:
+ * 1. Assign depth (columns) via BFS — max depth wins for convergent paths
+ * 2. Forward pass (left→right): each node at avg Y of its sources.
+ *    Siblings from the same parent are spread centered on parent.
+ * 3. Center roots on their children so wallet sits at mid-height of branches.
+ * 4. Normalize so top-left starts at (80, 80).
+ *
+ * Result: Wallet centered, branches fan out, convergent nodes (e.g. two
+ * borrows → same vault) land at the midpoint of their sources.
  */
-const ORGANIZE_COL_SPACING = 350;
-const ORGANIZE_ROW_SPACING = 180;
-const ORGANIZE_START_X = 80;
-const ORGANIZE_START_Y = 80;
+const COL_GAP = 350;
+const ROW_GAP = 180;
 
 export function organizeLayout(
   nodes: CanvasNode[],
@@ -122,9 +129,9 @@ export function organizeLayout(
 ): CanvasNode[] {
   if (nodes.length === 0) return nodes;
 
-  // Build adjacency
-  const incoming = new Map<string, string[]>(); // nodeId → source ids
-  const outgoing = new Map<string, string[]>(); // nodeId → target ids
+  // --- Adjacency ---
+  const incoming = new Map<string, string[]>();
+  const outgoing = new Map<string, string[]>();
   for (const n of nodes) {
     incoming.set(n.id, []);
     outgoing.set(n.id, []);
@@ -135,95 +142,111 @@ export function organizeLayout(
     outgoing.get(e.source)!.push(e.target);
   }
 
-  // Assign depth via BFS from roots
+  // --- Depth assignment (BFS, max depth wins) ---
   const depth = new Map<string, number>();
+  const queue: string[] = [];
   const roots = nodes.filter((n) => incoming.get(n.id)!.length === 0);
 
-  // If no roots (cycle), use all nodes as roots at depth 0
-  const queue: string[] = [];
   if (roots.length === 0) {
-    for (const n of nodes) {
-      depth.set(n.id, 0);
-      queue.push(n.id);
-    }
+    for (const n of nodes) { depth.set(n.id, 0); queue.push(n.id); }
   } else {
-    for (const r of roots) {
-      depth.set(r.id, 0);
-      queue.push(r.id);
-    }
+    for (const r of roots) { depth.set(r.id, 0); queue.push(r.id); }
   }
 
   while (queue.length > 0) {
     const id = queue.shift()!;
     const d = depth.get(id)!;
-    for (const target of outgoing.get(id) ?? []) {
-      const existing = depth.get(target);
-      // Always push deeper (max depth wins)
-      if (existing === undefined || d + 1 > existing) {
-        depth.set(target, d + 1);
-        queue.push(target);
+    for (const t of outgoing.get(id) ?? []) {
+      if (!depth.has(t) || d + 1 > depth.get(t)!) {
+        depth.set(t, d + 1);
+        queue.push(t);
       }
     }
   }
+  for (const n of nodes) { if (!depth.has(n.id)) depth.set(n.id, 0); }
 
-  // Handle disconnected nodes (no edges at all)
-  for (const n of nodes) {
-    if (!depth.has(n.id)) {
-      depth.set(n.id, 0);
-    }
-  }
-
-  // Group by column
-  const columns = new Map<number, CanvasNode[]>();
+  // --- Group by column ---
+  const columns = new Map<number, string[]>();
   for (const n of nodes) {
     const col = depth.get(n.id)!;
     if (!columns.has(col)) columns.set(col, []);
-    columns.get(col)!.push(n);
+    columns.get(col)!.push(n.id);
   }
-
-  // Sort columns by key, sort nodes within columns to keep connected ones adjacent
   const sortedCols = [...columns.keys()].sort((a, b) => a - b);
 
-  // Position nodes
-  const positioned = new Map<string, { x: number; y: number }>();
+  // --- Forward pass: place each column based on sources ---
+  const yPos = new Map<string, number>();
 
   for (const col of sortedCols) {
-    const colNodes = columns.get(col)!;
-    const x = ORGANIZE_START_X + col * ORGANIZE_COL_SPACING;
+    const ids = columns.get(col)!;
 
-    // Sort nodes within column: try to align with their source's y position
-    colNodes.sort((a, b) => {
-      const aSourceY = getAvgSourceY(a.id, incoming, positioned);
-      const bSourceY = getAvgSourceY(b.id, incoming, positioned);
-      return aSourceY - bSourceY;
-    });
-
-    // Center the column vertically
-    const totalHeight = (colNodes.length - 1) * ORGANIZE_ROW_SPACING;
-    const startY = ORGANIZE_START_Y + Math.max(0, (nodes.length > 6 ? 0 : (300 - totalHeight) / 2));
-
-    for (let i = 0; i < colNodes.length; i++) {
-      positioned.set(colNodes[i].id, { x, y: startY + i * ORGANIZE_ROW_SPACING });
+    // Desired Y = avg of source Y positions (or 0 for roots)
+    const desired = new Map<string, number>();
+    for (const id of ids) {
+      const sources = incoming.get(id)!;
+      const ys = sources.map((s) => yPos.get(s)).filter((y): y is number => y !== undefined);
+      desired.set(id, ys.length > 0 ? ys.reduce((a, b) => a + b, 0) / ys.length : 0);
     }
+
+    // Sort by desired Y (keeps branch order)
+    ids.sort((a, b) => (desired.get(a) ?? 0) - (desired.get(b) ?? 0));
+
+    // Place at desired positions
+    for (const id of ids) {
+      yPos.set(id, desired.get(id) ?? 0);
+    }
+
+    // Resolve overlaps — spread apart then re-center on centroid
+    spreadAndCenter(ids, yPos);
   }
 
-  // Return new nodes with updated positions
+  // --- Center roots on their direct children ---
+  if (sortedCols.length > 0) {
+    const rootIds = columns.get(sortedCols[0])!;
+    for (const id of rootIds) {
+      const children = outgoing.get(id)!;
+      const childYs = children.map((c) => yPos.get(c)).filter((y): y is number => y !== undefined);
+      if (childYs.length > 0) {
+        yPos.set(id, childYs.reduce((a, b) => a + b, 0) / childYs.length);
+      }
+    }
+    rootIds.sort((a, b) => yPos.get(a)! - yPos.get(b)!);
+    spreadAndCenter(rootIds, yPos);
+  }
+
+  // --- Normalize: shift so min = (80, 80) ---
+  let minY = Infinity;
+  for (const y of yPos.values()) minY = Math.min(minY, y);
+  const offsetY = 80 - minY;
+
   return nodes.map((n) => ({
     ...n,
-    position: positioned.get(n.id) ?? n.position,
+    position: {
+      x: 80 + (depth.get(n.id) ?? 0) * COL_GAP,
+      y: (yPos.get(n.id) ?? 0) + offsetY,
+    },
   }));
 }
 
-/** Average y position of a node's sources (for vertical alignment) */
-function getAvgSourceY(
-  nodeId: string,
-  incoming: Map<string, string[]>,
-  positioned: Map<string, { x: number; y: number }>
-): number {
-  const sources = incoming.get(nodeId) ?? [];
-  const ys = sources
-    .map((s) => positioned.get(s)?.y)
-    .filter((y): y is number => y !== undefined);
-  if (ys.length === 0) return 0;
-  return ys.reduce((a, b) => a + b, 0) / ys.length;
+/** Push overlapping nodes apart while keeping them centered on their original centroid. */
+function spreadAndCenter(ids: string[], yPos: Map<string, number>) {
+  if (ids.length <= 1) return;
+
+  const centroid = ids.reduce((s, id) => s + yPos.get(id)!, 0) / ids.length;
+
+  // Push apart (top to bottom)
+  for (let i = 1; i < ids.length; i++) {
+    const prev = yPos.get(ids[i - 1])!;
+    const curr = yPos.get(ids[i])!;
+    if (curr < prev + ROW_GAP) {
+      yPos.set(ids[i], prev + ROW_GAP);
+    }
+  }
+
+  // Re-center on original centroid
+  const newCentroid = ids.reduce((s, id) => s + yPos.get(id)!, 0) / ids.length;
+  const shift = centroid - newCentroid;
+  for (const id of ids) {
+    yPos.set(id, yPos.get(id)! + shift);
+  }
 }
