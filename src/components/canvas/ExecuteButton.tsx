@@ -683,7 +683,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           <div className="border-t border-border px-5 py-4">
             {/* Steps timeline */}
             {steps.length > 0 ? (
-              <div className="relative">
+              <div className="relative max-h-[280px] overflow-y-auto pr-1 scrollbar-thin">
                 <div className={`absolute left-[11px] top-3 bottom-3 w-[2px] bg-gradient-to-b from-brand via-success to-purple-400 opacity-30 ${isExecuting && !txHash ? "animate-pulse" : ""}`} />
                 <div className="space-y-2">
                   {steps.map((step, i) => (

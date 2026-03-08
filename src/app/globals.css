@@ -49,6 +49,12 @@ body {
   background: var(--text-tertiary);
   border-radius: 3px;
 }
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+}
 
 /* Selection glow for tokens */
 @keyframes glow-pulse {
