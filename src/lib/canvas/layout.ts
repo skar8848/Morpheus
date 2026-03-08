@@ -120,12 +120,14 @@ export function buildInitialLayout(
  * Result: Wallet centered, branches fan out, convergent nodes (e.g. two
  * borrows → same vault) land at the midpoint of their sources.
  */
-const COL_GAP = 350;
+const COL_GAP = 60; // gap between end of one column and start of next
 const ROW_GAP = 180;
 
 export function organizeLayout(
   nodes: CanvasNode[],
-  edges: Edge[]
+  edges: Edge[],
+  /** DOM-measured widths per node id (fall back to 280 if missing) */
+  nodeWidths?: Map<string, number>
 ): CanvasNode[] {
   if (nodes.length === 0) return nodes;
 
@@ -214,7 +216,28 @@ export function organizeLayout(
     spreadAndCenter(rootIds, yPos);
   }
 
-  // --- Normalize: shift so min = (80, 80) ---
+  // --- Compute column X positions based on actual node widths ---
+  const getW = (id: string) => nodeWidths?.get(id) ?? 280;
+
+  // Max width per column
+  const colMaxWidth = new Map<number, number>();
+  for (const col of sortedCols) {
+    let maxW = 0;
+    for (const id of columns.get(col)!) {
+      maxW = Math.max(maxW, getW(id));
+    }
+    colMaxWidth.set(col, maxW);
+  }
+
+  // X start of each column = previous column X + previous max width + gap
+  const colX = new Map<number, number>();
+  let curX = 80;
+  for (const col of sortedCols) {
+    colX.set(col, curX);
+    curX += colMaxWidth.get(col)! + COL_GAP;
+  }
+
+  // --- Normalize Y: shift so min = 80 ---
   let minY = Infinity;
   for (const y of yPos.values()) minY = Math.min(minY, y);
   const offsetY = 80 - minY;
@@ -222,7 +245,7 @@ export function organizeLayout(
   return nodes.map((n) => ({
     ...n,
     position: {
-      x: 80 + (depth.get(n.id) ?? 0) * COL_GAP,
+      x: colX.get(depth.get(n.id) ?? 0) ?? 80,
       y: (yPos.get(n.id) ?? 0) + offsetY,
     },
   }));

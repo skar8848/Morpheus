@@ -692,7 +692,13 @@ export default function CanvasPage() {
         <button
           onClick={() => {
             pushHistory();
-            const organized = organizeLayout(nodes as CanvasNode[], edges);
+            // Measure real DOM widths for proper column alignment
+            const widths = new Map<string, number>();
+            for (const n of nodes) {
+              const el = document.querySelector(`[data-id="${n.id}"]`) as HTMLElement | null;
+              if (el) widths.set(n.id, el.offsetWidth);
+            }
+            const organized = organizeLayout(nodes as CanvasNode[], edges, widths);
             setNodes(organized);
             setTimeout(() => reactFlowInstance.current?.fitView({ padding: 0.2 }), 100);
           }}
