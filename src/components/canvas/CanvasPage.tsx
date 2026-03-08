@@ -11,9 +11,11 @@ import {
 import { toPng } from "html-to-image";
 import "@xyflow/react/dist/style.css";
 
+import type { Edge } from "@xyflow/react";
 import { nodeTypes } from "./nodes";
 import { edgeTypes } from "./edges";
 import { useCanvasState } from "@/lib/canvas/useCanvasState";
+import { useChain } from "@/lib/context/ChainContext";
 import { isValidConnection, getConnectionHint } from "@/lib/canvas/validation";
 import { VALID_CONNECTIONS, DRAGGABLE_NODE_TYPES, NODE_SHORTCUTS, NODE_COLORS, type CanvasNode } from "@/lib/canvas/types";
 import Sidebar from "./Sidebar";
@@ -39,9 +41,85 @@ export default function CanvasPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const reactFlowInstance = useRef<any>(null);
 
+  const { chainId } = useChain();
+
   // Node placement mode (keyboard shortcut)
   const [placingNodeType, setPlacingNodeType] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+
+  // Save/Load strategies
+  interface SavedStrategy {
+    id: string;
+    name: string;
+    timestamp: number;
+    nodes: CanvasNode[];
+    edges: Edge[];
+  }
+  const STRATEGIES_KEY = `morpho-strategies-${chainId}`;
+  const [showSave, setShowSave] = useState(false);
+  const [showLoad, setShowLoad] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [savedStrategies, setSavedStrategies] = useState<SavedStrategy[]>([]);
+  const [saveFlash, setSaveFlash] = useState(false);
+
+  // Load strategies list from localStorage
+  const refreshStrategies = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(STRATEGIES_KEY);
+      setSavedStrategies(raw ? JSON.parse(raw) : []);
+    } catch {
+      setSavedStrategies([]);
+    }
+  }, [STRATEGIES_KEY]);
+
+  const saveStrategy = useCallback(() => {
+    const name = saveName.trim() || `Strategy ${new Date().toLocaleDateString()}`;
+    const cleanNodes = nodes.map((n) => {
+      const d = n.data as { type: string };
+      if (d.type === "wallet") {
+        return { ...n, data: { ...n.data, balances: [] } } as CanvasNode;
+      }
+      return n;
+    });
+    const entry: SavedStrategy = {
+      id: Date.now().toString(),
+      name,
+      timestamp: Date.now(),
+      nodes: JSON.parse(JSON.stringify(cleanNodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+    };
+    try {
+      const existing: SavedStrategy[] = JSON.parse(localStorage.getItem(STRATEGIES_KEY) || "[]");
+      existing.unshift(entry);
+      localStorage.setItem(STRATEGIES_KEY, JSON.stringify(existing));
+    } catch { /* quota exceeded */ }
+    setSaveName("");
+    setShowSave(false);
+    setSaveFlash(true);
+    setTimeout(() => setSaveFlash(false), 1500);
+    refreshStrategies();
+  }, [saveName, nodes, edges, STRATEGIES_KEY, refreshStrategies]);
+
+  const loadStrategy = useCallback(
+    (strategy: SavedStrategy) => {
+      pushHistory();
+      setNodes(strategy.nodes as CanvasNode[]);
+      setEdges(strategy.edges);
+      setShowLoad(false);
+    },
+    [pushHistory, setNodes, setEdges]
+  );
+
+  const deleteStrategy = useCallback(
+    (id: string) => {
+      try {
+        const existing: SavedStrategy[] = JSON.parse(localStorage.getItem(STRATEGIES_KEY) || "[]");
+        localStorage.setItem(STRATEGIES_KEY, JSON.stringify(existing.filter((s) => s.id !== id)));
+      } catch {}
+      refreshStrategies();
+    },
+    [STRATEGIES_KEY, refreshStrategies]
+  );
 
   // Connection hint state
   const [connectionHint, setConnectionHint] = useState<{
@@ -277,7 +355,6 @@ export default function CanvasPage() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "z") {
-        // Only if focus is within the canvas wrapper
         if (reactFlowWrapper.current?.contains(document.activeElement)) {
           e.preventDefault();
           undo();
@@ -287,6 +364,20 @@ export default function CanvasPage() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [undo]);
+
+  // Close save/load dropdowns on outside click
+  useEffect(() => {
+    if (!showSave && !showLoad) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-dropdown]")) {
+        setShowSave(false);
+        setShowLoad(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showSave, showLoad]);
 
   // Snap back if dropped on another node
   const dragStartPos = useRef<{ x: number; y: number } | null>(null);
@@ -616,6 +707,107 @@ export default function CanvasPage() {
           </svg>
           Screenshot
         </button>
+        {/* Save strategy */}
+        <div className="relative" data-dropdown>
+          <button
+            onClick={() => { setShowSave((p) => !p); setShowLoad(false); }}
+            className={`flex items-center gap-1.5 rounded-lg border bg-bg-card/90 px-3 py-1.5 text-[10px] transition-colors ${
+              saveFlash
+                ? "border-success/50 text-success"
+                : "border-border text-text-tertiary hover:text-brand"
+            }`}
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+              <path d="M12.7 2H4.3A1.3 1.3 0 003 3.3v9.4A1.3 1.3 0 004.3 14h8.4a1.3 1.3 0 001.3-1.3V4.6L12.7 2z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+              <path d="M11 14V9H5v5" stroke="currentColor" strokeWidth="1.3" />
+              <path d="M5 2v3h5" stroke="currentColor" strokeWidth="1.3" />
+            </svg>
+            {saveFlash ? "Saved!" : "Save"}
+          </button>
+          {showSave && (
+            <div className="absolute right-0 top-full mt-2 w-64 rounded-xl border border-border bg-bg-card p-3 shadow-2xl">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
+                Save Strategy
+              </p>
+              <form
+                onSubmit={(e) => { e.preventDefault(); saveStrategy(); }}
+                className="flex gap-2"
+              >
+                <input
+                  type="text"
+                  value={saveName}
+                  onChange={(e) => setSaveName(e.target.value)}
+                  placeholder="Strategy name..."
+                  className="flex-1 rounded-lg border border-border bg-bg-secondary px-2.5 py-1.5 text-xs text-text-primary placeholder:text-text-tertiary focus:border-brand focus:outline-none"
+                  autoFocus
+                />
+                <button
+                  type="submit"
+                  className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-hover"
+                >
+                  Save
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
+
+        {/* Load strategy */}
+        <div className="relative" data-dropdown>
+          <button
+            onClick={() => { setShowLoad((p) => !p); setShowSave(false); refreshStrategies(); }}
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-card/90 px-3 py-1.5 text-[10px] text-text-tertiary transition-colors hover:text-brand"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+              <path d="M2 4.5A1.5 1.5 0 013.5 3h3.3a1.5 1.5 0 011.06.44L9.06 4.5h3.44A1.5 1.5 0 0114 6v6.5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12.5v-8z" stroke="currentColor" strokeWidth="1.3" />
+            </svg>
+            Load
+          </button>
+          {showLoad && (
+            <div className="absolute right-0 top-full mt-2 w-72 rounded-xl border border-border bg-bg-card p-3 shadow-2xl">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
+                Saved Strategies
+              </p>
+              {savedStrategies.length === 0 ? (
+                <p className="py-3 text-center text-[10px] text-text-tertiary">
+                  No saved strategies yet
+                </p>
+              ) : (
+                <div className="max-h-64 space-y-1.5 overflow-y-auto">
+                  {savedStrategies.map((s) => (
+                    <div
+                      key={s.id}
+                      className="group flex items-center justify-between rounded-lg border border-border bg-bg-secondary px-2.5 py-2 transition-colors hover:border-brand/30"
+                    >
+                      <button
+                        onClick={() => loadStrategy(s)}
+                        className="flex-1 text-left"
+                      >
+                        <p className="text-xs font-medium text-text-primary">{s.name}</p>
+                        <p className="text-[9px] text-text-tertiary">
+                          {new Date(s.timestamp).toLocaleDateString()}{" "}
+                          {new Date(s.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          {" · "}
+                          {s.nodes.filter((n) => (n.data as { type: string }).type !== "wallet").length} nodes
+                        </p>
+                      </button>
+                      <button
+                        onClick={() => deleteStrategy(s.id)}
+                        className="ml-2 rounded p-1 text-text-tertiary opacity-0 transition-all hover:text-error group-hover:opacity-100"
+                        title="Delete strategy"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                          <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         <button
           onClick={() => setShowHelp((prev) => !prev)}
           className="flex h-[30px] w-[30px] items-center justify-center rounded-lg border border-border bg-bg-card/90 text-xs font-bold text-text-tertiary transition-colors hover:text-brand"
