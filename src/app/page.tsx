@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function Home() {
-  redirect("/ethereum/strategy");
+  redirect("/ethereum/canvas");
 }

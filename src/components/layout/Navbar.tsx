@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { injected } from "wagmi/connectors";
+import Image from "next/image";
 import NavTab from "./NavTab";
 import { useChain } from "@/lib/context/ChainContext";
 import { CHAIN_CONFIGS } from "@/lib/web3/chains";
@@ -41,14 +42,7 @@ export default function Navbar() {
     <nav className="sticky top-0 z-50 flex h-[var(--nav-height)] items-center border-b border-border bg-bg-primary/80 px-6 backdrop-blur-md">
       {/* Logo */}
       <div className="flex items-center gap-2 mr-8">
-        <svg width="28" height="28" viewBox="0 0 100 100" fill="none">
-          <circle cx="50" cy="50" r="48" fill="#2973ff" />
-          <path
-            d="M30 55 L50 35 L70 55 L50 75Z"
-            fill="white"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <Image src="/morpheus_logo.png" alt="Morpheus" width={32} height={32} className="object-contain" />
         <span className="text-lg font-semibold text-text-primary">Morpheus</span>
       </div>
 
