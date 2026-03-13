@@ -86,22 +86,6 @@ Inspect any address's Morpho activity:
 - **Wagmi + Viem** — Wallet connection and on-chain interactions
 - **Morpho GraphQL API** — Market, vault, and position data
 
-## Getting Started
-
-```bash
-# Clone the repo
-git clone https://github.com/skar8848/Morpheus.git
-cd Morpheus
-
-# Install dependencies
-npm install
-
-# Run the dev server
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) — you'll be redirected to the canvas.
-
 ## Keyboard Shortcuts
 
 | Key | Action |
