@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://morpheus-visualizer.vercel.app">Live App</a>
+  <a href="https://morpheus-visualizer.vercel.app/ethereum/canvas">Live App</a>
 </p>
 
 ---
@@ -100,6 +100,10 @@ Inspect any address's Morpho activity:
 | `Ctrl+Z` | Undo |
 | `Ctrl+Shift+Z` | Redo |
 | `?` | Show help |
+
+## Built by
+
+- **[@0xhaizeka](https://x.com/0xhaizeka)** — design, development, and everything in between
 
 ## Deployment
 
