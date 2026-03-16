@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025-2026 Alban Derouin. All rights reserved.
+
 import { signTypedData } from "wagmi/actions";
 import { wagmiConfig } from "@/lib/web3/config";
 

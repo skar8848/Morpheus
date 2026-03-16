@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025-2026 Alban Derouin. All rights reserved.
+
 import { http, createConfig, fallback } from "wagmi";
 import { mainnet, base } from "wagmi/chains";
 import { injected } from "wagmi/connectors";

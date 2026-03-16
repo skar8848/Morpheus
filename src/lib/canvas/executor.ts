@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025-2026 Alban Derouin. All rights reserved.
+
 import type { Edge } from "@xyflow/react";
 import { encodeFunctionData, isAddress, parseUnits } from "viem";
 import type { CanvasNode } from "./types";

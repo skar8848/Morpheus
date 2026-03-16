@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025-2026 Alban Derouin. All rights reserved.
+
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import Web3Provider from "@/lib/web3/provider";

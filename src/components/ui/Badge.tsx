@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025-2026 Alban Derouin. All rights reserved.
+
 interface BadgeProps {
   children: React.ReactNode;
   variant?: "default" | "success" | "error" | "brand";

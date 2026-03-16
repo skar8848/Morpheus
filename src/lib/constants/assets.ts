@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025-2026 Alban Derouin. All rights reserved.
+
 import type { Asset } from "../graphql/types";
 import type { SupportedChainId } from "../web3/chains";
 
