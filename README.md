@@ -115,4 +115,4 @@ This project is licensed under the [Business Source License 1.1](./LICENSE).
 
 **TL;DR:** You can view, fork, and use this code for non-commercial/educational purposes. Commercial use requires a separate license. The code will automatically transition to Apache 2.0 on 2030-03-16.
 
-For commercial licensing, contact [à compléter].
+For commercial licensing, contact alban.derouin@gmail.com.
