@@ -146,6 +146,29 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
         }
       }
 
+      if (sd.type === "repay" && sd.withdrawCollateralAfterRepay) {
+        // Freed collateral coming from a repay node
+        const market = sd.market as {
+          collateralAsset?: { address: string; symbol?: string; decimals?: number };
+        } | null;
+        const collateralAsset = market?.collateralAsset ?? null;
+        const rawCollateral = (sd.collateralToWithdraw as string | undefined) ?? "0";
+        const decimals = collateralAsset?.decimals ?? 18;
+        let amt = 0;
+        try {
+          amt = Number(BigInt(rawCollateral)) / 10 ** decimals;
+        } catch { /* ignore */ }
+        if (collateralAsset?.address) {
+          loanAddr = collateralAsset.address;
+          sources.push({
+            nodeId: sourceNode.id,
+            label: `Freed ${collateralAsset.symbol ?? "collateral"}`,
+            borrowAmount: amt,
+            loanAddress: collateralAsset.address,
+          });
+        }
+      }
+
       if (sd.type === "supplyCollateral") {
         const asset = sd.asset as { address: string; symbol?: string } | null;
         const amt = parseFloat((sd.amount as string) || "0");

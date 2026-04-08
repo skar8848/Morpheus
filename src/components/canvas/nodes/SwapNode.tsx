@@ -82,6 +82,24 @@ function SwapNodeComponent({ id, data }: NodeProps) {
       const amt = parseFloat((sd.amount as string) || "0");
       return { upstreamAsset: position?.vault.asset ?? null, upstreamAmount: amt };
     }
+    if (sd.type === "repay" && sd.withdrawCollateralAfterRepay) {
+      // Repay nodes that withdraw collateral emit the FREED collateral asset
+      // (not the loan asset). Auto-pick it up so the swap doesn't need a wallet
+      // node in between.
+      const market = sd.market as {
+        collateralAsset?: AssetInfo & { decimals?: number };
+      } | null;
+      const collateralAsset = market?.collateralAsset ?? null;
+      const rawCollateral = (sd.collateralToWithdraw as string | undefined) ?? "0";
+      const decimals = collateralAsset?.decimals ?? 18;
+      let amt = 0;
+      try {
+        amt = Number(BigInt(rawCollateral)) / 10 ** decimals;
+      } catch {
+        amt = 0;
+      }
+      return { upstreamAsset: collateralAsset, upstreamAmount: amt };
+    }
     return { upstreamAsset: null, upstreamAmount: 0 };
   }, [edges, allNodes, id]);
 

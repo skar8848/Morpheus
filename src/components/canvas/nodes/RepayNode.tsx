@@ -66,6 +66,15 @@ function RepayNodeComponent({ id, data }: NodeProps) {
         position={Position.Left}
         className="!h-3 !w-3 !border-2 !border-red-400 !bg-bg-card"
       />
+      {/* Source handle: emits the freed collateral when withdrawCollateralAfterRepay is set.
+          Downstream swap / supplyCollateral / vaultDeposit nodes auto-pick up the asset. */}
+      {d.withdrawCollateralAfterRepay && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          className="!h-3 !w-3 !border-2 !border-red-400 !bg-bg-card"
+        />
+      )}
 
       {/* Market selector */}
       <div className="mb-3">

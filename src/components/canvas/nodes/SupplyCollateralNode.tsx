@@ -19,7 +19,7 @@ interface UpstreamInput {
   nodeId: string;
   label: string;
   amount: number;
-  type: "wallet" | "swap" | "vaultWithdraw";
+  type: "wallet" | "swap" | "vaultWithdraw" | "repay";
 }
 
 function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
@@ -64,6 +64,27 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
             label: `Withdraw ${position.vault.name}`,
             amount: amt,
             type: "vaultWithdraw",
+          });
+        }
+      } else if (sd.type === "repay" && sd.withdrawCollateralAfterRepay) {
+        // Freed collateral coming from a repay node — auto-pick it up
+        const market = sd.market as {
+          collateralAsset?: AssetInfo;
+        } | null;
+        const collateralAsset = market?.collateralAsset ?? null;
+        const rawCollateral = (sd.collateralToWithdraw as string | undefined) ?? "0";
+        const decimals = collateralAsset?.decimals ?? 18;
+        let amt = 0;
+        try {
+          amt = Number(BigInt(rawCollateral)) / 10 ** decimals;
+        } catch { /* ignore */ }
+        if (collateralAsset) {
+          suggested = collateralAsset;
+          inputs.push({
+            nodeId: sourceNode.id,
+            label: `Freed ${collateralAsset.symbol}`,
+            amount: amt,
+            type: "repay",
           });
         }
       } else if (sd.type === "wallet") {

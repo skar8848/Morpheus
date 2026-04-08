@@ -124,7 +124,11 @@ export const VALID_CONNECTIONS: Record<string, string[]> = {
   swap: ["vaultDeposit", "supplyCollateral", "wallet", "repay"],
   vaultDeposit: [],
   vaultWithdraw: ["swap", "vaultDeposit", "supplyCollateral", "repay"],
-  repay: [],
+  // Repay is a valid SOURCE when withdrawCollateralAfterRepay is true:
+  // the freed collateral can be re-supplied, swapped, or deposited.
+  // The downstream node auto-detects the freed collateral asset + amount
+  // from the upstream repay (see SwapNode/SupplyCollateralNode/VaultDepositNode).
+  repay: ["swap", "supplyCollateral", "vaultDeposit"],
   position: ["vaultWithdraw", "supplyCollateral", "swap"],
 };
 

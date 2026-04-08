@@ -40,6 +40,33 @@ A canvas is a directed graph of nodes connected by edges:
 
 **Do NOT use `supplyCollateral` as a bridge for direct vault deposits** — it has different semantics (it touches a Morpho Blue market, not the vault's underlying asset). The connection rules now allow `wallet → vaultDeposit` directly.
 
+### Routing the freed collateral straight from `repay`
+
+When `withdrawCollateralAfterRepay` is set, the **`repay` node becomes a SOURCE
+of the freed collateral asset**. You can connect it directly to a `swap`,
+`supplyCollateral`, or `vaultDeposit` node downstream — DO NOT insert a fake
+`wallet` node in between.
+
+✅ Correct (4 nodes, 3 edges):
+```
+vaultWithdraw → repay (free WBTC) → swap (WBTC → USDC) → vaultDeposit (USDC vault)
+```
+
+❌ Wrong (5 nodes, broken — the wallet doesn't know about the future WBTC):
+```
+vaultWithdraw → repay (free WBTC)
+                 (no edge)
+                wallet → swap (WBTC → USDC)   ← swap can't auto-detect WBTC, has to be picked manually
+```
+
+The downstream swap / supplyCollateral / vaultDeposit nodes auto-detect
+the freed asset and amount from the upstream repay (reading
+`market.collateralAsset` + `collateralToWithdraw`). Just wire the edge
+directly.
+
+VALID_CONNECTIONS includes `repay → ["swap", "supplyCollateral", "vaultDeposit"]`
+when `withdrawCollateralAfterRepay` is true.
+
 ### Repay + free collateral in one node
 
 The `repay` node has two extra optional fields that turn it into a "close out
