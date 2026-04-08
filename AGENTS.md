@@ -11,7 +11,7 @@ description: >
 
 # Morpheus
 
-> **Live app**: https://morpheus-app.vercel.app
+> **Live app**: https://morpheus-visualizer.vercel.app
 > **Repo**: https://github.com/skar8848/Morpheus
 > **License**: BUSL 1.1
 
@@ -119,7 +119,7 @@ The portable, agent-friendly representation of a canvas. This is what `morpheus_
 Agents can deep-link a user directly into a pre-built canvas:
 
 ```
-https://morpheus-app.vercel.app/{chain}/canvas?strategy=<base64url(json)>
+https://morpheus-visualizer.vercel.app/{chain}/canvas?strategy=<base64url(json)>
 ```
 
 - `{chain}`: `ethereum` or `base`
@@ -128,7 +128,7 @@ https://morpheus-app.vercel.app/{chain}/canvas?strategy=<base64url(json)>
 **Shorter alternative** for atomic operations (no full graph):
 
 ```
-https://morpheus-app.vercel.app/{chain}/canvas?actions=<base64url(json)>
+https://morpheus-visualizer.vercel.app/{chain}/canvas?actions=<base64url(json)>
 ```
 
 Where the JSON is an array of action descriptors:
@@ -167,7 +167,7 @@ The `nodes` and `edges` shapes match the internal `ImportedStrategy` format docu
 ```jsonc
 {
   "ok": true,
-  "deepLinkUrl": "https://morpheus-app.vercel.app/ethereum/canvas?strategy=eyJub2RlcyI6...",
+  "deepLinkUrl": "https://morpheus-visualizer.vercel.app/ethereum/canvas?strategy=eyJub2RlcyI6...",
   "strategyHash": "eyJub2RlcyI6",
   "chain": "ethereum",
   "nodeCount": 4,
@@ -192,7 +192,7 @@ Same body shape, but validates only — does not return a deep link. Useful for 
 ### Example: cURL
 
 ```bash
-curl -X POST https://morpheus-app.vercel.app/api/canvas \
+curl -X POST https://morpheus-visualizer.vercel.app/api/canvas \
   -H "content-type: application/json" \
   -d '{
     "chain": "ethereum",
@@ -208,7 +208,7 @@ curl -X POST https://morpheus-app.vercel.app/api/canvas \
 1. Agent uses morpho_query_markets / morpho_query_vaults via the Morpho MCP
    to find the right market and vault.
 2. Agent builds the nodes/edges JSON locally.
-3. Agent POSTs to https://morpheus-app.vercel.app/api/canvas
+3. Agent POSTs to https://morpheus-visualizer.vercel.app/api/canvas
 4. Agent gives the returned deepLinkUrl to the user.
 5. User opens the link, sees the strategy on the canvas, clicks Execute.
 ```

@@ -1,0 +1,26 @@
+{
+  "name": "morpheus",
+  "owner": {
+    "name": "Alban Derouin",
+    "url": "https://github.com/skar8848"
+  },
+  "metadata": {
+    "description": "Visual node-graph editor for composing Morpho lending strategies. Plug it into Claude Code with the Morpho MCP and let any agent build a strategy and hand the user a deep-link URL to verify before signing.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "morpheus",
+      "source": "./plugins/morpheus",
+      "description": "[Beta] Build Morpho lending strategies as visual node graphs. Compose with @morpho-org/morpho-skills (the Morpho MCP) to let agents prep a strategy and hand the user a Morpheus deep-link URL.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Alban Derouin"
+      },
+      "repository": "https://github.com/skar8848/Morpheus",
+      "license": "BUSL-1.1",
+      "keywords": ["morpho", "defi", "lending", "morpheus", "visualization", "agents"],
+      "category": "defi"
+    }
+  ]
+}

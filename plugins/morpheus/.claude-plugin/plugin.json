@@ -1,0 +1,12 @@
+{
+  "name": "morpheus",
+  "version": "0.1.0",
+  "description": "Visual strategy composer for Morpho. Lets AI agents prep a Morpho strategy and hand the user a deep-link URL into a node-graph editor.",
+  "author": {
+    "name": "Alban Derouin"
+  },
+  "license": "BUSL-1.1",
+  "homepage": "https://morpheus-visualizer.vercel.app",
+  "repository": "https://github.com/skar8848/Morpheus",
+  "skills": "./skills"
+}
