@@ -15,11 +15,12 @@ import {
   type OnEdgesChange,
 } from "@xyflow/react";
 import { useAccount } from "wagmi";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useChain } from "@/lib/context/ChainContext";
 import { buildInitialLayout } from "./layout";
 import { isValidConnection } from "./validation";
 import { VALID_CONNECTIONS, type CanvasNode, type CanvasNodeData } from "./types";
-import { consumeImportedStrategy } from "./importStrategy";
+import { consumeImportedStrategy, parseDeepLink } from "./importStrategy";
 
 const MAX_HISTORY = 50;
 
@@ -31,6 +32,9 @@ interface SavedGraph {
 export function useCanvasState() {
   const { address } = useAccount();
   const { slug, chainId } = useChain();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
 
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -92,11 +96,31 @@ export function useCanvasState() {
 
   const STORAGE_KEY = `morpho-canvas-${chainId}`;
 
-  // Initialize: imported strategy → localStorage draft → fresh layout
+  // Initialize: deep link (?strategy=) → imported strategy → localStorage draft → fresh layout
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
 
+    // 1. Highest precedence: URL deep link from an agent
+    const deepLink = parseDeepLink(searchParams);
+    if (deepLink) {
+      setNodes(deepLink.nodes);
+      setEdges(deepLink.edges);
+      wasImported.current = true;
+      // Strip ?strategy= from the URL so a refresh doesn't re-import
+      // and so the saved draft takes over from here.
+      try {
+        if (pathname) {
+          const next = new URLSearchParams(searchParams?.toString() ?? "");
+          next.delete("strategy");
+          const qs = next.toString();
+          router.replace(qs ? `${pathname}?${qs}` : pathname);
+        }
+      } catch { /* router not available, ignore */ }
+      return;
+    }
+
+    // 2. Next: import from /address page (localStorage handoff)
     const imported = consumeImportedStrategy();
     if (imported) {
       setNodes(imported.nodes);
@@ -105,7 +129,7 @@ export function useCanvasState() {
       return;
     }
 
-    // Load saved draft from localStorage
+    // 3. Saved draft from previous session
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
@@ -118,9 +142,10 @@ export function useCanvasState() {
       }
     } catch { /* ignore corrupt data */ }
 
+    // 4. Fresh layout
     const initial = buildInitialLayout(address, slug, chainId, [], []);
     setNodes(initial);
-  }, [address, slug, chainId, setNodes, setEdges]);
+  }, [address, slug, chainId, setNodes, setEdges, searchParams, router, pathname]);
 
   // Auto-save to localStorage (debounced 2s)
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);

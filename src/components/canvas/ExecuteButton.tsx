@@ -33,6 +33,8 @@ import { GENERAL_ADAPTER1 } from "@/lib/constants/contracts";
 import { erc20Abi } from "viem";
 import { encodeFunctionData } from "viem";
 import { wagmiConfig } from "@/lib/web3/config";
+import SimulationPreview from "./SimulationPreview";
+import { useBundlePreflight } from "@/lib/hooks/useBundlePreflight";
 
 interface ExecuteButtonProps {
   nodes: CanvasNode[];
@@ -118,6 +120,8 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   const { chainId } = useChain();
   const { switchChainAsync } = useSwitchChain();
   const { sendTransaction, isPending } = useSendTransaction();
+  // Pre-execution preflight runs only while the panel is expanded — debounced
+  // inside useBundlePreflight so rapid graph edits don't spam estimateGas.
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
@@ -127,6 +131,9 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   const [totalApprovals, setTotalApprovals] = useState(0);
   const [swapStatus, setSwapStatus] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
+
+  // Run preflight only while the panel is expanded AND we're not currently executing
+  const preflight = useBundlePreflight(nodes, edges, expanded && !isExecuting);
 
   const wrongChain = isConnected && walletChainId !== chainId;
   const expectedChainLabel = CHAIN_CONFIGS.find((c) => c.chainId === chainId)?.label ?? `Chain ${chainId}`;
@@ -841,6 +848,9 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               <span>{steps.length} action{steps.length !== 1 ? "s" : ""}</span>
               <span>1 bundled transaction</span>
             </div>
+
+            {/* Pre-execution simulation — gas, HF, totals, warnings */}
+            {steps.length > 0 && <SimulationPreview result={preflight} />}
 
             {/* Blocking error */}
             {blockingError && (

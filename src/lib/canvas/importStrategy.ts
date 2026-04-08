@@ -381,3 +381,86 @@ export function consumeImportedStrategy(): ImportedStrategy | null {
     return null;
   }
 }
+
+// --- Deep link API ---
+//
+// Agents can deep-link a user directly into a pre-built canvas via URL params:
+//
+//   /<chain>/canvas?strategy=<base64url(JSON)>
+//
+// Where the JSON matches the ImportedStrategy shape (nodes + edges + sourceAddress).
+// Documented in AGENTS.md at the repo root.
+//
+// Morpheus NEVER auto-executes from a deep link. The user must always click Execute.
+
+const MAX_DEEP_LINK_BYTES = 100_000; // 100 KB after base64 decoding
+
+/** Decode a base64url string back to UTF-8. */
+function decodeBase64Url(input: string): string | null {
+  try {
+    // base64url → base64
+    let b64 = input.replace(/-/g, "+").replace(/_/g, "/");
+    // pad
+    const pad = b64.length % 4;
+    if (pad === 2) b64 += "==";
+    else if (pad === 3) b64 += "=";
+    else if (pad !== 0) return null;
+    // decode
+    if (typeof atob !== "function") return null;
+    const binary = atob(b64);
+    if (binary.length > MAX_DEEP_LINK_BYTES) return null;
+    // binary → UTF-8 string
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+/** Encode a UTF-8 string as base64url (used by callers building deep links). */
+export function encodeBase64Url(input: string): string {
+  if (typeof btoa !== "function") return "";
+  const bytes = new TextEncoder().encode(input);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/**
+ * Parse a deep link from URL search params and return an ImportedStrategy.
+ *
+ * Supported parameters (in order of precedence):
+ *   - ?strategy=<base64url(ImportedStrategy json)>  → full graph shape
+ *
+ * Returns null when no deep link is present or the payload is invalid.
+ * The caller is responsible for clearing the URL param after consumption.
+ */
+export function parseDeepLink(
+  searchParams: URLSearchParams | null | undefined
+): ImportedStrategy | null {
+  if (!searchParams) return null;
+
+  const strategyParam = searchParams.get("strategy");
+  if (!strategyParam || strategyParam.length > MAX_DEEP_LINK_BYTES * 2) return null;
+
+  const json = decodeBase64Url(strategyParam);
+  if (!json) return null;
+
+  try {
+    const parsed = JSON.parse(json);
+    if (!isValidImportedStrategy(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Helper for agents/tests: build a deep link URL from an ImportedStrategy.
+ * Returns the path-relative query string, e.g. "?strategy=...".
+ */
+export function buildDeepLinkQuery(strategy: ImportedStrategy): string {
+  const json = JSON.stringify(strategy);
+  return `?strategy=${encodeBase64Url(json)}`;
+}

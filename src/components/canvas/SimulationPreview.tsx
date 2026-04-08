@@ -1,0 +1,191 @@
+// SPDX-License-Identifier: BUSL-1.1
+// Copyright (c) 2025-2026 Alban Derouin. All rights reserved.
+
+"use client";
+
+import type { PreflightResult } from "@/lib/canvas/preflight";
+import { formatUnits } from "viem";
+
+interface SimulationPreviewProps {
+  result: PreflightResult;
+}
+
+/** Format a USD amount with thousands separators and 2 decimals */
+function fmtUsd(value: number): string {
+  if (!isFinite(value) || value === 0) return "$0";
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(2)}K`;
+  return `$${value.toFixed(2)}`;
+}
+
+/** Format gas in ETH (rough — assumes user has gas price awareness elsewhere) */
+function fmtGas(gas: bigint | null): string {
+  if (gas === null) return "—";
+  // Show as gwei for readability since ETH equivalent depends on gas price
+  // User cares about: is it cheap or expensive? 200k gas = normal, 2M = expensive
+  const formatted = formatUnits(gas, 0);
+  const num = Number(formatted);
+  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(2)}M gas`;
+  if (num >= 1_000) return `${(num / 1_000).toFixed(0)}K gas`;
+  return `${num} gas`;
+}
+
+/** Color class for a health factor value */
+function hfColor(hf: number | null): string {
+  if (hf === null) return "text-text-tertiary";
+  if (hf >= 2) return "text-success";
+  if (hf >= 1.2) return "text-yellow-400";
+  return "text-error";
+}
+
+export default function SimulationPreview({ result }: SimulationPreviewProps) {
+  const {
+    loading,
+    ok,
+    errors,
+    warnings,
+    gasEstimate,
+    willRevert,
+    approvalCount,
+    bundleCallCount,
+    hasSwap,
+    totalCollateralUsd,
+    totalBorrowUsd,
+    totalDepositUsd,
+    minHealthFactor,
+  } = result;
+
+  // Status banner
+  let statusLabel: string;
+  let statusClass: string;
+  let statusIcon: React.ReactNode;
+  if (loading) {
+    statusLabel = "Simulating…";
+    statusClass = "border-border bg-bg-secondary text-text-tertiary";
+    statusIcon = (
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="animate-spin">
+        <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeOpacity="0.2" />
+        <path d="M14 8a6 6 0 00-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+  } else if (errors.length > 0 || willRevert) {
+    statusLabel = willRevert ? "Will revert" : "Cannot execute";
+    statusClass = "border-error/30 bg-error/5 text-error";
+    statusIcon = (
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M5 5l6 6M11 5l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  } else if (ok) {
+    statusLabel = warnings.length > 0 ? "Looks OK — review warnings" : "Looks good";
+    statusClass = warnings.length > 0
+      ? "border-yellow-400/30 bg-yellow-400/5 text-yellow-400"
+      : "border-success/30 bg-success/5 text-success";
+    statusIcon = (
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  } else {
+    return null; // nothing to show yet
+  }
+
+  // Don't render anything if there's literally no data and we're not loading
+  if (!loading && bundleCallCount === 0 && errors.length === 0 && warnings.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border border-border bg-bg-secondary/50">
+      {/* Status header */}
+      <div
+        className={`flex items-center gap-2 rounded-t-lg border-b border-border px-3 py-2 text-[10px] font-semibold uppercase tracking-wider ${statusClass}`}
+      >
+        {statusIcon}
+        <span>Pre-execution Simulation</span>
+        <span className="ml-auto normal-case tracking-normal">{statusLabel}</span>
+      </div>
+
+      {/* Body — totals + diagnostics */}
+      <div className="space-y-2 px-3 py-2">
+        {/* Totals row */}
+        {(totalCollateralUsd > 0 || totalBorrowUsd > 0 || totalDepositUsd > 0) && (
+          <div className="grid grid-cols-3 gap-2 text-[10px]">
+            {totalCollateralUsd > 0 && (
+              <div className="rounded-md border border-brand/15 bg-brand/5 px-2 py-1.5">
+                <p className="text-[9px] text-text-tertiary">Collateral</p>
+                <p className="font-medium text-brand">{fmtUsd(totalCollateralUsd)}</p>
+              </div>
+            )}
+            {totalBorrowUsd > 0 && (
+              <div className="rounded-md border border-success/15 bg-success/5 px-2 py-1.5">
+                <p className="text-[9px] text-text-tertiary">Borrow</p>
+                <p className="font-medium text-success">{fmtUsd(totalBorrowUsd)}</p>
+              </div>
+            )}
+            {totalDepositUsd > 0 && (
+              <div className="rounded-md border border-purple-400/15 bg-purple-400/5 px-2 py-1.5">
+                <p className="text-[9px] text-text-tertiary">Vault deposit</p>
+                <p className="font-medium text-purple-400">{fmtUsd(totalDepositUsd)}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Health factor + gas + bundle counts */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-text-tertiary">
+          {minHealthFactor !== null && (
+            <span>
+              HF post-borrow:{" "}
+              <span className={`font-semibold ${hfColor(minHealthFactor)}`}>
+                {minHealthFactor.toFixed(2)}
+              </span>
+            </span>
+          )}
+          {gasEstimate !== null && (
+            <span>
+              Gas: <span className="font-medium text-text-secondary">{fmtGas(gasEstimate)}</span>
+            </span>
+          )}
+          {bundleCallCount > 0 && (
+            <span>
+              Bundle: <span className="font-medium text-text-secondary">{bundleCallCount} call{bundleCallCount !== 1 ? "s" : ""}</span>
+            </span>
+          )}
+          {approvalCount > 0 && (
+            <span>
+              Approvals: <span className="font-medium text-text-secondary">{approvalCount}</span>
+            </span>
+          )}
+          {hasSwap && (
+            <span className="rounded-sm bg-amber-400/10 px-1 py-0.5 text-amber-400">multi-phase</span>
+          )}
+        </div>
+
+        {/* Errors */}
+        {errors.length > 0 && (
+          <div className="space-y-1">
+            {errors.map((err, i) => (
+              <p key={i} className="rounded-md border border-error/15 bg-error/5 px-2 py-1 text-[10px] text-error">
+                {err}
+              </p>
+            ))}
+          </div>
+        )}
+
+        {/* Warnings */}
+        {warnings.length > 0 && errors.length === 0 && (
+          <div className="space-y-1">
+            {warnings.map((w, i) => (
+              <p key={i} className="rounded-md border border-yellow-400/15 bg-yellow-400/5 px-2 py-1 text-[10px] text-yellow-400">
+                {w}
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
