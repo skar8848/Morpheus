@@ -323,6 +323,32 @@ export function useCanvasState() {
     try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
   }, [address, slug, chainId, setNodes, setEdges, pushHistory, STORAGE_KEY]);
 
+  // Load a strategy template — replaces the current canvas
+  const loadTemplate = useCallback(
+    (built: { nodes: CanvasNode[]; edges: Edge[] }) => {
+      pushHistory();
+      // Inject the connected wallet address into wallet nodes
+      const next = built.nodes.map((n) => {
+        const d = n.data as { type?: string };
+        if (d.type === "wallet") {
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              address,
+              chain: slug,
+              chainId,
+            },
+          } as CanvasNode;
+        }
+        return n;
+      });
+      setNodes(next);
+      setEdges(built.edges);
+    },
+    [address, slug, chainId, setNodes, setEdges, pushHistory]
+  );
+
   return {
     nodes,
     edges,
@@ -333,6 +359,7 @@ export function useCanvasState() {
     deleteNode,
     updateNodeData,
     clearGraph,
+    loadTemplate,
     undo,
     redo,
     canUndo,

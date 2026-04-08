@@ -25,6 +25,8 @@ import { VALID_CONNECTIONS, DRAGGABLE_NODE_TYPES, NODE_SHORTCUTS, NODE_COLORS, t
 import Sidebar from "./Sidebar";
 import ExecuteButton from "./ExecuteButton";
 import StrategyGauge from "./StrategyGauge";
+import ChatPanel from "./ChatPanel";
+import TimeProjection from "./TimeProjection";
 
 export default function CanvasPage() {
   const {
@@ -36,6 +38,7 @@ export default function CanvasPage() {
     addNode,
     deleteNode,
     clearGraph,
+    loadTemplate,
     undo,
     redo,
     canUndo,
@@ -530,7 +533,14 @@ export default function CanvasPage() {
       onKeyDown={onKeyDown}
       tabIndex={0}
     >
-      <Sidebar onAddPosition={() => {}} highlightType={connectionHint?.highlightType} />
+      <Sidebar
+        onAddPosition={() => {}}
+        highlightType={connectionHint?.highlightType}
+        onLoadTemplate={(tpl) => {
+          const built = tpl.build();
+          loadTemplate(built);
+        }}
+      />
 
       {/* Connection hint toast */}
       {connectionHint && (
@@ -601,7 +611,11 @@ export default function CanvasPage() {
       </ReactFlow>
 
       <ExecuteButton nodes={nodes as CanvasNode[]} edges={edges} />
+
+      {/* AI strategy assistant — sliding right panel */}
+      <ChatPanel />
       <StrategyGauge nodes={nodes as CanvasNode[]} edges={edges} />
+      <TimeProjection nodes={nodes as CanvasNode[]} edges={edges} />
 
       {/* Placement mode indicator */}
       {placingNodeType && (

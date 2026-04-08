@@ -10,13 +10,18 @@ import { useUserPositions } from "@/lib/hooks/useUserPositions";
 import { formatUsd, formatApy, formatTokenAmount } from "@/lib/utils/format";
 import { safeBigInt } from "@/lib/utils/bigint";
 import { DRAGGABLE_NODE_TYPES, NODE_COLORS } from "@/lib/canvas/types";
+import { useChain } from "@/lib/context/ChainContext";
+import { getTemplatesForChain, type StrategyTemplate } from "@/lib/canvas/templates";
 
 interface SidebarProps {
   onAddPosition: (positionId: string) => void;
   highlightType?: string | null;
+  onLoadTemplate?: (template: StrategyTemplate) => void;
 }
 
-export default function Sidebar({ onAddPosition, highlightType }: SidebarProps) {
+export default function Sidebar({ onAddPosition, highlightType, onLoadTemplate }: SidebarProps) {
+  const { chainId } = useChain();
+  const templates = getTemplatesForChain(chainId);
   const [collapsed, setCollapsed] = useState(false);
   const { isConnected } = useAccount();
   const { marketPositions, vaultPositions, loading } = useUserPositions();
@@ -69,6 +74,48 @@ export default function Sidebar({ onAddPosition, highlightType }: SidebarProps) 
 
       {!collapsed && (
         <div className="flex-1 overflow-y-auto p-3">
+          {/* Templates */}
+          {templates.length > 0 && onLoadTemplate && (
+            <div className="mb-4">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
+                Templates
+              </p>
+              <div className="space-y-1.5">
+                {templates.map((tpl) => {
+                  const tagColor =
+                    tpl.tag === "leverage"
+                      ? "text-yellow-400"
+                      : tpl.tag === "yield"
+                        ? "text-success"
+                        : "text-purple-400";
+                  return (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      onClick={() => onLoadTemplate(tpl)}
+                      title={tpl.description}
+                      className="group block w-full rounded-lg border border-border bg-bg-card px-3 py-2 text-left transition-colors hover:border-brand/30 hover:bg-bg-secondary"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-text-primary group-hover:text-brand">
+                          {tpl.name}
+                        </span>
+                        <span
+                          className={`shrink-0 rounded-sm bg-bg-secondary px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wider ${tagColor}`}
+                        >
+                          {tpl.tag}
+                        </span>
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-[10px] leading-snug text-text-tertiary">
+                        {tpl.description}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Node types */}
           <div className="mb-4">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">

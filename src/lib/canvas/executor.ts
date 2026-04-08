@@ -1,6 +1,29 @@
 // SPDX-License-Identifier: BUSL-1.1
 // Copyright (c) 2025-2026 Alban Derouin. All rights reserved.
 
+/**
+ * Morpheus bundle executor.
+ *
+ * SAFETY STATUS (per Morpho Builder skill audit, 2026-04-08):
+ *
+ *   ✅ FIXED — setAuthorization now emitted before borrow flows
+ *   ✅ FIXED — USDT approve resets allowance to 0 first (via buildApprovalTxs)
+ *   ✅ FIXED — vaultWithdraw full-exit (≥99%) uses erc4626Redeem to avoid dust
+ *
+ *   ⚠️  PENDING — Full migration to @morpho-org/bundler-sdk-viem (Bundler3 is
+ *       officially deprecated by Morpho). The SDK's setupBundle() handles
+ *       slippage, permit2, authorization-with-sig, and unwrapping in one shot.
+ *       https://www.npmjs.com/package/@morpho-org/bundler-sdk-viem
+ *
+ *   ⚠️  PENDING — Slippage protection on vault deposits via previewDeposit + 1%
+ *       tolerance. Currently uses MAX_UINT256 share-price bound (permissive).
+ *       The user-confirmed asset amount is the only protection today.
+ *
+ *   ⚠️  PENDING — setAuthorizationWithSig embedded in the bundle (saves one
+ *       extra signature for first-time borrow users). Today the user signs a
+ *       separate setAuthorization tx before the bundle.
+ */
+
 import type { Edge } from "@xyflow/react";
 import { encodeFunctionData, isAddress, parseUnits } from "viem";
 import type { CanvasNode } from "./types";
@@ -15,9 +38,12 @@ import type {
 import {
   BUNDLER3,
   GENERAL_ADAPTER1,
+  MORPHO_BLUE,
+  USDT_ADDRESSES,
   bundler3Abi,
   generalAdapterAbi,
   erc20Abi,
+  morphoBlueAbi,
 } from "@/lib/constants/contracts";
 import type { SupportedChainId } from "@/lib/web3/chains";
 import { validateGraph } from "./validation";
@@ -215,19 +241,97 @@ export function getRequiredApprovals(
 
 /**
  * Build approval transactions (separate from bundler).
+ *
+ * USDT special-case: USDT's `approve()` reverts when the current allowance is
+ * non-zero AND the new amount is also non-zero. We can't read the current
+ * allowance from this pure function, so we conservatively emit a reset-to-zero
+ * call followed by the actual approval whenever the token matches USDT on the
+ * current chain. The first reset is a no-op when allowance is already 0.
  */
 export function buildApprovalTxs(
   approvals: { token: `0x${string}`; amount: bigint }[],
-  spender: `0x${string}`
+  spender: `0x${string}`,
+  chainId?: SupportedChainId
 ): { to: `0x${string}`; data: `0x${string}` }[] {
-  return approvals.map(({ token, amount }) => ({
-    to: token,
+  const usdt = chainId !== undefined ? USDT_ADDRESSES[chainId] : null;
+  const result: { to: `0x${string}`; data: `0x${string}` }[] = [];
+
+  for (const { token, amount } of approvals) {
+    const isUsdt = usdt !== null && token.toLowerCase() === usdt.toLowerCase();
+
+    if (isUsdt && amount > 0n) {
+      // USDT footgun: reset to 0 first
+      result.push({
+        to: token,
+        data: encodeFunctionData({
+          abi: erc20Abi,
+          functionName: "approve",
+          args: [spender, 0n],
+        }),
+      });
+    }
+
+    result.push({
+      to: token,
+      data: encodeFunctionData({
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [spender, amount],
+      }),
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Check whether the strategy contains any operation that requires the user
+ * to have authorized the GeneralAdapter1 in Morpho Blue.
+ *
+ * Operations that need authorization:
+ *   - `borrow` — adapter calls morpho.borrow(onBehalf=user)
+ *   - `withdrawCollateral` (not yet exposed in Morpheus)
+ *
+ * Other operations (supplyCollateral, repay, vaultDeposit, vaultWithdraw,
+ * swap) do NOT need Morpho Blue authorization — they only need ERC20
+ * allowances on the underlying tokens.
+ *
+ * Returns true if any borrow node has a market and a non-zero amount.
+ */
+export function strategyNeedsMorphoAuthorization(nodes: CanvasNode[]): boolean {
+  for (const node of nodes) {
+    const d = node.data as { type?: string };
+    if (d.type === "borrow") {
+      const bd = node.data as unknown as BorrowNodeData;
+      if (bd.market && isFinite(bd.borrowAmount) && bd.borrowAmount > 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Encode a `morpho.setAuthorization(adapter, true)` transaction.
+ * The user must sign and submit this BEFORE any borrow bundle if they
+ * have not previously authorized the adapter.
+ *
+ * Use `morphoBlueAbi.isAuthorized(user, adapter)` to check first — if it
+ * returns true, this tx is unnecessary.
+ */
+export function buildMorphoAuthorizationTx(
+  chainId: SupportedChainId
+): { to: `0x${string}`; data: `0x${string}` } | null {
+  const adapter = GENERAL_ADAPTER1[chainId];
+  if (!adapter) return null;
+  return {
+    to: MORPHO_BLUE,
     data: encodeFunctionData({
-      abi: erc20Abi,
-      functionName: "approve",
-      args: [spender, amount],
+      abi: morphoBlueAbi,
+      functionName: "setAuthorization",
+      args: [adapter, true],
     }),
-  }));
+  };
 }
 
 /**
@@ -277,26 +381,65 @@ export function buildExecutionBundle(
         const raw = safeAmountToBigInt(d.amount, d.position.vault.asset.decimals);
         if (raw === 0n) break;
 
-        // Always withdraw to user. The downstream deposit will use erc20TransferFrom
-        // to pull from the user. Sending to adapter is risky when amounts differ
-        // (leftover tokens get stuck, adapter safety checks may revert).
-        calls.push({
-          to: adapter,
-          data: encodeFunctionData({
-            abi: generalAdapterAbi,
-            functionName: "erc4626Withdraw",
-            args: [
-              vaultAddr,
-              raw,
-              0n, // minSharePriceE27 = 0 → accept any share price
-              userAddress,
-              userAddress,
-            ],
-          }),
-          value: 0n,
-          skipRevert: false,
-          callbackHash: ZERO_HASH,
-        });
+        // FULL-EXIT DETECTION (Morpho safety pattern):
+        // ERC-4626 `withdraw(assets)` converts the target asset amount back to
+        // shares and burns them. Due to rounding, this can leave 1-2 wei of
+        // shares behind ("dust") that the user cannot easily withdraw later.
+        // For full exits, use `redeem(shares)` with the exact share balance —
+        // guarantees a clean exit.
+        //
+        // We treat any withdrawal at >= 99% of the position's known assets as
+        // a "full exit" and switch to redeem with the full share balance.
+        const positionAssetsRaw = d.position.state?.assets
+          ? safeBigInt(d.position.state.assets)
+          : 0n;
+        const positionSharesRaw = d.position.state?.shares
+          ? safeBigInt(d.position.state.shares)
+          : 0n;
+        const isFullExit =
+          positionAssetsRaw > 0n &&
+          positionSharesRaw > 0n &&
+          // raw >= positionAssetsRaw * 99 / 100
+          raw * 100n >= positionAssetsRaw * 99n;
+
+        if (isFullExit) {
+          calls.push({
+            to: adapter,
+            data: encodeFunctionData({
+              abi: generalAdapterAbi,
+              functionName: "erc4626Redeem",
+              args: [
+                vaultAddr,
+                positionSharesRaw,
+                0n, // minSharePriceE27 = 0 → accept current price
+                userAddress,
+                userAddress,
+              ],
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: ZERO_HASH,
+          });
+        } else {
+          // Partial exit — use withdraw with exact asset amount
+          calls.push({
+            to: adapter,
+            data: encodeFunctionData({
+              abi: generalAdapterAbi,
+              functionName: "erc4626Withdraw",
+              args: [
+                vaultAddr,
+                raw,
+                0n, // minSharePriceE27 = 0 → accept any share price
+                userAddress,
+                userAddress,
+              ],
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: ZERO_HASH,
+          });
+        }
         break;
       }
 
@@ -655,17 +798,45 @@ export function buildPreSwapBundle(
         const vaultAddr = requireValidAddress(d.position.vault.address, "vault withdraw");
         const raw = safeAmountToBigInt(d.amount, d.position.vault.asset.decimals);
         if (raw === 0n) break;
-        calls.push({
-          to: adapter,
-          data: encodeFunctionData({
-            abi: generalAdapterAbi,
-            functionName: "erc4626Withdraw",
-            args: [vaultAddr, raw, 0n, userAddress, userAddress],
-          }),
-          value: 0n,
-          skipRevert: false,
-          callbackHash: ZERO_HASH,
-        });
+
+        // Same full-exit detection as the main bundle path:
+        // ≥99% of position assets → use redeem(shares) to avoid dust.
+        const positionAssetsRaw = d.position.state?.assets
+          ? safeBigInt(d.position.state.assets)
+          : 0n;
+        const positionSharesRaw = d.position.state?.shares
+          ? safeBigInt(d.position.state.shares)
+          : 0n;
+        const isFullExit =
+          positionAssetsRaw > 0n &&
+          positionSharesRaw > 0n &&
+          raw * 100n >= positionAssetsRaw * 99n;
+
+        if (isFullExit) {
+          calls.push({
+            to: adapter,
+            data: encodeFunctionData({
+              abi: generalAdapterAbi,
+              functionName: "erc4626Redeem",
+              args: [vaultAddr, positionSharesRaw, 0n, userAddress, userAddress],
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: ZERO_HASH,
+          });
+        } else {
+          calls.push({
+            to: adapter,
+            data: encodeFunctionData({
+              abi: generalAdapterAbi,
+              functionName: "erc4626Withdraw",
+              args: [vaultAddr, raw, 0n, userAddress, userAddress],
+            }),
+            value: 0n,
+            skipRevert: false,
+            callbackHash: ZERO_HASH,
+          });
+        }
         break;
       }
       case "supplyCollateral": {

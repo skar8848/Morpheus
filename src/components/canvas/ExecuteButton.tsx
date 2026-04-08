@@ -18,6 +18,8 @@ import {
   buildPreSwapBundle,
   buildPostSwapBundle,
   getPreSwapApprovals,
+  strategyNeedsMorphoAuthorization,
+  buildMorphoAuthorizationTx,
 } from "@/lib/canvas/executor";
 import {
   getCowQuote,
@@ -29,11 +31,12 @@ import {
 import { formatApy } from "@/lib/utils/format";
 import type { CanvasNode, CanvasNodeData } from "@/lib/canvas/types";
 import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
-import { GENERAL_ADAPTER1 } from "@/lib/constants/contracts";
+import { GENERAL_ADAPTER1, MORPHO_BLUE, morphoBlueAbi } from "@/lib/constants/contracts";
 import { erc20Abi } from "viem";
 import { encodeFunctionData } from "viem";
 import { wagmiConfig } from "@/lib/web3/config";
 import SimulationPreview from "./SimulationPreview";
+import BundleInspector from "./BundleInspector";
 import { useBundlePreflight } from "@/lib/hooks/useBundlePreflight";
 
 interface ExecuteButtonProps {
@@ -419,6 +422,64 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         }
       };
 
+      // ─── Morpho Blue authorization preflight ───────────────────────────────
+      // The bundler executes morpho.borrow on behalf of the user via the
+      // GeneralAdapter1 contract. Morpho Blue requires the user to have
+      // explicitly authorized that adapter via setAuthorization. Without it,
+      // first-time borrowers see "Unauthorized()" reverts.
+      //
+      // We check isAuthorized once before the bundle. If false, we submit a
+      // separate setAuthorization tx (one extra signature for the user). This
+      // is a one-time setup per (user, adapter) pair.
+      //
+      // FUTURE: replace with setAuthorizationWithSig embedded in the bundle
+      // (saves one signature). Requires EIP-712 signing flow.
+      if (strategyNeedsMorphoAuthorization(execNodes)) {
+        let isAuth = false;
+        try {
+          isAuth = (await readContract(wagmiConfig, {
+            address: MORPHO_BLUE,
+            abi: morphoBlueAbi,
+            functionName: "isAuthorized",
+            args: [currentAddress, adapter],
+          })) as boolean;
+        } catch (err) {
+          // RPC failure — fall through and try the auth tx anyway. If the
+          // user is already authorized the tx is a no-op (cheap).
+          console.warn("[ExecuteButton] isAuthorized check failed, will attempt setAuthorization:", err);
+        }
+
+        if (!isAuth) {
+          const authTx = buildMorphoAuthorizationTx(cid);
+          if (!authTx) {
+            setError("Cannot build authorization tx for this chain");
+            return;
+          }
+          assertChain();
+          setSwapStatus("Authorizing Morpho adapter (one-time setup)…");
+          const authHash = await new Promise<`0x${string}`>((resolve, reject) => {
+            sendTransaction(
+              { to: authTx.to, data: authTx.data, value: 0n },
+              { onSuccess: (h) => resolve(h), onError: (err) => reject(err) }
+            );
+          });
+          try {
+            const receipt = await waitWithRetry(authHash);
+            if (receipt.status === "reverted") {
+              throw new Error("Authorization tx reverted on-chain");
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            throw new Error(`Authorization failed: ${msg}`);
+          }
+          setSwapStatus(null);
+          if (addressRef.current !== currentAddress) {
+            setError("Wallet address changed during execution. Aborting.");
+            return;
+          }
+        }
+      }
+
       // Detect if graph contains swaps
       const swaps = getSwapDetails(execNodes, execEdges);
 
@@ -433,7 +494,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           );
           if (needed.length > 0) {
             assertChain();
-            await sendApprovals(buildApprovalTxs(needed, adapter));
+            await sendApprovals(buildApprovalTxs(needed, adapter, cid));
           }
         }
 
@@ -470,7 +531,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
             );
             if (needed.length > 0) {
               assertChain();
-              await sendApprovals(buildApprovalTxs(needed, adapter));
+              await sendApprovals(buildApprovalTxs(needed, adapter, cid));
             }
           }
           // C1 fix: Verify wallet hasn't changed after approvals
@@ -594,7 +655,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
             if (postNeeded.length > 0) {
               assertChain();
               setSwapStatus("Approving received tokens for deposit...");
-              await sendApprovals(buildApprovalTxs(postNeeded, adapter));
+              await sendApprovals(buildApprovalTxs(postNeeded, adapter, cid));
             }
           }
 
@@ -849,8 +910,13 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               <span>1 bundled transaction</span>
             </div>
 
-            {/* Pre-execution simulation — gas, HF, totals, warnings */}
-            {steps.length > 0 && <SimulationPreview result={preflight} />}
+            {/* Pre-execution simulation — gas, HF, totals, warnings + opt-in MCP analysis */}
+            {steps.length > 0 && (
+              <SimulationPreview result={preflight} nodes={nodes} edges={edges} />
+            )}
+
+            {/* Power-user inspector — collapsible decoded bundle calls */}
+            {steps.length > 0 && <BundleInspector nodes={nodes} edges={edges} />}
 
             {/* Blocking error */}
             {blockingError && (

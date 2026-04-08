@@ -333,25 +333,66 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
               </div>
             </div>
 
-            {/* Borrow amount + HF */}
-            <div className={`flex items-center justify-between rounded-lg px-2 py-1.5 ${exceedsLiquidity ? "border border-error/30 bg-error/5" : "bg-bg-secondary"}`}>
-              <div>
-                <span className="text-[10px] text-text-tertiary">Borrow</span>
-                <p className="text-xs font-medium text-text-primary">
-                  {d.borrowAmount > 0
-                    ? `${d.borrowAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${d.market.loanAsset.symbol}`
-                    : "—"}
-                </p>
-                <p className="text-[10px] text-text-tertiary">
-                  ${d.borrowAmountUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                </p>
+            {/* Borrow amount + HF + live liquidation distance */}
+            <div className={`rounded-lg px-2 py-1.5 ${exceedsLiquidity ? "border border-error/30 bg-error/5" : "bg-bg-secondary"}`}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] text-text-tertiary">Borrow</span>
+                  <p className="text-xs font-medium text-text-primary">
+                    {d.borrowAmount > 0
+                      ? `${d.borrowAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${d.market.loanAsset.symbol}`
+                      : "—"}
+                  </p>
+                  <p className="text-[10px] text-text-tertiary">
+                    ${d.borrowAmountUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-text-tertiary">HF</span>
+                  <p className={`text-xs font-semibold ${hfColor(d.healthFactor)}`}>
+                    {d.healthFactor ? d.healthFactor.toFixed(2) : "—"}
+                  </p>
+                </div>
               </div>
-              <div className="text-right">
-                <span className="text-[10px] text-text-tertiary">HF</span>
-                <p className={`text-xs font-semibold ${hfColor(d.healthFactor)}`}>
-                  {d.healthFactor ? d.healthFactor.toFixed(2) : "—"}
-                </p>
-              </div>
+
+              {/* Live distance-to-liquidation gauge */}
+              {d.borrowAmount > 0 && d.market.lltv && (() => {
+                // distance to liquidation in price drop %
+                // Liq price = current × (LTV / LLTV); drop% = 1 - LTV/LLTV
+                const lltvPct = (Number(d.market.lltv) / 1e18) * 100;
+                if (lltvPct === 0) return null;
+                const dropPct = Math.max(0, (1 - d.ltvPercent / lltvPct) * 100);
+                // Color thresholds: > 30% safe, 15-30% caution, < 15% risky
+                const dropColor =
+                  dropPct > 30
+                    ? "text-success"
+                    : dropPct > 15
+                      ? "text-yellow-400"
+                      : "text-error";
+                const trackPct = Math.max(0, Math.min(100, dropPct));
+                const barColor =
+                  dropPct > 30
+                    ? "bg-success"
+                    : dropPct > 15
+                      ? "bg-yellow-400"
+                      : "bg-error";
+                return (
+                  <div className="mt-1.5 border-t border-border/40 pt-1.5">
+                    <div className="flex items-center justify-between text-[9px] text-text-tertiary">
+                      <span>Liquidation buffer</span>
+                      <span className={`font-semibold ${dropColor}`}>
+                        −{dropPct.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="relative mt-0.5 h-1 overflow-hidden rounded-full bg-bg-card/60">
+                      <div
+                        className={`absolute left-0 top-0 h-full transition-all ${barColor}`}
+                        style={{ width: `${trackPct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Liquidity warning */}

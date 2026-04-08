@@ -49,7 +49,68 @@ export const erc20Abi = [
     ],
     outputs: [{ name: "", type: "bool" }],
   },
+  {
+    name: "allowance",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    name: "balanceOf",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
 ] as const;
+
+/**
+ * Minimal Morpho Blue ABI for authorization management.
+ *
+ * Borrow operations executed via the bundler/adapter need the user to
+ * have authorized the adapter via `setAuthorization(adapter, true)`.
+ * Otherwise, `morpho.borrow(..., onBehalf=user)` reverts with `Unauthorized()`.
+ *
+ * Use `isAuthorized(user, adapter)` to check before submitting any borrow flow.
+ */
+export const morphoBlueAbi = [
+  {
+    name: "setAuthorization",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "authorized", type: "address" },
+      { name: "newIsAuthorized", type: "bool" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "isAuthorized",
+    type: "function",
+    stateMutability: "view",
+    inputs: [
+      { name: "authorizer", type: "address" },
+      { name: "authorized", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+] as const;
+
+/**
+ * USDT addresses per chain.
+ *
+ * USDT requires resetting allowance to 0 before setting a new non-zero value
+ * (non-standard ERC20 quirk). Detect these addresses in the approval builder
+ * and emit a zero-then-amount approval pair.
+ */
+export const USDT_ADDRESSES: Record<SupportedChainId, `0x${string}` | null> = {
+  1: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+  8453: null, // Native USDT not deployed on Base
+};
 
 export const generalAdapterAbi = [
   {

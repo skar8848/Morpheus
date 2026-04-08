@@ -143,6 +143,76 @@ Where the JSON is an array of action descriptors:
 
 Morpheus parses this list, builds the corresponding nodes + edges, auto-lays them out, and waits for the user to click Execute. **Morpheus never auto-executes from a deep link** — the user must always confirm.
 
+## Public HTTP API (for agents)
+
+Morpheus exposes two stateless endpoints under `/api/canvas/*`. CORS is permissive — any origin can call them. No authentication, no storage. The canvas IS the URL.
+
+### `POST /api/canvas`
+
+Validates a canvas and returns a deep-link URL the user can open.
+
+**Request body** (JSON):
+```jsonc
+{
+  "chain": "ethereum",                  // optional, default "ethereum"
+  "nodes": [ /* CanvasNode[] */ ],
+  "edges": [ /* Edge[] */ ],
+  "sourceAddress": "0x..."              // user's address (display only)
+}
+```
+
+The `nodes` and `edges` shapes match the internal `ImportedStrategy` format documented in `src/lib/canvas/importStrategy.ts`. Node `type` must be one of: `walletNode`, `supplyCollateralNode`, `borrowNode`, `swapNode`, `vaultDepositNode`, `vaultWithdrawNode`, `repayNode`, `positionNode`. The inner `data.type` is the data discriminant: `wallet`, `supplyCollateral`, `borrow`, `swap`, `vaultDeposit`, `vaultWithdraw`, `repay`, `position`.
+
+**Response** (200):
+```jsonc
+{
+  "ok": true,
+  "deepLinkUrl": "https://morpheus-app.vercel.app/ethereum/canvas?strategy=eyJub2RlcyI6...",
+  "strategyHash": "eyJub2RlcyI6",
+  "chain": "ethereum",
+  "nodeCount": 4,
+  "edgeCount": 3
+}
+```
+
+**Response** (400):
+```jsonc
+{
+  "ok": false,
+  "errors": ["nodes[2].data.type: must be one of wallet, supplyCollateral, ..."]
+}
+```
+
+**Limits**: payload max 100 KB, nodes max 200, edges max 500.
+
+### `POST /api/canvas/validate`
+
+Same body shape, but validates only — does not return a deep link. Useful for an agent that wants a sanity check before presenting the canvas to a user.
+
+### Example: cURL
+
+```bash
+curl -X POST https://morpheus-app.vercel.app/api/canvas \
+  -H "content-type: application/json" \
+  -d '{
+    "chain": "ethereum",
+    "nodes": [...],
+    "edges": [...],
+    "sourceAddress": "0xabc..."
+  }'
+```
+
+### Example: Agent in Claude/Cursor
+
+```
+1. Agent uses morpho_query_markets / morpho_query_vaults via the Morpho MCP
+   to find the right market and vault.
+2. Agent builds the nodes/edges JSON locally.
+3. Agent POSTs to https://morpheus-app.vercel.app/api/canvas
+4. Agent gives the returned deepLinkUrl to the user.
+5. User opens the link, sees the strategy on the canvas, clicks Execute.
+```
+
 ## Morpho Agents Integration
 
 Morpheus is designed to compose with the Morpho Agents stack:

@@ -3,11 +3,21 @@
 
 "use client";
 
+import { useState } from "react";
+import type { Edge } from "@xyflow/react";
 import type { PreflightResult } from "@/lib/canvas/preflight";
 import { formatUnits } from "viem";
+import {
+  useMorphoMcpSimulate,
+  type MorphoMcpSimulateResult,
+} from "@/lib/hooks/useMorphoMcpSimulate";
+import type { CanvasNode } from "@/lib/canvas/types";
 
 interface SimulationPreviewProps {
   result: PreflightResult;
+  /** Optional — when provided, an "Inspect with Morpho MCP" toggle appears */
+  nodes?: CanvasNode[];
+  edges?: Edge[];
 }
 
 /** Format a USD amount with thousands separators and 2 decimals */
@@ -38,7 +48,139 @@ function hfColor(hf: number | null): string {
   return "text-error";
 }
 
-export default function SimulationPreview({ result }: SimulationPreviewProps) {
+/** Render the Morpho MCP-side analysis as an expandable block */
+function McpAnalysis({ data }: { data: MorphoMcpSimulateResult }) {
+  const allOk = data.allSucceeded !== false;
+  const market = data.analysis?.market;
+  const vault = data.analysis?.vault;
+  const warnings = [
+    ...(data.warnings ?? []),
+    ...(data.analysis?.warnings ?? []),
+  ];
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="flex items-center justify-between text-[10px]">
+        <span className="text-text-tertiary">Morpho MCP analysis</span>
+        <span className={allOk ? "text-success" : "text-error"}>
+          {allOk ? "all succeeded" : "would revert"}
+        </span>
+      </div>
+
+      {market && (
+        <div className="flex flex-wrap gap-x-3 gap-y-1 rounded-md bg-bg-card px-2 py-1.5 text-[10px] text-text-tertiary">
+          {market.healthFactor !== undefined && (
+            <span>
+              HF after:{" "}
+              <span className="font-semibold text-text-primary">
+                {Number(market.healthFactor).toFixed(2)}
+              </span>
+            </span>
+          )}
+          {market.borrowAPYAfter !== undefined && (
+            <span>
+              Borrow APY after:{" "}
+              <span className="font-semibold text-text-primary">
+                {(Number(market.borrowAPYAfter) * 100).toFixed(2)}%
+              </span>
+            </span>
+          )}
+          {market.utilizationAfter !== undefined && (
+            <span>
+              Util after:{" "}
+              <span className="font-semibold text-text-primary">
+                {(Number(market.utilizationAfter) * 100).toFixed(1)}%
+              </span>
+            </span>
+          )}
+          {market.liquidationRisk && (
+            <span className={market.liquidationRisk === "high" ? "text-error" : "text-text-secondary"}>
+              risk: {market.liquidationRisk}
+            </span>
+          )}
+        </div>
+      )}
+
+      {vault && (
+        <div className="flex flex-wrap gap-x-3 gap-y-1 rounded-md bg-bg-card px-2 py-1.5 text-[10px] text-text-tertiary">
+          {vault.shareDelta && (
+            <span>
+              Δ shares:{" "}
+              <span className="font-mono text-text-primary">{vault.shareDelta}</span>
+            </span>
+          )}
+          {vault.assetDelta && (
+            <span>
+              Δ assets:{" "}
+              <span className="font-mono text-text-primary">{vault.assetDelta}</span>
+            </span>
+          )}
+          {vault.projectedApy !== undefined && (
+            <span>
+              Projected APY:{" "}
+              <span className="font-semibold text-success">
+                {(Number(vault.projectedApy) * 100).toFixed(2)}%
+              </span>
+            </span>
+          )}
+        </div>
+      )}
+
+      {data.executionResults && data.executionResults.length > 0 && (
+        <div className="space-y-1">
+          {data.executionResults.map((er, i) => (
+            <div
+              key={i}
+              className={`rounded-md border px-2 py-1 text-[10px] ${
+                er.success === false
+                  ? "border-error/20 bg-error/5 text-error"
+                  : "border-border bg-bg-card text-text-tertiary"
+              }`}
+            >
+              <span className="font-semibold">
+                tx {er.transactionIndex ?? i + 1}: {er.success === false ? "REVERT" : "ok"}
+              </span>
+              {er.gasUsed && <span className="ml-2">gas {er.gasUsed}</span>}
+              {er.revertReason && (
+                <p className="mt-0.5 font-mono text-error">{er.revertReason}</p>
+              )}
+              {er.logs && er.logs.length > 0 && (
+                <p className="mt-0.5 text-text-tertiary">
+                  {er.logs
+                    .map((log) => log.description || `${log.contract}.${log.eventName}`)
+                    .filter(Boolean)
+                    .slice(0, 3)
+                    .join(" · ")}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="space-y-1">
+          {warnings.map((w, i) => (
+            <p
+              key={i}
+              className="rounded-md border border-yellow-400/15 bg-yellow-400/5 px-2 py-1 text-[10px] text-yellow-400"
+            >
+              {w.message ?? "warning"}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function SimulationPreview({ result, nodes, edges }: SimulationPreviewProps) {
+  const [mcpEnabled, setMcpEnabled] = useState(false);
+  const mcp = useMorphoMcpSimulate(
+    nodes ?? [],
+    edges ?? [],
+    mcpEnabled && Boolean(nodes && edges)
+  );
   const {
     loading,
     ok,
@@ -183,6 +325,40 @@ export default function SimulationPreview({ result }: SimulationPreviewProps) {
                 {w}
               </p>
             ))}
+          </div>
+        )}
+
+        {/* Morpho MCP analysis — opt-in remote check */}
+        {nodes && edges && bundleCallCount > 0 && (
+          <div className="border-t border-border/60 pt-2">
+            {!mcpEnabled && (
+              <button
+                type="button"
+                onClick={() => setMcpEnabled(true)}
+                className="flex w-full items-center justify-between rounded-md border border-brand/20 bg-brand/5 px-2 py-1.5 text-[10px] font-medium text-brand transition-colors hover:bg-brand/10"
+              >
+                <span>Inspect with Morpho MCP</span>
+                <span className="text-[9px] text-brand/70">verify post-state →</span>
+              </button>
+            )}
+
+            {mcpEnabled && mcp.loading && (
+              <div className="flex items-center gap-2 text-[10px] text-text-tertiary">
+                <svg width="10" height="10" viewBox="0 0 16 16" fill="none" className="animate-spin">
+                  <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeOpacity="0.2" />
+                  <path d="M14 8a6 6 0 00-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                Querying Morpho MCP…
+              </div>
+            )}
+
+            {mcpEnabled && mcp.error && (
+              <p className="rounded-md border border-error/15 bg-error/5 px-2 py-1 text-[10px] text-error">
+                {mcp.error}
+              </p>
+            )}
+
+            {mcpEnabled && mcp.result && <McpAnalysis data={mcp.result} />}
           </div>
         )}
       </div>
