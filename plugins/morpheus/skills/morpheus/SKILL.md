@@ -88,6 +88,62 @@ The standard agent flow combines two tools:
 1. **Morpho MCP** (`morpho_query_vaults`, `morpho_query_markets`, `morpho_get_vault`, etc.) → discover the best vaults/markets for the user's goal. The MCP returns full data including addresses, decimals, APYs.
 2. **Morpheus `/api/canvas`** → wrap that data into a node graph and get a shareable URL.
 
+### CRITICAL: Discovering a user's existing positions
+
+**Do NOT use `morpho_get_positions` for vault position discovery.** The Morpho MCP's `morpho_get_positions` tool only returns **V1 (legacy MetaMorpho)** vault positions — it silently drops **V2** vault positions. Most new vaults launched on Ethereum and Base in 2025+ are V2 (Steakhouse Prime Instant, Gauntlet's newer vaults, etc.). If the user mentions a vault and `morpho_get_positions` returns "no position found", it is almost certainly a V2 vault that the legacy query doesn't see.
+
+**Always use the Morpheus `/api/positions` endpoint instead.** It returns BOTH V1 and V2 positions in a single flat response:
+
+```bash
+GET https://morpheus-visualizer.vercel.app/api/positions?address=0xUSER&chain=ethereum
+```
+
+Response (flat, agent-friendly):
+
+```jsonc
+{
+  "ok": true,
+  "address": "0x...",
+  "chain": "ethereum",
+  "chainId": 1,
+  "marketPositions": [
+    {
+      "marketId": "0x...",
+      "collateralSymbol": "wstETH",
+      "collateralAddress": "0x...",
+      "collateralDecimals": 18,
+      "loanSymbol": "EURCV",
+      "loanAddress": "0x...",
+      "loanDecimals": 18,
+      "collateral": "920000000000000000",
+      "collateralUsd": 3500.42,
+      "borrow": "1300080000000000000000",
+      "borrowUsd": 1300.08,
+      "healthFactor": 1.85,
+      "lltv": "860000000000000000"
+    }
+  ],
+  "vaultPositions": [
+    {
+      "vaultAddress": "0x...",
+      "vaultName": "Steakhouse Prime Instant EURCV",
+      "vaultSymbol": "stkEURCV",
+      "assetSymbol": "EURCV",
+      "assetAddress": "0x...",
+      "assetDecimals": 18,
+      "shares": "...",
+      "assets": "...",
+      "assetsUsd": 1200.50,
+      "netApy": 0.0574,
+      "version": "v2"
+    }
+  ],
+  "counts": { "markets": 2, "vaultsV1": 0, "vaultsV2": 1 }
+}
+```
+
+For market discovery (`morpho_query_markets`) and vault discovery (`morpho_query_vaults`) the Morpho MCP is fine — those queries don't have the V2 hole. The bug is **only** on `morpho_get_positions` for vault holdings.
+
 ### Recommended flow
 
 1. Parse the user's intent (deposit X into highest-yielding vault, leverage Y, etc.)
