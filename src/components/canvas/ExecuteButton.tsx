@@ -282,12 +282,30 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         }
         case "repay": {
           if (!d.market || safeFloat(d.amount) <= 0) break;
+          // Repay needs an approval on the loan token (transferFrom from user)
+          s.push({
+            label: `Approve ${d.market.loanAsset.symbol}`,
+            detail: `${fmtNum(safeFloat(d.amount))} ${d.market.loanAsset.symbol} to Bundler`,
+            type: "approve",
+            icon: d.market.loanAsset.logoURI,
+          });
           s.push({
             label: `Repay ${d.market.loanAsset.symbol}`,
             detail: `${fmtNum(safeFloat(d.amount))} ${d.market.loanAsset.symbol} — ${formatApy(d.market.state.netBorrowApy)}`,
             type: "repay",
             icon: d.market.loanAsset.logoURI,
           });
+          // Optional: withdraw collateral right after the repay
+          if (d.withdrawCollateralAfterRepay && d.collateralToWithdraw && d.market.collateralAsset) {
+            const decimals = d.market.collateralAsset.decimals ?? 18;
+            const collAmount = Number(d.collateralToWithdraw) / 10 ** decimals;
+            s.push({
+              label: `Withdraw ${d.market.collateralAsset.symbol} collateral`,
+              detail: `${fmtNum(collAmount)} ${d.market.collateralAsset.symbol} → your wallet`,
+              type: "withdraw",
+              icon: d.market.collateralAsset.logoURI ?? d.market.loanAsset.logoURI,
+            });
+          }
           break;
         }
       }

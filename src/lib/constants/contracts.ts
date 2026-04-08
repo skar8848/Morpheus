@@ -193,6 +193,27 @@ export const generalAdapterAbi = [
     outputs: [],
   },
   {
+    name: "morphoWithdrawCollateral",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "marketParams",
+        type: "tuple",
+        components: [
+          { name: "loanToken", type: "address" },
+          { name: "collateralToken", type: "address" },
+          { name: "oracle", type: "address" },
+          { name: "irm", type: "address" },
+          { name: "lltv", type: "uint256" },
+        ],
+      },
+      { name: "assets", type: "uint256" },
+      { name: "receiver", type: "address" },
+    ],
+    outputs: [],
+  },
+  {
     name: "erc4626Deposit",
     type: "function",
     stateMutability: "nonpayable",

@@ -622,6 +622,35 @@ export function buildExecutionBundle(
           skipRevert: false,
           callbackHash: ZERO_HASH,
         });
+
+        // Optional: withdraw the user's collateral after the repay so they
+        // get it back in their wallet. Triggered when the user (or the agent
+        // building the canvas) sets withdrawCollateralAfterRepay + a
+        // collateralToWithdraw amount on the repay node.
+        // Common use case: "close out my borrow + free my wstETH/WBTC".
+        if (
+          d.withdrawCollateralAfterRepay &&
+          d.collateralToWithdraw &&
+          d.market.collateralAsset?.address
+        ) {
+          const collateralRaw = safeAmountToBigInt(
+            d.collateralToWithdraw,
+            d.market.collateralAsset.decimals ?? 18
+          );
+          if (collateralRaw > 0n) {
+            calls.push({
+              to: adapter,
+              data: encodeFunctionData({
+                abi: generalAdapterAbi,
+                functionName: "morphoWithdrawCollateral",
+                args: [marketParams, collateralRaw, userAddress],
+              }),
+              value: 0n,
+              skipRevert: false,
+              callbackHash: ZERO_HASH,
+            });
+          }
+        }
         break;
       }
 

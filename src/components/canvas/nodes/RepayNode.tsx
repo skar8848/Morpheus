@@ -43,7 +43,16 @@ function RepayNodeComponent({ id, data }: NodeProps) {
     : 0;
   const currentDebtUsd = selectedPosition?.state?.borrowAssetsUsd ?? 0;
 
+  // Read the user's current collateral on this position so the
+  // "withdraw collateral after repay" toggle can pre-fill the amount.
+  const currentCollateralRaw = selectedPosition?.state?.collateral ?? "0";
+  const collateralDecimals = d.market?.collateralAsset.decimals ?? 18;
+  const currentCollateral =
+    Number(currentCollateralRaw) / 10 ** collateralDecimals;
+  const currentCollateralUsd = selectedPosition?.state?.collateralUsd ?? 0;
+
   const amount = parseFloat(d.amount || "0");
+  const isFullRepay = currentDebt > 0 && amount >= currentDebt * 0.999;
 
   return (
     <NodeShell
@@ -118,6 +127,10 @@ function RepayNodeComponent({ id, data }: NodeProps) {
                       d.market!.loanAsset.decimals > 6 ? 8 : 6
                     ),
                     amountUsd: currentDebtUsd,
+                    // Full repay → auto-enable the withdraw collateral
+                    // step so the user gets their collateral back.
+                    withdrawCollateralAfterRepay: currentCollateral > 0,
+                    collateralToWithdraw: currentCollateralRaw,
                   })
                 }
                 className="text-[9px] text-brand hover:underline"
@@ -162,6 +175,54 @@ function RepayNodeComponent({ id, data }: NodeProps) {
             <p className="mt-1 text-right text-[10px] text-text-tertiary">
               ≈ {formatUsd(d.amountUsd)}
             </p>
+          )}
+
+          {/* Withdraw collateral toggle — only useful when fully repaying */}
+          {currentCollateral > 0 && (isFullRepay || d.withdrawCollateralAfterRepay) && (
+            <div className="mt-2 rounded-lg border border-border bg-bg-secondary px-2.5 py-2">
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={d.withdrawCollateralAfterRepay ?? false}
+                  onChange={(e) =>
+                    updateNodeData(id, {
+                      withdrawCollateralAfterRepay: e.target.checked,
+                      // Pre-fill if enabling
+                      collateralToWithdraw: e.target.checked
+                        ? currentCollateralRaw
+                        : undefined,
+                    })
+                  }
+                  className="h-3 w-3 accent-red-400"
+                />
+                <span className="flex-1 text-[10px] font-medium text-text-primary">
+                  Withdraw collateral after repay
+                </span>
+              </label>
+              {d.withdrawCollateralAfterRepay && (
+                <div className="mt-1.5 flex items-center justify-between rounded-md bg-bg-card px-2 py-1 text-[10px]">
+                  <div className="flex items-center gap-1.5">
+                    {d.market.collateralAsset?.logoURI && (
+                      <Image
+                        src={d.market.collateralAsset.logoURI}
+                        alt=""
+                        width={12}
+                        height={12}
+                        className="rounded-full"
+                        unoptimized
+                      />
+                    )}
+                    <span className="text-text-secondary">
+                      {currentCollateral.toLocaleString(undefined, { maximumFractionDigits: 6 })}{" "}
+                      {d.market.collateralAsset?.symbol}
+                    </span>
+                  </div>
+                  <span className="text-text-tertiary">
+                    {formatUsd(currentCollateralUsd)}
+                  </span>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}

@@ -78,6 +78,17 @@ export interface RepayNodeData {
   market: Market | null;
   amount: string;
   amountUsd: number;
+  /** When true, the executor emits a morpho.withdrawCollateral call after
+   * the repay so the user gets their collateral back in their wallet.
+   * Defaults to false (legacy behavior). Auto-enabled by the UI when the
+   * user picks MAX (full repayment) since that's the typical "close out
+   * this borrow" intent. */
+  withdrawCollateralAfterRepay?: boolean;
+  /** Amount of collateral to withdraw after the repay (raw token units,
+   * decimals from market.collateralAsset.decimals). Required when
+   * withdrawCollateralAfterRepay is true. Typically the user's full
+   * collateral on the position. */
+  collateralToWithdraw?: string;
 }
 
 export interface PositionNodeData {

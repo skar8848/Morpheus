@@ -40,6 +40,45 @@ A canvas is a directed graph of nodes connected by edges:
 
 **Do NOT use `supplyCollateral` as a bridge for direct vault deposits** — it has different semantics (it touches a Morpho Blue market, not the vault's underlying asset). The connection rules now allow `wallet → vaultDeposit` directly.
 
+### Repay + free collateral in one node
+
+The `repay` node has two extra optional fields that turn it into a "close out
+this borrow" primitive:
+
+```jsonc
+{
+  "id": "repay-1",
+  "type": "repayNode",
+  "data": {
+    "type": "repay",
+    "market": { /* full Market object — same as borrow node */ },
+    "amount": "1300.08",                    // human units
+    "amountUsd": 1300.08,
+    // OPTIONAL — free the collateral after the repay
+    "withdrawCollateralAfterRepay": true,
+    "collateralToWithdraw": "920000000000000000"   // raw units (wei) of the user's full collateral
+  }
+}
+```
+
+When `withdrawCollateralAfterRepay` is true and `collateralToWithdraw` is set,
+the executor emits an extra `morpho.withdrawCollateral` call AFTER the repay,
+sending the freed collateral straight to the user's wallet. The bundle becomes:
+
+1. `erc20TransferFrom` (loan token from user → adapter)
+2. `morphoRepay` (repays the debt)
+3. `morphoWithdrawCollateral` (frees the collateral → user wallet)
+
+**When to set it**: any time the user says things like *"close my borrow"*,
+*"repay and free my wstETH"*, *"unwind this position"*, or when you're doing
+a full repay (`amount` ≈ position's `borrow`). Always read the user's current
+collateral from `/api/positions` and pass the **raw** value (the `collateral`
+field on the market position object, already in token units).
+
+**Why it matters**: without this, the user has to manually call
+`morpho.withdrawCollateral` outside Morpheus to get their collateral back.
+Adding it to the canvas makes the strategy self-contained.
+
 ### CowSwap as a fallback when a Morpho market has no liquidity
 
 The Morpho MCP only knows about Morpho markets. It does NOT know that Morpheus also supports **CowSwap** (intent-based swaps, Ethereum mainnet only). When you query a market via `morpho_query_markets` and find that the total liquidity is too low to satisfy the user's intent, **do not give up — fall back to a `swap` node**.
