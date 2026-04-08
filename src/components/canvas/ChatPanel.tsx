@@ -138,17 +138,18 @@ export default function ChatPanel() {
 
   return (
     <>
-      {/* Floating toggle button */}
+      {/* Floating toggle button — sits ABOVE the React Flow MiniMap which is
+          ~150px tall in the bottom-right corner, hence bottom-[180px]. */}
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className={`fixed bottom-6 right-6 z-30 flex h-12 w-12 items-center justify-center rounded-full border border-border bg-bg-card text-text-secondary shadow-lg backdrop-blur-sm transition-all hover:border-brand/40 hover:text-brand ${
+        className={`fixed bottom-[180px] right-6 z-30 flex h-14 w-14 items-center justify-center rounded-full border border-border bg-bg-card text-text-secondary shadow-lg backdrop-blur-sm transition-all hover:border-brand/40 hover:text-brand ${
           open ? "rotate-90" : ""
         }`}
         title={open ? "Close AI Assistant" : "Open AI Assistant"}
       >
         {open ? (
-          <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+          <svg width="22" height="22" viewBox="0 0 16 16" fill="none">
             <path
               d="M4 4l8 8M12 4l-8 8"
               stroke="currentColor"
@@ -157,7 +158,7 @@ export default function ChatPanel() {
             />
           </svg>
         ) : (
-          <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+          <svg width="22" height="22" viewBox="0 0 16 16" fill="none">
             <path
               d="M2 4a2 2 0 012-2h8a2 2 0 012 2v6a2 2 0 01-2 2H6l-3 3v-3H4a2 2 0 01-2-2V4z"
               stroke="currentColor"
@@ -168,10 +169,20 @@ export default function ChatPanel() {
         )}
       </button>
 
-      {/* Sliding panel */}
+      {/* Backdrop — clickable to close, only when panel is open */}
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-[39] bg-black/30 backdrop-blur-[2px] transition-opacity"
+        />
+      )}
+
+      {/* Centered modal panel — half the page width, centered horizontally */}
       <div
-        className={`fixed right-0 top-[var(--nav-height)] z-20 flex h-[calc(100vh-var(--nav-height))] w-[380px] flex-col border-l border-border bg-bg-primary/95 backdrop-blur-sm transition-transform duration-300 ${
-          open ? "translate-x-0" : "translate-x-full"
+        className={`fixed left-1/2 top-1/2 z-40 flex h-[80vh] w-1/2 max-w-[800px] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-bg-primary/95 shadow-2xl backdrop-blur-sm transition-all duration-200 ${
+          open
+            ? "scale-100 opacity-100 pointer-events-auto"
+            : "scale-95 opacity-0 pointer-events-none"
         }`}
       >
         {/* Header */}

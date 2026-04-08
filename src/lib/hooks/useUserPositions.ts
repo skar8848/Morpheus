@@ -18,6 +18,7 @@ import type {
 } from "../graphql/types";
 import { useChain } from "../context/ChainContext";
 import { safeBigInt } from "../utils/bigint";
+import { fetchUserVaultV2Positions } from "../canvas/vaultV2";
 
 export function useUserPositions() {
   const { chainId } = useChain();
@@ -54,8 +55,13 @@ export function useUserPositions() {
         userAddress: [address],
         chainId: [chainId],
       }),
+      // V2 vaults are NOT in `vaultPositions` — discover via list + multicall
+      fetchUserVaultV2Positions(address, chainId).catch((err) => {
+        console.warn("[useUserPositions] V2 fetch failed:", err);
+        return [];
+      }),
     ])
-      .then(([marketData, vaultData]) => {
+      .then(([marketData, vaultData, v2Positions]) => {
         if (controller.signal.aborted) return;
 
         // Filter out empty positions
@@ -67,12 +73,20 @@ export function useUserPositions() {
           return hasBorrow || hasSupply || hasCollateral;
         });
 
-        const activeVaults = vaultData.vaultPositions.items.filter(
+        const activeV1Vaults = vaultData.vaultPositions.items.filter(
           (p) => p.state && safeBigInt(p.state.shares) > 0n
         );
 
+        // Merge V1 + V2, dedupe by vault address (V1 wins on conflict)
+        const seenAddresses = new Set(
+          activeV1Vaults.map((p) => p.vault.address.toLowerCase())
+        );
+        const mergedV2 = v2Positions.filter(
+          (p) => !seenAddresses.has(p.vault.address.toLowerCase())
+        );
+
         setMarketPositions(activeMarkets);
-        setVaultPositions(activeVaults);
+        setVaultPositions([...activeV1Vaults, ...mergedV2]);
         setLoading(false);
       })
       .catch((err) => {

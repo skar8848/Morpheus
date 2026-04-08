@@ -3,11 +3,15 @@
 
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { isAddress } from "viem";
+import { normalize } from "viem/ens";
+import { getEnsAddress } from "wagmi/actions";
+import { useAccount } from "wagmi";
 import { useChain } from "@/lib/context/ChainContext";
 import { useAddressPositions } from "@/lib/hooks/useAddressPositions";
+import { wagmiConfig } from "@/lib/web3/config";
 import {
   buildStrategyFromPositions,
   saveImportedStrategy,
@@ -15,25 +19,71 @@ import {
 import PositionsSummary from "./PositionsSummary";
 import TransactionTimeline from "./TransactionTimeline";
 
-function parseAddress(input: string): string | null {
+/**
+ * Resolve a user-supplied input to an Ethereum address.
+ * Accepts:
+ *   - 0x-prefixed addresses
+ *   - Etherscan / Basescan URLs (https only, known domains only)
+ *   - ENS names (`.eth` and other ENS TLDs) — resolved via viem on mainnet
+ *
+ * Returns null when the input doesn't match any known format, or a string
+ * starting with "ENS_NOT_FOUND:" when an ENS lookup fails.
+ */
+async function resolveAddress(input: string): Promise<string | null | { error: string }> {
   const trimmed = input.trim();
+
   // Direct address
   const addrMatch = trimmed.match(/^(0x[a-fA-F0-9]{40})$/);
   if (addrMatch && isAddress(addrMatch[1])) return addrMatch[1].toLowerCase();
+
   // Etherscan/Basescan URL: enforce HTTPS + known domains
   const urlMatch = trimmed.match(
     /^https:\/\/(?:www\.)?(?:etherscan\.io|basescan\.org)\/address\/(0x[a-fA-F0-9]{40})/i
   );
   if (urlMatch && isAddress(urlMatch[1])) return urlMatch[1].toLowerCase();
+
+  // ENS name — anything containing a dot, no spaces, reasonable length
+  if (/^[a-zA-Z0-9-_.]+\.[a-zA-Z]{2,}$/.test(trimmed) && !trimmed.startsWith("0x")) {
+    try {
+      const normalized = normalize(trimmed);
+      const resolved = await getEnsAddress(wagmiConfig, {
+        name: normalized,
+        chainId: 1, // ENS lives on mainnet
+      });
+      if (resolved && isAddress(resolved)) return resolved.toLowerCase();
+      return { error: `ENS name "${trimmed}" does not resolve to an address` };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "ENS lookup failed";
+      return { error: `ENS resolution error: ${msg.slice(0, 100)}` };
+    }
+  }
+
   return null;
 }
 
 export default function AddressPage() {
   const { chainId, slug } = useChain();
   const router = useRouter();
+  const { address: connectedAddress, isConnected } = useAccount();
   const [inputValue, setInputValue] = useState("");
   const [address, setAddress] = useState<string | null>(null);
   const [inputError, setInputError] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
+
+  // Avoid SSR/client hydration mismatch — wagmi's isConnected is undefined
+  // on the server. Render the connected-wallet button only after mount.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const useConnectedWallet = useCallback(() => {
+    if (!connectedAddress) return;
+    const lower = connectedAddress.toLowerCase();
+    setInputValue(lower);
+    setInputError(null);
+    setAddress(lower);
+  }, [connectedAddress]);
 
   const {
     marketPositions,
@@ -46,17 +96,27 @@ export default function AddressPage() {
   } = useAddressPositions(address, chainId);
 
   const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
+    async (e: React.FormEvent) => {
       e.preventDefault();
-      const parsed = parseAddress(inputValue);
-      if (!parsed) {
-        setInputError("Invalid address or Etherscan URL");
-        return;
+      if (resolving) return;
+      setResolving(true);
+      try {
+        const result = await resolveAddress(inputValue);
+        if (result === null) {
+          setInputError("Invalid address, ENS name, or Etherscan URL");
+          return;
+        }
+        if (typeof result === "object" && "error" in result) {
+          setInputError(result.error);
+          return;
+        }
+        setInputError(null);
+        setAddress(result);
+      } finally {
+        setResolving(false);
       }
-      setInputError(null);
-      setAddress(parsed);
     },
-    [inputValue]
+    [inputValue, resolving]
   );
 
   const handleSeeInCanvas = useCallback(() => {
@@ -110,7 +170,7 @@ export default function AddressPage() {
           <div className="relative flex-1">
             <input
               type="text"
-              placeholder="Paste address (0x...) or Etherscan URL"
+              placeholder="Address (0x...), ENS name (vitalik.eth), or Etherscan URL"
               value={inputValue}
               onChange={(e) => {
                 setInputValue(e.target.value);
@@ -128,10 +188,34 @@ export default function AddressPage() {
           </div>
           <button
             type="submit"
-            className="rounded-xl bg-brand px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-brand-hover"
+            disabled={resolving}
+            className="rounded-xl bg-brand px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Explore
+            {resolving ? "Resolving…" : "Explore"}
           </button>
+          {mounted && isConnected && connectedAddress && (
+            <button
+              type="button"
+              onClick={useConnectedWallet}
+              title={`Use ${connectedAddress.slice(0, 6)}...${connectedAddress.slice(-4)}`}
+              className="flex items-center gap-2 rounded-xl border border-border bg-bg-card px-4 py-3 text-sm font-medium text-text-secondary transition-colors hover:border-brand/40 hover:text-brand"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path
+                  d="M2 4a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V4z"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                />
+                <path
+                  d="M12 7h-2a1 1 0 100 2h2"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+              Use my wallet
+            </button>
+          )}
         </div>
       </form>
 

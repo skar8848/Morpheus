@@ -173,6 +173,34 @@ export interface UserVaultPositionsResponse {
   };
 }
 
+// --- Vault V2 ---
+
+export interface VaultV2Listing {
+  address: string;
+  name: string;
+  symbol: string;
+  sharePrice: string;
+  netApy: number | null;
+  totalAssetsUsd: number | null;
+  asset: {
+    symbol: string;
+    address: string;
+    logoURI: string;
+    decimals: number;
+    priceUsd: number | null;
+  };
+}
+
+export interface VaultV2ListResponse {
+  vaultV2s: {
+    items: VaultV2Listing[];
+    pageInfo: {
+      count: number;
+      countTotal: number;
+    };
+  };
+}
+
 export interface LoanAssetsResponse {
   markets: {
     items: {

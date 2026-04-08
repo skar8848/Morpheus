@@ -135,9 +135,13 @@ export async function POST(req: Request) {
 
   const client = new Anthropic({ apiKey });
 
+  // Allow overriding the model via env var. Defaults to Haiku for cost.
+  // For higher quality answers, set ANTHROPIC_MODEL=claude-sonnet-4-5-20250929
+  const model = process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
+
   try {
     const response = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model,
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       messages: body.messages,

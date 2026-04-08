@@ -345,6 +345,9 @@ export function useCanvasState() {
       });
       setNodes(next);
       setEdges(built.edges);
+      // Trigger the auto-organize effect in CanvasPage so the freshly loaded
+      // template is laid out cleanly without the user having to click Organize.
+      wasImported.current = true;
     },
     [address, slug, chainId, setNodes, setEdges, pushHistory]
   );

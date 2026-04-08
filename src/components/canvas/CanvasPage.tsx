@@ -26,7 +26,6 @@ import Sidebar from "./Sidebar";
 import ExecuteButton from "./ExecuteButton";
 import StrategyGauge from "./StrategyGauge";
 import ChatPanel from "./ChatPanel";
-import TimeProjection from "./TimeProjection";
 
 export default function CanvasPage() {
   const {
@@ -54,6 +53,10 @@ export default function CanvasPage() {
   const reactFlowInstance = useRef<any>(null);
 
   const { chainId } = useChain();
+
+  // Sidebar collapsed state — lifted here so the StrategyGauge can reposition
+  // when the sidebar collapses (frees the corner real estate).
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Node placement mode (keyboard shortcut)
   const [placingNodeType, setPlacingNodeType] = useState<string | null>(null);
@@ -536,6 +539,8 @@ export default function CanvasPage() {
       <Sidebar
         onAddPosition={() => {}}
         highlightType={connectionHint?.highlightType}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={() => setSidebarCollapsed((c) => !c)}
         onLoadTemplate={(tpl) => {
           const built = tpl.build();
           loadTemplate(built);
@@ -614,8 +619,7 @@ export default function CanvasPage() {
 
       {/* AI strategy assistant — sliding right panel */}
       <ChatPanel />
-      <StrategyGauge nodes={nodes as CanvasNode[]} edges={edges} />
-      <TimeProjection nodes={nodes as CanvasNode[]} edges={edges} />
+      <StrategyGauge nodes={nodes as CanvasNode[]} edges={edges} sidebarCollapsed={sidebarCollapsed} />
 
       {/* Placement mode indicator */}
       {placingNodeType && (

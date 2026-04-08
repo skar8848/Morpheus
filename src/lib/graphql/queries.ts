@@ -174,6 +174,44 @@ export const USER_VAULT_POSITIONS_QUERY = `
   }
 `;
 
+/**
+ * List all Vault V2s on a given chain. The API does not yet expose a
+ * userAddress filter on V2 positions, so the client must call balanceOf
+ * on each vault address via multicall to discover user positions.
+ *
+ * Vault V2 is the newer Morpho vault contract; positions in V2 vaults
+ * are NOT returned by the legacy `vaultPositions` query above.
+ */
+export const VAULT_V2_LIST_QUERY = `
+  query ListVaultV2s($chainId: [Int!]!, $first: Int!, $skip: Int!) {
+    vaultV2s(
+      where: { chainId_in: $chainId, listed: true }
+      first: $first
+      skip: $skip
+    ) {
+      items {
+        address
+        name
+        symbol
+        sharePrice
+        netApy
+        totalAssetsUsd
+        asset {
+          symbol
+          address
+          logoURI
+          decimals
+          priceUsd
+        }
+      }
+      pageInfo {
+        count
+        countTotal
+      }
+    }
+  }
+`;
+
 export const LOAN_ASSETS_QUERY = `
   query GetLoanAssets($collateralAssets: [String!]!, $chainId: [Int!]!) {
     markets(
