@@ -181,6 +181,7 @@ export default function SimulationPreview({ result, nodes, edges }: SimulationPr
     edges ?? [],
     mcpEnabled && Boolean(nodes && edges)
   );
+
   const {
     loading,
     ok,
@@ -195,7 +196,15 @@ export default function SimulationPreview({ result, nodes, edges }: SimulationPr
     totalBorrowUsd,
     totalDepositUsd,
     minHealthFactor,
+    needsMorphoAuthorization,
   } = result;
+
+  // The auth warning gets its own dedicated panel — filter it out of the
+  // generic warnings list to avoid duplication.
+  const AUTH_WARNING_PREFIX = "First-time borrow";
+  const filteredWarnings = warnings.filter(
+    (w) => !w.startsWith(AUTH_WARNING_PREFIX)
+  );
 
   // Status banner
   let statusLabel: string;
@@ -220,10 +229,17 @@ export default function SimulationPreview({ result, nodes, edges }: SimulationPr
       </svg>
     );
   } else if (ok) {
-    statusLabel = warnings.length > 0 ? "Looks OK — review warnings" : "Looks good";
-    statusClass = warnings.length > 0
-      ? "border-yellow-400/30 bg-yellow-400/5 text-yellow-400"
-      : "border-success/30 bg-success/5 text-success";
+    // Auth-needed is a benign preliminary state, not a warning.
+    if (needsMorphoAuthorization) {
+      statusLabel = "Setup required";
+      statusClass = "border-brand/30 bg-brand/5 text-brand";
+    } else if (filteredWarnings.length > 0) {
+      statusLabel = "Looks OK — review warnings";
+      statusClass = "border-yellow-400/30 bg-yellow-400/5 text-yellow-400";
+    } else {
+      statusLabel = "Looks good";
+      statusClass = "border-success/30 bg-success/5 text-success";
+    }
     statusIcon = (
       <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
         <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
@@ -235,7 +251,13 @@ export default function SimulationPreview({ result, nodes, edges }: SimulationPr
   }
 
   // Don't render anything if there's literally no data and we're not loading
-  if (!loading && bundleCallCount === 0 && errors.length === 0 && warnings.length === 0) {
+  if (
+    !loading &&
+    bundleCallCount === 0 &&
+    errors.length === 0 &&
+    filteredWarnings.length === 0 &&
+    !needsMorphoAuthorization
+  ) {
     return null;
   }
 
@@ -306,6 +328,42 @@ export default function SimulationPreview({ result, nodes, edges }: SimulationPr
           )}
         </div>
 
+        {/* Authorization required — dedicated panel, not a warning */}
+        {needsMorphoAuthorization && errors.length === 0 && (
+          <div className="rounded-md border border-brand/20 bg-brand/5 p-2.5">
+            <div className="flex items-start gap-2">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                className="mt-0.5 shrink-0 text-brand"
+              >
+                <rect x="3" y="7" width="10" height="7" rx="1" stroke="currentColor" strokeWidth="1.5" />
+                <path d="M5 7V5a3 3 0 016 0v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+              <div className="flex-1">
+                <p className="text-[10px] font-semibold text-brand">
+                  One-time Morpho authorization required
+                </p>
+                <p className="mt-0.5 text-[10px] leading-snug text-text-secondary">
+                  This is your first borrow on this chain. Before the bundle, the
+                  app will ask you to sign a one-time{" "}
+                  <code className="rounded bg-bg-card px-1 font-mono text-[9px] text-brand">
+                    morpho.setAuthorization
+                  </code>{" "}
+                  tx that lets the GeneralAdapter borrow on your behalf. After
+                  that, the bundle executes normally — no further setup needed.
+                </p>
+                <p className="mt-1 text-[9px] text-text-tertiary">
+                  Auto-handled at Execute. Local gas estimate may show a revert
+                  until the auth is granted — this is expected.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Errors */}
         {errors.length > 0 && (
           <div className="space-y-1">
@@ -318,9 +376,9 @@ export default function SimulationPreview({ result, nodes, edges }: SimulationPr
         )}
 
         {/* Warnings */}
-        {warnings.length > 0 && errors.length === 0 && (
+        {filteredWarnings.length > 0 && errors.length === 0 && (
           <div className="space-y-1">
-            {warnings.map((w, i) => (
+            {filteredWarnings.map((w, i) => (
               <p key={i} className="rounded-md border border-yellow-400/15 bg-yellow-400/5 px-2 py-1 text-[10px] text-yellow-400">
                 {w}
               </p>

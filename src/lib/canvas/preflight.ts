@@ -12,12 +12,25 @@
  */
 
 import type { Edge } from "@xyflow/react";
-import { estimateGas } from "wagmi/actions";
+import { estimateGas, readContract } from "wagmi/actions";
 import { wagmiConfig } from "@/lib/web3/config";
-import { buildExecutionBundle, getRequiredApprovals } from "./executor";
+import {
+  buildExecutionBundle,
+  getRequiredApprovals,
+  getRequiredApprovals as _getRequiredApprovals,
+  strategyNeedsMorphoAuthorization,
+} from "./executor";
 import { validateGraph } from "./validation";
 import type { CanvasNode } from "./types";
 import type { SupportedChainId } from "@/lib/web3/chains";
+import {
+  GENERAL_ADAPTER1,
+  MORPHO_BLUE,
+  morphoBlueAbi,
+} from "@/lib/constants/contracts";
+
+// Silence unused — kept to avoid editing imports above twice in case of refactor
+void _getRequiredApprovals;
 
 export interface PreflightResult {
   /** True when preflight has finished without blocking errors */
@@ -55,6 +68,12 @@ export interface PreflightResult {
   minHealthFactor: number | null;
   /** True when the worst projected HF is below 1.1 */
   hfWarning: boolean;
+
+  /** True when the strategy borrows AND the user hasn't yet authorized
+   * the GeneralAdapter1 in Morpho Blue. ExecuteButton will emit a one-time
+   * setAuthorization tx before the bundle in this case — so a viem
+   * estimateGas revert here is EXPECTED, not a real failure. */
+  needsMorphoAuthorization: boolean;
 }
 
 export const EMPTY_PREFLIGHT: PreflightResult = {
@@ -73,6 +92,7 @@ export const EMPTY_PREFLIGHT: PreflightResult = {
   totalDepositUsd: 0,
   minHealthFactor: null,
   hfWarning: false,
+  needsMorphoAuthorization: false,
 };
 
 /**
@@ -178,7 +198,38 @@ export async function runPreflight(
     return result;
   }
 
-  // 4. Run estimateGas on the bundle
+  // 4. Check Morpho authorization status BEFORE estimateGas.
+  // If the strategy borrows but the user hasn't authorized the adapter yet,
+  // estimateGas will revert with Unauthorized() — which is a FALSE NEGATIVE
+  // (ExecuteButton emits a one-time setAuthorization tx before the bundle).
+  // We pre-check the auth status and surface this case as a benign warning
+  // instead of a "will revert" error.
+  const needsAuth = strategyNeedsMorphoAuthorization(nodes);
+  let isAuthorized = true;
+  if (needsAuth) {
+    const adapter = GENERAL_ADAPTER1[chainId as SupportedChainId];
+    if (adapter) {
+      try {
+        isAuthorized = (await readContract(wagmiConfig, {
+          address: MORPHO_BLUE,
+          abi: morphoBlueAbi,
+          functionName: "isAuthorized",
+          args: [userAddress, adapter],
+        })) as boolean;
+      } catch {
+        // RPC failure — assume not authorized so we set the warning
+        isAuthorized = false;
+      }
+    }
+    result.needsMorphoAuthorization = !isAuthorized;
+    if (!isAuthorized) {
+      result.warnings.push(
+        "First-time borrow on this chain — a one-time Morpho authorization tx will be sent before the bundle (auto-handled at Execute)"
+      );
+    }
+  }
+
+  // 5. Run estimateGas on the bundle
   try {
     const gas = await estimateGas(wagmiConfig, {
       to: bundle.to,
@@ -189,9 +240,7 @@ export async function runPreflight(
     result.gasEstimate = gas;
     result.ok = result.errors.length === 0;
   } catch (err) {
-    result.willRevert = true;
     const msg = err instanceof Error ? err.message : String(err);
-    // Trim verbose viem error format to the actual revert reason
     const cleaned = msg
       .replace(/EstimateGasExecutionError:?\s*/i, "")
       .replace(/Details:?\s*/i, "")
@@ -199,7 +248,16 @@ export async function runPreflight(
       .slice(0, 280)
       .trim();
     result.revertReason = cleaned;
-    result.errors.push(`Bundle would revert on-chain: ${cleaned}`);
+
+    // If we know the user needs authorization, the revert is EXPECTED.
+    // Don't mark it as willRevert — the bundle will succeed once auth is set.
+    if (result.needsMorphoAuthorization) {
+      // Already added the auth warning above; mark ok so the panel shows green.
+      result.ok = result.errors.length === 0;
+    } else {
+      result.willRevert = true;
+      result.errors.push(`Bundle would revert on-chain: ${cleaned}`);
+    }
   }
 
   return result;

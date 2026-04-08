@@ -750,10 +750,14 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           )}
         </div>
 
-        {/* Expandable content */}
+        {/* Expandable content — scrollable when open so the user can reach the
+            simulation preview, inspector, warnings, and Execute button even
+            on shorter viewports. */}
         <div
-          className={`overflow-hidden transition-all duration-300 ${
-            expanded || isExecuting ? "max-h-[600px] opacity-100" : "max-h-0 opacity-0"
+          className={`transition-all duration-300 ${
+            expanded || isExecuting
+              ? "max-h-[85vh] overflow-y-auto opacity-100 scrollbar-thin"
+              : "max-h-0 overflow-hidden opacity-0"
           }`}
         >
           <div className="border-t border-border px-5 py-4">
