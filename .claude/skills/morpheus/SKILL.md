@@ -36,8 +36,29 @@ A canvas is a directed graph of nodes connected by edges:
 | "Supply X as collateral and borrow Y" | `wallet → supplyCollateral → borrow` |
 | "Borrow against my collateral and farm the borrowed asset in a vault" (carry trade) | `wallet → supplyCollateral → borrow → vaultDeposit` |
 | "Looped staking" (leverage) | `wallet → supplyCollateral → borrow → swap → supplyCollateral` |
+| "I want EURCV exposure but the Morpho USDC/EURCV market has no liquidity" | `wallet → swap (USDC→EURCV via CowSwap) → vaultDeposit` |
 
 **Do NOT use `supplyCollateral` as a bridge for direct vault deposits** — it has different semantics (it touches a Morpho Blue market, not the vault's underlying asset). The connection rules now allow `wallet → vaultDeposit` directly.
+
+### CowSwap as a fallback when a Morpho market has no liquidity
+
+The Morpho MCP only knows about Morpho markets. It does NOT know that Morpheus also supports **CowSwap** (intent-based swaps, Ethereum mainnet only). When you query a market via `morpho_query_markets` and find that the total liquidity is too low to satisfy the user's intent, **do not give up — fall back to a `swap` node**.
+
+**Detection**: a Morpho market is "too thin" when `state.liquidityAssets / 10^decimals` is less than the user's borrow amount (with a 10% safety buffer). Common cases on Ethereum mainnet: USDC↔EURCV, niche stablecoins, freshly-launched markets.
+
+**Pattern**: replace the broken borrow branch with a CowSwap swap from a liquid asset the user holds (or can get cheaply) to the desired token. Example:
+
+- **Broken**: `wallet → supplyCollateral(USDC) → borrow(EURCV)` — fails because USDC/EURCV market has $73 of liquidity
+- **Fallback**: `wallet → swap(USDC → EURCV)` — uses CowSwap's cross-DEX liquidity directly
+
+The fallback is:
+1. Simpler (3 nodes instead of 4: wallet → swap → vaultDeposit)
+2. Cheaper (no borrow APY to pay, no liquidation risk)
+3. Limited to Ethereum mainnet (CowSwap doesn't deploy on Base — for Base, suggest a different strategy or warn the user)
+
+**Hard rule**: NEVER use `swap` on a Base canvas. The CowSwap Vault Relayer is only deployed on Ethereum (chainId 1). If the chain is `base`, find an alternative path or tell the user.
+
+When mentioning CowSwap to the user, frame it as: *"The Morpho USDC/EURCV market only has \$X of liquidity, so I'm routing through CowSwap instead — same end state, no borrow involved."*
 
 ## Endpoint
 
