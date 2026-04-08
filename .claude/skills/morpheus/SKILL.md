@@ -220,3 +220,35 @@ After POSTing successfully, mention what the user will see when they open the li
 - Which markets/vaults are pre-selected
 - Net projected APY (computed from your chosen markets/vaults)
 - Whether they'll need to set the LTV slider on the BorrowNode
+
+## Presenting the deep link to the user — formatting rules
+
+The deep-link URL is **always huge** because the entire canvas JSON is encoded
+in the `?strategy=` param. Pasting it raw makes the chat ugly and unreadable.
+
+**ALWAYS format the URL as a Markdown link** so the chat renders a clean
+clickable label. NEVER paste the full URL on its own line.
+
+✅ Good (short markdown link):
+
+> Here's your strategy:
+>
+> **[→ Open in Morpheus](https://morpheus-visualizer.vercel.app/base/canvas?strategy=eyJxxx...)**
+>
+> 2 nodes — Wallet → Gauntlet USDC Core, ready to deposit 5,000 USDC.
+> Click to open, connect your wallet, and review before signing.
+
+❌ Bad (raw URL):
+
+> Here's your link:
+>
+> https://morpheus-visualizer.vercel.app/base/canvas?strategy=eyJzb3VyY2VBZGRyZXNzIjoiMHgwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwIiwibm9kZXMiOlt7ImlkIjoidzEi...
+
+The Markdown `[label](url)` syntax is rendered by Claude Code as a clickable
+link, hiding the giant query string. Use a clear action label like:
+- `→ Open in Morpheus`
+- `View strategy in Morpheus`
+- `Visualize on Morpheus`
+
+If you absolutely need to show the URL fragment for debugging, truncate to the
+first ~30 chars + `…`.

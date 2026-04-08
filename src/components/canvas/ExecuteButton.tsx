@@ -248,6 +248,27 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           if (!d.vault) break;
           // When depositAll is true, amount comes from upstream swap at execution time
           if (!d.depositAll && safeFloat(d.amount) <= 0) break;
+
+          // Show approval step when the tokens are pulled from the user's wallet.
+          // Skip when the upstream is a swap (CowSwap output lands on the adapter
+          // already) or a borrow (the adapter holds the borrowed tokens directly).
+          const upEdge = edges.find((e) => e.target === node.id);
+          const upNode = upEdge ? sorted.find((n) => n.id === upEdge.source) : null;
+          const upType = upNode ? (upNode.data as { type?: string }).type : null;
+          const tokensComeFromUser =
+            upType === undefined ||
+            upType === "wallet" ||
+            upType === "vaultWithdraw";
+
+          if (tokensComeFromUser && !d.depositAll) {
+            s.push({
+              label: `Approve ${d.vault.asset.symbol}`,
+              detail: `${fmtNum(safeFloat(d.amount))} ${d.vault.asset.symbol} to Bundler`,
+              type: "approve",
+              icon: d.vault.asset.logoURI,
+            });
+          }
+
           const depositDetail = d.depositAll
             ? `All swap output → ${d.vault.asset.symbol} — ${formatApy(d.vault.state.netApy)}`
             : `${fmtNum(safeFloat(d.amount))} ${d.vault.asset.symbol} — ${formatApy(d.vault.state.netApy)}`;
