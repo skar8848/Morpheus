@@ -105,7 +105,9 @@ export type CanvasNode = Node<CanvasNodeData>;
 // --- Valid connections ---
 
 export const VALID_CONNECTIONS: Record<string, string[]> = {
-  wallet: ["supplyCollateral", "swap", "repay"],
+  // Wallet can directly fund a vault deposit (pure earn flow), supply
+  // collateral (borrow flow), swap, or repay an existing borrow.
+  wallet: ["vaultDeposit", "supplyCollateral", "swap", "repay"],
   supplyCollateral: ["borrow", "vaultDeposit"],
   borrow: ["swap", "vaultDeposit"],
   swap: ["vaultDeposit", "supplyCollateral", "wallet", "repay"],

@@ -37,11 +37,11 @@ When the user clicks **Execute**, the executor walks the graph in topological or
 
 | Type | Purpose | Inputs | Outputs |
 |------|---------|--------|---------|
-| `wallet` | User's connected EOA, balances, chain | — | `supplyCollateral`, `swap`, `repay` |
-| `supplyCollateral` | Supply an ERC-20 as collateral to a Morpho Blue market | `wallet`, `swap`, `vaultWithdraw`, `position` | `borrow`, `vaultDeposit` |
+| `wallet` | User's connected EOA, balances, chain | — | `vaultDeposit`, `supplyCollateral`, `swap`, `repay` |
+| `supplyCollateral` | Supply an ERC-20 as collateral to a **Morpho Blue market**. Use ONLY when there's a downstream `borrow` — never as a transfer bridge | `wallet`, `swap`, `vaultWithdraw`, `position` | `borrow`, `vaultDeposit` |
 | `borrow` | Borrow loan asset from a Morpho Blue market with LTV target + health-factor preview | `supplyCollateral` | `swap`, `vaultDeposit` |
 | `swap` | CowSwap intent-based swap (Ethereum mainnet only — Base not supported by CoW) | `wallet`, `borrow`, `vaultWithdraw` | `vaultDeposit`, `supplyCollateral`, `wallet`, `repay` |
-| `vaultDeposit` | Deposit into a Morpho Vault (v1 MetaMorpho or v2). Supports multi-source allocation percentages | `supplyCollateral`, `borrow`, `swap`, `vaultWithdraw` | — |
+| `vaultDeposit` | Deposit into a Morpho Vault (v1 MetaMorpho or v2). Can be fed directly by `wallet` for pure earn flows. Supports multi-source allocation percentages | `wallet`, `supplyCollateral`, `borrow`, `swap`, `vaultWithdraw` | — |
 | `vaultWithdraw` | Withdraw shares from an existing vault position (uses `redeem()`, not `withdraw()`, to avoid dust) | `position` | `swap`, `vaultDeposit`, `supplyCollateral`, `repay` |
 | `repay` | Repay borrow on a Morpho Blue market | `wallet`, `swap`, `vaultWithdraw` | — |
 | `position` | Read-only existing on-chain position imported from `useAddressPositions` | — | `vaultWithdraw`, `supplyCollateral`, `swap` |

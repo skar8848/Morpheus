@@ -19,14 +19,25 @@ Morpheus is a visual node-graph editor for composing Morpho lending strategies. 
 
 A canvas is a directed graph of nodes connected by edges:
 
-- **wallet** — user's source. Connects to: `supplyCollateral`, `swap`, `repay`
-- **supplyCollateral** — supply ERC-20 as collateral. Connects from `wallet`/`swap`/`vaultWithdraw`/`position`. Connects to: `borrow`, `vaultDeposit`
+- **wallet** — user's source. Connects to: `vaultDeposit` (direct earn), `supplyCollateral` (borrow flow), `swap`, `repay`
+- **supplyCollateral** — supply ERC-20 as **collateral on a Morpho Blue market**. Use ONLY when there's a downstream `borrow` — never as a "transfer" bridge. Connects from `wallet`/`swap`/`vaultWithdraw`/`position`. Connects to: `borrow`
 - **borrow** — borrow loan asset from a Morpho Blue market. Connects from `supplyCollateral`. Connects to: `swap`, `vaultDeposit`
 - **swap** — CowSwap intent (Ethereum mainnet only). Connects from `wallet`/`borrow`/`vaultWithdraw`. Connects to: `vaultDeposit`/`supplyCollateral`/`wallet`/`repay`
-- **vaultDeposit** — deposit into a Morpho Vault. Terminal node.
+- **vaultDeposit** — deposit into a Morpho Vault. Terminal node. Can be fed by `wallet` (pure earn), `borrow` (carry trade), `swap`, or `vaultWithdraw` (rebalance).
 - **vaultWithdraw** — withdraw from existing vault position. Connects from `position`. Connects to: `swap`/`vaultDeposit`/`supplyCollateral`/`repay`
 - **repay** — repay a Morpho Blue borrow. Terminal.
 - **position** — read-only existing position.
+
+### Choosing the right shape
+
+| User intent | Correct flow |
+|---|---|
+| "Deposit X into vault Y" (pure earn) | `wallet → vaultDeposit` (2 nodes) |
+| "Supply X as collateral and borrow Y" | `wallet → supplyCollateral → borrow` |
+| "Borrow against my collateral and farm the borrowed asset in a vault" (carry trade) | `wallet → supplyCollateral → borrow → vaultDeposit` |
+| "Looped staking" (leverage) | `wallet → supplyCollateral → borrow → swap → supplyCollateral` |
+
+**Do NOT use `supplyCollateral` as a bridge for direct vault deposits** — it has different semantics (it touches a Morpho Blue market, not the vault's underlying asset). The connection rules now allow `wallet → vaultDeposit` directly.
 
 ## Endpoint
 
@@ -90,8 +101,10 @@ The standard agent flow combines two tools:
 
 ### Example: "deposit 10k USDC into the highest-yielding vault on Base"
 
+This is a **pure earn** flow — `wallet → vaultDeposit` directly. NO `supplyCollateral` node.
+
 ```typescript
-// Step 1: discover
+// Step 1: discover the best vault
 const vaults = await callMcpTool("morpho_query_vaults", {
   chain: "base",
   asset_symbol: "USDC",
@@ -100,7 +113,7 @@ const vaults = await callMcpTool("morpho_query_vaults", {
 });
 const best = vaults.items[0];
 
-// Step 2: build the canvas
+// Step 2: build a 2-node canvas — wallet directly to vault
 const canvas = {
   chain: "base",
   sourceAddress: userAddress,
@@ -118,34 +131,29 @@ const canvas = {
       },
     },
     {
-      id: "s1",
-      type: "supplyCollateralNode",
-      position: { x: 380, y: 200 },
-      data: {
-        type: "supplyCollateral",
-        asset: {
-          symbol: "USDC",
-          name: "USD Coin",
-          address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-          decimals: 6,
-          logoURI: "https://cdn.morpho.org/assets/logos/usdc.svg",
-        },
-        amount: "10000",
-        amountUsd: 10000,
-      },
-    },
-    {
       id: "v1",
       type: "vaultDepositNode",
-      position: { x: 710, y: 200 },
+      position: { x: 380, y: 200 },
       data: {
         type: "vaultDeposit",
         vault: {
           address: best.address,
           name: best.name,
           symbol: best.symbol,
-          asset: best.asset,
-          state: { totalAssets: "0", totalAssetsUsd: best.tvlUsd, curator: null, netApy: best.apyPct / 100, fee: 0, allocation: [] },
+          asset: {
+            symbol: "USDC",
+            address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            decimals: 6,
+            logoURI: "https://cdn.morpho.org/assets/logos/usdc.svg",
+          },
+          state: {
+            totalAssets: "0",
+            totalAssetsUsd: best.tvlUsd,
+            curator: null,
+            netApy: best.apyPct / 100,
+            fee: 0,
+            allocation: [],
+          },
         },
         amount: "10000",
         amountUsd: 10000,
@@ -154,8 +162,7 @@ const canvas = {
     },
   ],
   edges: [
-    { id: "e1", source: "w1", target: "s1", type: "animatedEdge", animated: true },
-    { id: "e2", source: "s1", target: "v1", type: "animatedEdge", animated: true },
+    { id: "e1", source: "w1", target: "v1", type: "animatedEdge", animated: true },
   ],
 };
 
@@ -170,6 +177,16 @@ const { deepLinkUrl } = await res.json();
 // Step 4: present to user
 return `Here's your Morpheus deep link: ${deepLinkUrl}\n\nClick to open the canvas with the strategy pre-built. Review the simulation, then click Execute to sign.`;
 ```
+
+### Example: "borrow 5k USDC against my wstETH and farm the USDC in a vault"
+
+This is a **carry trade** — supplyCollateral IS appropriate here because you're posting wstETH on a Morpho Blue market to borrow against it.
+
+```
+wallet → supplyCollateral(wstETH) → borrow(wstETH/USDC market) → vaultDeposit(USDC vault)
+```
+
+4 nodes, 3 edges, in that exact order.
 
 ## Hard rules
 

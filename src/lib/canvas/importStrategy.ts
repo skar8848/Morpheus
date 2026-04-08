@@ -259,7 +259,7 @@ export function buildStrategyFromPositions(
     const sourceBorrows = borrowNodesByLoanAsset.get(vaultAssetAddr) ?? [];
 
     if (sourceBorrows.length > 0) {
-      // Link from matching borrow nodes
+      // Link from matching borrow nodes (carry-trade flow)
       for (const borrowId of sourceBorrows) {
         edges.push({
           id: `${borrowId}-${vaultId}`,
@@ -270,37 +270,11 @@ export function buildStrategyFromPositions(
         });
       }
     } else {
-      // No matching borrow — create a SupplyCollateral node as bridge
-      // (wallet→vaultDeposit is not valid, but wallet→supply→vault is)
-      const bridgeSupplyId = makeId("bridge-supply");
-      const vaultAsset = pos.vault.asset;
-      nodes.push({
-        id: bridgeSupplyId,
-        type: "supplyCollateralNode",
-        position: { x: COL.borrow, y },
-        data: {
-          type: "supplyCollateral",
-          asset: {
-            symbol: vaultAsset.symbol,
-            name: vaultAsset.symbol,
-            address: vaultAsset.address,
-            decimals: vaultAsset.decimals,
-            logoURI: vaultAsset.logoURI,
-          },
-          amount: amt,
-          amountUsd: pos.state?.assetsUsd ?? 0,
-        } as CanvasNodeData,
-      });
+      // No matching borrow — direct earn flow: wallet → vault deposit.
+      // VALID_CONNECTIONS allows this directly; no bridge needed.
       edges.push({
-        id: `${walletId}-${bridgeSupplyId}`,
+        id: `${walletId}-${vaultId}`,
         source: walletId,
-        target: bridgeSupplyId,
-        type: "animatedEdge",
-        animated: true,
-      });
-      edges.push({
-        id: `${bridgeSupplyId}-${vaultId}`,
-        source: bridgeSupplyId,
         target: vaultId,
         type: "animatedEdge",
         animated: true,
