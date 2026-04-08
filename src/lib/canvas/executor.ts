@@ -633,10 +633,10 @@ export function buildExecutionBundle(
           d.collateralToWithdraw &&
           d.market.collateralAsset?.address
         ) {
-          const collateralRaw = safeAmountToBigInt(
-            d.collateralToWithdraw,
-            d.market.collateralAsset.decimals ?? 18
-          );
+          // collateralToWithdraw is RAW token units (wei) — already scaled.
+          // Use safeBigInt directly. parseUnits via safeAmountToBigInt would
+          // re-multiply by 10^decimals and produce a value 10^18 too large.
+          const collateralRaw = safeBigInt(d.collateralToWithdraw);
           if (collateralRaw > 0n) {
             calls.push({
               to: adapter,

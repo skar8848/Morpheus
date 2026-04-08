@@ -295,10 +295,12 @@ export function saveImportedStrategy(strategy: ImportedStrategy) {
 const VALID_NODE_TYPES = new Set([
   "walletNode", "supplyCollateralNode", "borrowNode",
   "swapNode", "vaultDepositNode", "vaultWithdrawNode", "positionNode",
+  "repayNode",
 ]);
 const VALID_DATA_TYPES = new Set([
   "wallet", "supplyCollateral", "borrow",
   "swap", "vaultDeposit", "vaultWithdraw", "position",
+  "repay",
 ]);
 const MAX_STRING_LEN = 500;
 
