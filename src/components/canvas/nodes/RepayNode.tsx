@@ -186,9 +186,9 @@ function RepayNodeComponent({ id, data }: NodeProps) {
             </p>
           )}
 
-          {/* Withdraw collateral toggle — only useful when fully repaying */}
+          {/* Withdraw collateral toggle — only shown when fully repaying or already enabled */}
           {currentCollateral > 0 && (isFullRepay || d.withdrawCollateralAfterRepay) && (
-            <div className="mt-2 rounded-lg border border-border bg-bg-secondary px-2.5 py-2">
+            <div className="mt-2.5 border-t border-border pt-2">
               <label className="flex cursor-pointer items-center gap-2">
                 <input
                   type="checkbox"
@@ -196,7 +196,6 @@ function RepayNodeComponent({ id, data }: NodeProps) {
                   onChange={(e) =>
                     updateNodeData(id, {
                       withdrawCollateralAfterRepay: e.target.checked,
-                      // Pre-fill if enabling
                       collateralToWithdraw: e.target.checked
                         ? currentCollateralRaw
                         : undefined,
@@ -205,31 +204,35 @@ function RepayNodeComponent({ id, data }: NodeProps) {
                   className="h-3 w-3 accent-red-400"
                 />
                 <span className="flex-1 text-[10px] font-medium text-text-primary">
-                  Withdraw collateral after repay
+                  Free collateral
                 </span>
               </label>
-              {d.withdrawCollateralAfterRepay && (
-                <div className="mt-1.5 flex items-center justify-between rounded-md bg-bg-card px-2 py-1 text-[10px]">
-                  <div className="flex items-center gap-1.5">
-                    {d.market.collateralAsset?.logoURI && (
+
+              {/* Token amount + USD — same layout as the repay amount above */}
+              {d.withdrawCollateralAfterRepay && d.market.collateralAsset && (
+                <>
+                  <div className="mt-1.5 flex items-center gap-1.5 rounded-lg border border-border bg-bg-secondary px-2.5 py-1.5">
+                    {d.market.collateralAsset.logoURI && (
                       <Image
                         src={d.market.collateralAsset.logoURI}
                         alt=""
-                        width={12}
-                        height={12}
+                        width={14}
+                        height={14}
                         className="rounded-full"
                         unoptimized
                       />
                     )}
-                    <span className="text-text-secondary">
-                      {currentCollateral.toLocaleString(undefined, { maximumFractionDigits: 6 })}{" "}
-                      {d.market.collateralAsset?.symbol}
+                    <span className="flex-1 text-xs text-text-primary">
+                      {currentCollateral.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-text-tertiary">
+                      {d.market.collateralAsset.symbol}
                     </span>
                   </div>
-                  <span className="text-text-tertiary">
-                    {formatUsd(currentCollateralUsd)}
-                  </span>
-                </div>
+                  <p className="mt-1 text-right text-[10px] text-text-tertiary">
+                    ≈ {formatUsd(currentCollateralUsd)}
+                  </p>
+                </>
               )}
             </div>
           )}
