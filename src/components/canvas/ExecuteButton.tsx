@@ -39,6 +39,14 @@ import SimulationPreview from "./SimulationPreview";
 import BundleInspector from "./BundleInspector";
 import { useBundlePreflight } from "@/lib/hooks/useBundlePreflight";
 
+// Feature flag: the pre-execution simulation preview. Hidden temporarily
+// because it sometimes shows a red "Will revert" banner that doesn't match
+// the actual execution (e.g. first-time borrow auth flow timing) — bad for
+// the launch demo. Flip to `true` once the preview logic is polished.
+// The preflight hook still runs and blocks execution on real errors; only
+// the visual card is gated.
+const ENABLE_SIMULATION_PREVIEW = false;
+
 interface ExecuteButtonProps {
   nodes: CanvasNode[];
   edges: Edge[];
@@ -955,8 +963,8 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               <span>1 bundled transaction</span>
             </div>
 
-            {/* Pre-execution simulation — gas, HF, totals, warnings + opt-in MCP analysis */}
-            {steps.length > 0 && (
+            {/* Pre-execution simulation — hidden behind a feature flag until polished */}
+            {ENABLE_SIMULATION_PREVIEW && steps.length > 0 && (
               <SimulationPreview result={preflight} nodes={nodes} edges={edges} />
             )}
 
