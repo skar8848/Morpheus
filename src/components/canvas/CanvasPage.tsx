@@ -58,6 +58,60 @@ export default function CanvasPage() {
   // when the sidebar collapses (frees the corner real estate).
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
+  // Fit the current nodes into the VISIBLE area of the canvas (right of the
+  // sidebar) instead of the full ReactFlow pane. Without this, fitView uses
+  // the full canvas and the strategy appears off-center / hidden behind the
+  // sidebar.
+  const fitViewAware = useCallback(
+    (organizedNodes: CanvasNode[], sizes: Map<string, { w: number; h: number }>) => {
+      const rf = reactFlowInstance.current;
+      if (!rf) return;
+
+      const sidebarWidth = sidebarCollapsed ? 48 : 256;
+      const pane = document.querySelector(".react-flow") as HTMLElement | null;
+      const paneW = pane?.offsetWidth ?? window.innerWidth;
+      const paneH = pane?.offsetHeight ?? window.innerHeight;
+
+      // Compute bounding box from measured sizes + positions
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const n of organizedNodes) {
+        const size = sizes.get(n.id) ?? { w: 280, h: 200 };
+        if (n.position.x < minX) minX = n.position.x;
+        if (n.position.y < minY) minY = n.position.y;
+        if (n.position.x + size.w > maxX) maxX = n.position.x + size.w;
+        if (n.position.y + size.h > maxY) maxY = n.position.y + size.h;
+      }
+      if (!isFinite(minX)) {
+        rf.fitView({ padding: 0.2 });
+        return;
+      }
+
+      const bboxW = maxX - minX;
+      const bboxH = maxY - minY;
+      const visibleW = paneW - sidebarWidth;
+      const visibleH = paneH;
+
+      const paddingX = 80;
+      const paddingY = 80;
+
+      const zoomX = (visibleW - paddingX * 2) / bboxW;
+      const zoomY = (visibleH - paddingY * 2) / bboxH;
+      const zoom = Math.min(zoomX, zoomY, 1.5);
+
+      const bboxCenterX = (minX + maxX) / 2;
+      const bboxCenterY = (minY + maxY) / 2;
+      // The visible center is the midpoint of the area to the right of the sidebar
+      const visibleCenterX = sidebarWidth + visibleW / 2;
+      const visibleCenterY = visibleH / 2;
+
+      const x = visibleCenterX - bboxCenterX * zoom;
+      const y = visibleCenterY - bboxCenterY * zoom;
+
+      rf.setViewport({ x, y, zoom }, { duration: 500 });
+    },
+    [sidebarCollapsed]
+  );
+
   // Node placement mode (keyboard shortcut)
   const [placingNodeType, setPlacingNodeType] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
@@ -166,7 +220,7 @@ export default function CanvasPage() {
       const organized = organizeLayout(nodes as CanvasNode[], edges, sizes);
       setNodes(organized);
       setTimeout(() => {
-        reactFlowInstance.current?.fitView({ padding: 0.2 });
+        fitViewAware(organized as CanvasNode[], sizes);
         isOrganizing.current = false;
       }, 500);
     }, 300);
@@ -751,7 +805,7 @@ export default function CanvasPage() {
             const organized = organizeLayout(nodes as CanvasNode[], edges, sizes);
             setNodes(organized);
             setTimeout(() => {
-              reactFlowInstance.current?.fitView({ padding: 0.2 });
+              fitViewAware(organized as CanvasNode[], sizes);
               isOrganizing.current = false;
             }, 500);
           }}
