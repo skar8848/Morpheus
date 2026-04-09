@@ -312,8 +312,10 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
       loading={vaultsLoading}
     >
       <div className="space-y-2">
-        {/* Hint when not connected */}
-        {!connectedLoanAddress && (
+        {/* Hint only when the node is fully standalone (no incoming edges
+            AT ALL). If there's already a wallet/borrow/swap upstream the
+            user has wired something — they don't need the hint anymore. */}
+        {!connectedLoanAddress && edges.filter((e) => e.target === id).length === 0 && (
           <div className="rounded-lg border border-border bg-bg-secondary px-2 py-1.5 text-[10px] text-text-tertiary">
             Connect a Borrow or Swap node to filter vaults by asset
           </div>

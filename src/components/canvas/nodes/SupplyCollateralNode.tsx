@@ -11,6 +11,7 @@ import { COLLATERAL_ASSETS } from "@/lib/constants/assets";
 import type { SupportedChainId } from "@/lib/web3/chains";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
 import { useTokenBalances } from "@/lib/hooks/useTokenBalances";
+import { formatApy, formatLltv } from "@/lib/utils/format";
 import type { SupplyCollateralNodeData } from "@/lib/canvas/types";
 import NodeShell from "./NodeShell";
 import SearchSelect from "./SearchSelect";
@@ -116,6 +117,58 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
     }
   }, [suggestedAsset]);
 
+  // Detect a downstream borrow node with a market selected. When present, the
+  // supply asset is LOCKED to the market's collateralAsset (the supply has to
+  // match what the borrow market expects, otherwise the bundle reverts).
+  // We then render the asset as a static display + a market badge below
+  // instead of a dropdown.
+  const downstreamBorrowMarket = useMemo(() => {
+    const outgoingEdges = edges.filter((e) => e.source === id);
+    for (const edge of outgoingEdges) {
+      const downNode = allNodes.find((n) => n.id === edge.target);
+      if (!downNode) continue;
+      const dd = downNode.data as Record<string, unknown>;
+      if (dd.type === "borrow" && dd.market) {
+        return dd.market as {
+          uniqueKey?: string;
+          lltv?: string;
+          collateralAsset?: { symbol?: string; address?: string; logoURI?: string; decimals?: number };
+          loanAsset?: { symbol?: string; address?: string; logoURI?: string; decimals?: number };
+          state?: { netBorrowApy?: number; borrowApy?: number };
+        };
+      }
+    }
+    return null;
+  }, [edges, allNodes, id]);
+
+  // Force-lock the supply asset to match the downstream borrow's collateral
+  // whenever a borrow with a market is wired downstream.
+  const prevLockedAssetRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!downstreamBorrowMarket?.collateralAsset?.address) {
+      prevLockedAssetRef.current = null;
+      return;
+    }
+    const lockedAddr = downstreamBorrowMarket.collateralAsset.address.toLowerCase();
+    if (lockedAddr === prevLockedAssetRef.current) return;
+    prevLockedAssetRef.current = lockedAddr;
+    // Only update if the current asset doesn't already match
+    if (d.asset?.address?.toLowerCase() !== lockedAddr) {
+      const match = assets.find((a) => a.address.toLowerCase() === lockedAddr);
+      const collat = downstreamBorrowMarket.collateralAsset;
+      updateNodeData(id, {
+        asset: match ?? {
+          symbol: collat.symbol ?? "?",
+          name: collat.symbol ?? "?",
+          address: collat.address ?? "",
+          decimals: collat.decimals ?? 18,
+          logoURI: collat.logoURI ?? "",
+        },
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [downstreamBorrowMarket?.collateralAsset?.address]);
+
   // Fetch real prices from Morpho API
   const allAddresses = useMemo(() => assets.map((a) => a.address), [assets]);
   const { prices, loading: pricesLoading } = useAssetPrices(allAddresses);
@@ -189,18 +242,90 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
           </div>
         )}
 
-        {/* Asset selector */}
+        {/* Asset selector — locked when there's a downstream borrow with a market */}
         <div>
           <label className="text-[10px] text-text-tertiary">Asset</label>
-          <SearchSelect
-            options={assetOptions}
-            value={d.asset?.address ?? ""}
-            onChange={(addr) => {
-              const asset = assets.find((a) => a.address === addr) ?? null;
-              updateNodeData(id, { asset });
-            }}
-            placeholder="Search asset..."
-          />
+          {downstreamBorrowMarket && d.asset ? (
+            <>
+              <div
+                className="mt-0.5 flex items-center gap-2 rounded-lg border border-border bg-bg-secondary px-2 py-1.5"
+                title="Locked by downstream borrow market — supply asset must match the market's collateral"
+              >
+                {d.asset.logoURI && (
+                  <Image
+                    src={d.asset.logoURI}
+                    alt=""
+                    width={16}
+                    height={16}
+                    className="rounded-full"
+                    unoptimized
+                  />
+                )}
+                <span className="flex-1 text-xs font-medium text-text-primary">
+                  {d.asset.symbol}
+                </span>
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" className="text-text-tertiary">
+                  <rect x="3" y="7" width="10" height="7" rx="1" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M5 7V5a3 3 0 016 0v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </div>
+              {/* Market badge — collateral/loan pair + LLTV + borrow APY */}
+              <div className="mt-1 flex items-center justify-between rounded-lg bg-bg-secondary/60 px-2 py-1.5 text-[10px]">
+                <div className="flex items-center gap-1.5">
+                  {downstreamBorrowMarket.collateralAsset?.logoURI && (
+                    <Image
+                      src={downstreamBorrowMarket.collateralAsset.logoURI}
+                      alt=""
+                      width={11}
+                      height={11}
+                      className="rounded-full"
+                      unoptimized
+                    />
+                  )}
+                  {downstreamBorrowMarket.loanAsset?.logoURI && (
+                    <Image
+                      src={downstreamBorrowMarket.loanAsset.logoURI}
+                      alt=""
+                      width={11}
+                      height={11}
+                      className="-ml-1 rounded-full ring-1 ring-bg-secondary"
+                      unoptimized
+                    />
+                  )}
+                  <span className="text-text-secondary">
+                    {downstreamBorrowMarket.collateralAsset?.symbol ?? "?"}/
+                    {downstreamBorrowMarket.loanAsset?.symbol ?? "?"}
+                  </span>
+                  {downstreamBorrowMarket.lltv && (
+                    <span className="text-text-tertiary">
+                      · LLTV {formatLltv(downstreamBorrowMarket.lltv)}
+                    </span>
+                  )}
+                </div>
+                {downstreamBorrowMarket.state?.netBorrowApy !== undefined && (
+                  <span
+                    className={
+                      downstreamBorrowMarket.state.netBorrowApy < 0
+                        ? "text-success"
+                        : "text-text-tertiary"
+                    }
+                  >
+                    {formatApy(downstreamBorrowMarket.state.netBorrowApy)}
+                  </span>
+                )}
+              </div>
+            </>
+          ) : (
+            <SearchSelect
+              options={assetOptions}
+              value={d.asset?.address ?? ""}
+              onChange={(addr) => {
+                const asset = assets.find((a) => a.address === addr) ?? null;
+                updateNodeData(id, { asset });
+              }}
+              placeholder="Search asset..."
+            />
+          )}
         </div>
 
         {/* Multi-input sources breakdown */}

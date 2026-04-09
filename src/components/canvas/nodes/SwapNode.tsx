@@ -11,8 +11,10 @@ import { readContracts } from "wagmi/actions";
 import { useChain } from "@/lib/context/ChainContext";
 import { useAllAssets } from "@/lib/hooks/useAllAssets";
 import { useTokenBalances } from "@/lib/hooks/useTokenBalances";
+import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
 import { useCowQuote } from "@/lib/hooks/useCowQuote";
 import { wagmiConfig } from "@/lib/web3/config";
+import { formatUsd } from "@/lib/utils/format";
 import type { SwapNodeData } from "@/lib/canvas/types";
 import type { Asset } from "@/lib/graphql/types";
 import type { SupportedChainId } from "@/lib/web3/chains";
@@ -147,6 +149,24 @@ function SwapNodeComponent({ id, data }: NodeProps) {
   }, [d.tokenIn, d.tokenOut]);
   const { assetsWithBalances } = useTokenBalances(balanceAssets);
 
+  // Fetch USD prices for tokenIn + tokenOut so we can show $ values
+  // alongside every amount (available, selected, wallet, estimated output).
+  const priceAddresses = useMemo(() => {
+    const list: string[] = [];
+    if (d.tokenIn?.address) list.push(d.tokenIn.address);
+    if (d.tokenOut?.address && d.tokenOut.address !== d.tokenIn?.address) {
+      list.push(d.tokenOut.address);
+    }
+    return list;
+  }, [d.tokenIn?.address, d.tokenOut?.address]);
+  const { prices } = useAssetPrices(priceAddresses);
+  const tokenInPrice = d.tokenIn?.address
+    ? prices[d.tokenIn.address.toLowerCase()] ?? 0
+    : 0;
+  const tokenOutPrice = d.tokenOut?.address
+    ? prices[d.tokenOut.address.toLowerCase()] ?? 0
+    : 0;
+
   const walletBalanceIn = useMemo(() => {
     if (!d.tokenIn) return 0;
     const found = assetsWithBalances.find((a) => a.address.toLowerCase() === d.tokenIn!.address.toLowerCase());
@@ -243,9 +263,27 @@ function SwapNodeComponent({ id, data }: NodeProps) {
           <div className="flex items-center justify-between">
             <label className="text-[10px] text-text-tertiary">From</label>
             {d.tokenIn && availableIn > 0 && (
-              <span className="text-[9px] text-text-tertiary">
-                {tokenInMatchesUpstream ? "Upstream" : "Wallet"}: {availableIn.toFixed(4)}
-              </span>
+              <div className="flex items-center gap-1.5">
+                {d.tokenIn.logoURI && (
+                  <Image
+                    src={d.tokenIn.logoURI}
+                    alt=""
+                    width={11}
+                    height={11}
+                    className="rounded-full"
+                    unoptimized
+                  />
+                )}
+                <span className="text-[9px] text-text-tertiary">
+                  {tokenInMatchesUpstream ? "Upstream" : "Wallet"}:{" "}
+                  <span className="text-text-secondary">{availableIn.toFixed(4)}</span>
+                  {tokenInPrice > 0 && (
+                    <span className="ml-1 text-text-tertiary">
+                      ({formatUsd(availableIn * tokenInPrice)})
+                    </span>
+                  )}
+                </span>
+              </div>
             )}
           </div>
           {assetsLoading ? (
@@ -288,6 +326,12 @@ function SwapNodeComponent({ id, data }: NodeProps) {
             value={d.amountIn}
             onChange={(e) => updateNodeData(id, { amountIn: e.target.value })}
           />
+          {/* USD equivalent of the typed amount */}
+          {currentAmountIn > 0 && tokenInPrice > 0 && !exceedsBalance && (
+            <p className="text-right text-[10px] text-text-tertiary">
+              ≈ {formatUsd(currentAmountIn * tokenInPrice)}
+            </p>
+          )}
           {exceedsBalance && (
             <p className="text-[10px] text-error">
               Exceeds balance ({availableIn.toFixed(4)} {d.tokenIn?.symbol ?? ""})
@@ -336,9 +380,27 @@ function SwapNodeComponent({ id, data }: NodeProps) {
           <div className="flex items-center justify-between">
             <label className="text-[10px] text-text-tertiary">To</label>
             {d.tokenOut && walletBalanceOut > 0 && (
-              <span className="text-[9px] text-text-tertiary">
-                Wallet: {walletBalanceOut.toFixed(4)}
-              </span>
+              <div className="flex items-center gap-1.5">
+                {d.tokenOut.logoURI && (
+                  <Image
+                    src={d.tokenOut.logoURI}
+                    alt=""
+                    width={11}
+                    height={11}
+                    className="rounded-full"
+                    unoptimized
+                  />
+                )}
+                <span className="text-[9px] text-text-tertiary">
+                  Wallet:{" "}
+                  <span className="text-text-secondary">{walletBalanceOut.toFixed(4)}</span>
+                  {tokenOutPrice > 0 && (
+                    <span className="ml-1 text-text-tertiary">
+                      ({formatUsd(walletBalanceOut * tokenOutPrice)})
+                    </span>
+                  )}
+                </span>
+              </div>
             )}
           </div>
           {assetsLoading ? (
@@ -365,21 +427,28 @@ function SwapNodeComponent({ id, data }: NodeProps) {
             {quoteLoading ? (
               <div className="mt-0.5 h-4 animate-pulse rounded bg-bg-primary" />
             ) : quote ? (
-              <div className="flex items-center gap-1.5">
-                {d.tokenOut.logoURI && (
-                  <Image
-                    src={d.tokenOut.logoURI}
-                    alt={d.tokenOut.symbol}
-                    width={14}
-                    height={14}
-                    className="rounded-full"
-                    unoptimized
-                  />
+              <>
+                <div className="flex items-center gap-1.5">
+                  {d.tokenOut.logoURI && (
+                    <Image
+                      src={d.tokenOut.logoURI}
+                      alt={d.tokenOut.symbol}
+                      width={14}
+                      height={14}
+                      className="rounded-full"
+                      unoptimized
+                    />
+                  )}
+                  <span className="text-xs font-medium text-text-primary">
+                    {quote} {d.tokenOut.symbol}
+                  </span>
+                </div>
+                {tokenOutPrice > 0 && (
+                  <p className="mt-0.5 text-right text-[10px] text-text-tertiary">
+                    ≈ {formatUsd(parseFloat(quote || "0") * tokenOutPrice)}
+                  </p>
                 )}
-                <span className="text-xs font-medium text-text-primary">
-                  {quote} {d.tokenOut.symbol}
-                </span>
-              </div>
+              </>
             ) : (
               <p className="text-[10px] text-text-tertiary">No quote available</p>
             )}
