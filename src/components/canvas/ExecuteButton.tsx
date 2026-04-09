@@ -752,7 +752,9 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm transition-opacity" />
       )}
       <div
-        className={`absolute bottom-0 left-1/2 -translate-x-1/2 ${isExecuting ? "z-50" : "z-30"}`}
+        className={`absolute bottom-0 left-1/2 -translate-x-1/2 ${
+          isExecuting ? "z-50" : expanded ? "z-40" : "z-30"
+        }`}
         onMouseEnter={() => setExpanded(true)}
         onMouseLeave={() => { if (!isExecuting) { setExpanded(false); if (!showConfirm) setShowConfirm(false); } }}
       >

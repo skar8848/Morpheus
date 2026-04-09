@@ -140,6 +140,50 @@ function SwapNodeComponent({ id, data }: NodeProps) {
     prevTokenInRef.current = currentAddr;
   }, [d.tokenIn, upstreamAsset, assets]);
 
+  // Auto-detect tokenOut from a downstream node's expected input asset.
+  // Covers the common case "swap → vaultDeposit (USDC vault)" where the
+  // swap should output USDC. Also handles "swap → repay (market)" where
+  // the swap should output the loan asset (to repay with).
+  const downstreamAsset = useMemo(() => {
+    const outgoing = edges.find((e) => e.source === id);
+    if (!outgoing) return null;
+    const target = allNodes.find((n) => n.id === outgoing.target);
+    if (!target) return null;
+    const td = target.data as Record<string, unknown>;
+    if (td.type === "vaultDeposit") {
+      const vault = td.vault as { asset?: AssetInfo } | null;
+      return vault?.asset ?? null;
+    }
+    if (td.type === "repay") {
+      const market = td.market as { loanAsset?: AssetInfo } | null;
+      return market?.loanAsset ?? null;
+    }
+    if (td.type === "supplyCollateral") {
+      const asset = td.asset as AssetInfo | null;
+      return asset ?? null;
+    }
+    return null;
+  }, [edges, allNodes, id]);
+
+  // Auto-set tokenOut when a downstream is wired and tokenOut is still empty.
+  const prevDownstreamRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!downstreamAsset) {
+      prevDownstreamRef.current = null;
+      return;
+    }
+    const addr = downstreamAsset.address.toLowerCase();
+    if (addr === prevDownstreamRef.current) return;
+    prevDownstreamRef.current = addr;
+    // Only fill if tokenOut is empty OR if it doesn't match the new downstream
+    const currentOutAddr = d.tokenOut?.address?.toLowerCase();
+    if (!currentOutAddr || currentOutAddr !== addr) {
+      const match = assets.find((a) => a.address.toLowerCase() === addr);
+      updateNodeData(id, { tokenOut: match ?? downstreamAsset });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [downstreamAsset?.address]);
+
   // Fetch in-wallet balances for both tokens
   const balanceAssets = useMemo(() => {
     const list: Asset[] = [];
