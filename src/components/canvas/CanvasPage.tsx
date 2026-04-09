@@ -58,6 +58,11 @@ export default function CanvasPage() {
   // when the sidebar collapses (frees the corner real estate).
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
+  // React Flow Controls panel (bottom-left zoom/fit/lock). Hidden by default
+  // because it clutters the canvas — user can toggle it with `C` or from the
+  // keyboard shortcuts help modal.
+  const [showControls, setShowControls] = useState(false);
+
   // Fit the current nodes into the VISIBLE area of the canvas (right of the
   // sidebar) instead of the full ReactFlow pane. Without this, fitView uses
   // the full canvas and the strategy appears off-center / hidden behind the
@@ -433,6 +438,13 @@ export default function CanvasPage() {
         return;
       }
 
+      // Toggle React Flow Controls panel (bottom-left zoom/fit/lock)
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        setShowControls((prev) => !prev);
+        return;
+      }
+
       // Node placement shortcuts (S/B/X/D/W/R) — only bare keys, no modifiers
       if (!event.metaKey && !event.ctrlKey && !event.altKey) {
         const nodeType = NODE_SHORTCUTS[event.key.toLowerCase()];
@@ -640,10 +652,12 @@ export default function CanvasPage() {
         proOptions={{ hideAttribution: true }}
         className="canvas-flow"
       >
-        <Controls
-          className="!rounded-xl !border !border-border !bg-bg-card !shadow-lg"
-          showInteractive={false}
-        />
+        {showControls && (
+          <Controls
+            className="!rounded-xl !border !border-border !bg-bg-card !shadow-lg"
+            showInteractive={false}
+          />
+        )}
         <MiniMap
           className="!rounded-xl !border !border-border !bg-bg-card"
           nodeColor={(node) => {
@@ -756,6 +770,30 @@ export default function CanvasPage() {
                     </kbd>
                   </div>
                 ))}
+                {/* Toggleable Controls panel — click to toggle, shows current state */}
+                <button
+                  type="button"
+                  onClick={() => setShowControls((prev) => !prev)}
+                  className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 transition-colors hover:bg-bg-secondary"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-text-primary">
+                      {showControls ? "Hide" : "Show"} zoom controls
+                    </span>
+                    <span
+                      className={`rounded-sm px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wider ${
+                        showControls
+                          ? "bg-success/15 text-success"
+                          : "bg-bg-secondary text-text-tertiary"
+                      }`}
+                    >
+                      {showControls ? "on" : "off"}
+                    </span>
+                  </div>
+                  <kbd className="rounded border border-border bg-bg-secondary px-2 py-0.5 text-[11px] font-mono text-text-secondary">
+                    C
+                  </kbd>
+                </button>
               </div>
             </div>
           </div>
