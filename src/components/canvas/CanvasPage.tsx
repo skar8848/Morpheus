@@ -27,6 +27,12 @@ import ExecuteButton from "./ExecuteButton";
 import StrategyGauge from "./StrategyGauge";
 import ChatPanel from "./ChatPanel";
 
+// Feature flag: the in-canvas AI strategy assistant. Hidden until we ship
+// the full tool-calling flow — flip to `true` to re-enable the floating
+// bubble + centered modal. The component and /api/chat route still exist
+// and work; only the mount point is gated.
+const ENABLE_CHAT_PANEL = false;
+
 export default function CanvasPage() {
   const {
     nodes,
@@ -685,8 +691,8 @@ export default function CanvasPage() {
 
       <ExecuteButton nodes={nodes as CanvasNode[]} edges={edges} />
 
-      {/* AI strategy assistant — sliding right panel */}
-      <ChatPanel />
+      {/* AI strategy assistant — hidden behind a feature flag until ready */}
+      {ENABLE_CHAT_PANEL && <ChatPanel />}
       <StrategyGauge nodes={nodes as CanvasNode[]} edges={edges} sidebarCollapsed={sidebarCollapsed} />
 
       {/* Placement mode indicator */}
