@@ -201,6 +201,31 @@ function SwapNodeComponent({ id, data }: NodeProps) {
     return Array.from(merged.values());
   }, [assets, customTokens]);
 
+  // Auto-add d.tokenIn / d.tokenOut to customTokens when they're not already
+  // in the known assets list. This guarantees the SearchSelect can always
+  // display the currently-selected token (e.g. when it comes from an upstream
+  // repay / vaultWithdraw with an address that the Morpho API returned in
+  // lowercase but the hardcoded COLLATERAL_ASSETS list has checksummed).
+  useEffect(() => {
+    const missing: Asset[] = [];
+    for (const token of [d.tokenIn, d.tokenOut]) {
+      if (!token?.address) continue;
+      const addr = token.address.toLowerCase();
+      const inAll = allTokens.some((t) => t.address.toLowerCase() === addr);
+      if (!inAll) missing.push(token as Asset);
+    }
+    if (missing.length > 0) {
+      setCustomTokens((prev) => {
+        const existing = new Set(prev.map((t) => t.address.toLowerCase()));
+        const next = [...prev];
+        for (const t of missing) {
+          if (!existing.has(t.address.toLowerCase())) next.push(t);
+        }
+        return next;
+      });
+    }
+  }, [d.tokenIn, d.tokenOut, allTokens]);
+
   const assetOptions = useMemo(
     () => allTokens.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI || undefined })),
     [allTokens]
@@ -293,7 +318,7 @@ function SwapNodeComponent({ id, data }: NodeProps) {
               options={assetOptions}
               value={d.tokenIn?.address ?? ""}
               onChange={(addr) => {
-                const token = allTokens.find((a) => a.address === addr) ?? null;
+                const token = allTokens.find((a) => a.address.toLowerCase() === addr.toLowerCase()) ?? null;
                 updateNodeData(id, { tokenIn: token });
               }}
               onImportAddress={handleImportAddress}
@@ -410,7 +435,7 @@ function SwapNodeComponent({ id, data }: NodeProps) {
               options={assetOptions}
               value={d.tokenOut?.address ?? ""}
               onChange={(addr) => {
-                const token = allTokens.find((a) => a.address === addr) ?? null;
+                const token = allTokens.find((a) => a.address.toLowerCase() === addr.toLowerCase()) ?? null;
                 updateNodeData(id, { tokenOut: token });
               }}
               onImportAddress={handleImportAddress}

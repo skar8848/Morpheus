@@ -36,7 +36,12 @@ export default function SearchSelect({
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const selected = options.find((o) => o.value === value);
+  // Case-insensitive match so addresses that differ only in checksum casing
+  // (e.g. lowercased from an API vs. checksummed from a hardcoded list) still
+  // resolve to the same option and display the selected token correctly.
+  const selected = options.find(
+    (o) => o.value.toLowerCase() === value.toLowerCase()
+  );
 
   // Filter by label or by address (value)
   const filtered = query
