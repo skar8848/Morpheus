@@ -58,10 +58,10 @@ export default function CanvasPage() {
   // when the sidebar collapses (frees the corner real estate).
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  // React Flow Controls panel (bottom-left zoom/fit/lock). Hidden by default
-  // because it clutters the canvas — user can toggle it with `C` or from the
-  // keyboard shortcuts help modal.
-  const [showControls, setShowControls] = useState(false);
+  // React Flow MiniMap panel (bottom-right node overview). Hidden by default
+  // because it clutters the canvas and most users don't need it — user can
+  // toggle it with `M` or from the keyboard shortcuts help modal.
+  const [showMiniMap, setShowMiniMap] = useState(false);
 
   // Fit the current nodes into the VISIBLE area of the canvas (right of the
   // sidebar) instead of the full ReactFlow pane. Without this, fitView uses
@@ -438,10 +438,10 @@ export default function CanvasPage() {
         return;
       }
 
-      // Toggle React Flow Controls panel (bottom-left zoom/fit/lock)
-      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "c") {
+      // Toggle React Flow MiniMap panel (bottom-right node overview)
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "m") {
         event.preventDefault();
-        setShowControls((prev) => !prev);
+        setShowMiniMap((prev) => !prev);
         return;
       }
 
@@ -652,29 +652,29 @@ export default function CanvasPage() {
         proOptions={{ hideAttribution: true }}
         className="canvas-flow"
       >
-        {showControls && (
-          <Controls
-            className="!rounded-xl !border !border-border !bg-bg-card !shadow-lg"
-            showInteractive={false}
+        <Controls
+          className="!rounded-xl !border !border-border !bg-bg-card !shadow-lg"
+          showInteractive={false}
+        />
+        {showMiniMap && (
+          <MiniMap
+            className="!rounded-xl !border !border-border !bg-bg-card"
+            nodeColor={(node) => {
+              const type = (node.data as { type: string }).type;
+              const colors: Record<string, string> = {
+                wallet: "#2973ff",
+                supplyCollateral: "#2973ff",
+                borrow: "#39a699",
+                swap: "#f59e0b",
+                vaultDeposit: "#a855f7",
+                vaultWithdraw: "#f97316",
+                position: "#6b7079",
+              };
+              return colors[type] ?? "#6b7079";
+            }}
+            maskColor="rgba(21, 24, 26, 0.7)"
           />
         )}
-        <MiniMap
-          className="!rounded-xl !border !border-border !bg-bg-card"
-          nodeColor={(node) => {
-            const type = (node.data as { type: string }).type;
-            const colors: Record<string, string> = {
-              wallet: "#2973ff",
-              supplyCollateral: "#2973ff",
-              borrow: "#39a699",
-              swap: "#f59e0b",
-              vaultDeposit: "#a855f7",
-              vaultWithdraw: "#f97316",
-              position: "#6b7079",
-            };
-            return colors[type] ?? "#6b7079";
-          }}
-          maskColor="rgba(21, 24, 26, 0.7)"
-        />
         <Background
           variant={BackgroundVariant.Dots}
           gap={24}
@@ -770,28 +770,28 @@ export default function CanvasPage() {
                     </kbd>
                   </div>
                 ))}
-                {/* Toggleable Controls panel — click to toggle, shows current state */}
+                {/* Toggleable MiniMap — click to toggle, shows current state */}
                 <button
                   type="button"
-                  onClick={() => setShowControls((prev) => !prev)}
+                  onClick={() => setShowMiniMap((prev) => !prev)}
                   className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 transition-colors hover:bg-bg-secondary"
                 >
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-text-primary">
-                      {showControls ? "Hide" : "Show"} zoom controls
+                      {showMiniMap ? "Hide" : "Show"} minimap
                     </span>
                     <span
                       className={`rounded-sm px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wider ${
-                        showControls
+                        showMiniMap
                           ? "bg-success/15 text-success"
                           : "bg-bg-secondary text-text-tertiary"
                       }`}
                     >
-                      {showControls ? "on" : "off"}
+                      {showMiniMap ? "on" : "off"}
                     </span>
                   </div>
                   <kbd className="rounded border border-border bg-bg-secondary px-2 py-0.5 text-[11px] font-mono text-text-secondary">
-                    C
+                    M
                   </kbd>
                 </button>
               </div>
