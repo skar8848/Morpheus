@@ -11,7 +11,7 @@ export const MARKETS_QUERY = `
       }
     ) {
       items {
-        uniqueKey
+        uniqueKey: marketId
         lltv
         irmAddress
         oracle { address }
@@ -19,14 +19,14 @@ export const MARKETS_QUERY = `
           symbol
           address
           logoURI
-          priceUsd
+          price { usd }
           decimals
         }
         loanAsset {
           symbol
           address
           logoURI
-          priceUsd
+          price { usd }
           decimals
         }
         state {
@@ -76,7 +76,7 @@ export const VAULTS_QUERY = `
           fee
           allocation {
             market {
-              uniqueKey
+              uniqueKey: marketId
               collateralAsset {
                 symbol
               }
@@ -104,7 +104,7 @@ export const USER_MARKET_POSITIONS_QUERY = `
       items {
         healthFactor
         market {
-          uniqueKey
+          uniqueKey: marketId
           lltv
           irmAddress
           oracle { address }
@@ -112,14 +112,14 @@ export const USER_MARKET_POSITIONS_QUERY = `
             symbol
             address
             logoURI
-            priceUsd
+            price { usd }
             decimals
           }
           loanAsset {
             symbol
             address
             logoURI
-            priceUsd
+            price { usd }
             decimals
           }
           state {
@@ -201,7 +201,7 @@ export const VAULT_V2_LIST_QUERY = `
           address
           logoURI
           decimals
-          priceUsd
+          price { usd }
         }
       }
       pageInfo {
@@ -227,7 +227,7 @@ export const LOAN_ASSETS_QUERY = `
           address
           decimals
           logoURI
-          priceUsd
+          price { usd }
         }
       }
     }
@@ -272,7 +272,7 @@ export const USER_TRANSACTIONS_QUERY = `
             assetsUsd
             shares
             market {
-              uniqueKey
+              uniqueKey: marketId
               collateralAsset {
                 symbol
                 decimals
@@ -289,7 +289,7 @@ export const USER_TRANSACTIONS_QUERY = `
             assets
             assetsUsd
             market {
-              uniqueKey
+              uniqueKey: marketId
               collateralAsset {
                 symbol
                 decimals
@@ -311,7 +311,7 @@ export const USER_TRANSACTIONS_QUERY = `
             badDebtAssetsUsd
             liquidator
             market {
-              uniqueKey
+              uniqueKey: marketId
               collateralAsset {
                 symbol
                 decimals

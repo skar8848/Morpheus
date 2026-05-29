@@ -12,7 +12,7 @@ const PRICES_QUERY = `
     assets(where: { address_in: $addresses, chainId_in: $chainId }) {
       items {
         address
-        priceUsd
+        price { usd }
         symbol
       }
     }
