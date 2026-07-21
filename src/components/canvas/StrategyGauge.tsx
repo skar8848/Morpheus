@@ -60,7 +60,8 @@ function projectPnl(nodes: CanvasNode[], days: number) {
 /** Aggregate strategy metrics computed from the graph */
 function useStrategyMetrics(nodes: CanvasNode[], edges: Edge[]) {
   return useMemo(() => {
-    let totalDepositUsd = 0;
+    let totalDepositUsd = 0; // collateral + vault deposits — the capital committed
+    let totalVaultDepositUsd = 0; // vault deposits only — the yield-bearing share
     let totalBorrowUsd = 0;
     let totalRepayUsd = 0;
     let weightedEarnApy = 0; // weighted by deposit amount
@@ -101,6 +102,7 @@ function useStrategyMetrics(nodes: CanvasNode[], edges: Edge[]) {
             if ((isFinite(amt) && amt > 0) || d.depositAll) {
               vaultCount++;
               totalDepositUsd += usd;
+              totalVaultDepositUsd += usd;
               const apy = d.vault.state?.netApy ?? 0;
               weightedEarnApy += apy * usd;
             }
@@ -119,9 +121,17 @@ function useStrategyMetrics(nodes: CanvasNode[], edges: Edge[]) {
       }
     }
 
-    const avgEarnApy = totalDepositUsd > 0 ? weightedEarnApy / totalDepositUsd : 0;
+    // Earn APY is the rate the yield-bearing legs actually pay, so it must be
+    // weighted by vault deposits only — collateral earns nothing in Morpho Blue
+    // (it sits isolated in the market so it stays seizable at liquidation).
+    const avgEarnApy = totalVaultDepositUsd > 0 ? weightedEarnApy / totalVaultDepositUsd : 0;
     const avgBorrowApy = totalBorrowUsd > 0 ? weightedBorrowApy / totalBorrowUsd : 0;
-    const netApy = avgEarnApy - avgBorrowApy;
+    // Net APY divides the annual net flow (earned − paid, both in USD) by the
+    // whole capital committed, collateral included. Subtracting avgEarnApy and
+    // avgBorrowApy directly would compare two ratios computed on different
+    // bases and could flip the sign of a strategy that is actually profitable.
+    const netApy =
+      totalDepositUsd > 0 ? (weightedEarnApy - weightedBorrowApy) / totalDepositUsd : 0;
 
     return {
       totalDepositUsd,
