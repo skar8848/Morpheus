@@ -186,6 +186,51 @@ export const USER_VAULT_POSITIONS_QUERY = `
  * Vault V2 is the newer Morpho vault contract; positions in V2 vaults
  * are NOT returned by the legacy `vaultPositions` query above.
  */
+/**
+ * Slim V2 vault list — only what's needed to multicall balanceOf. Kept lean so
+ * the query stays far below the API complexity ceiling (the rich list of all
+ * vaults with prices/apy sits near the limit and can fail outright). Rich
+ * display fields are fetched afterwards for the user's matched vaults only.
+ */
+export const VAULT_V2_ADDRESSES_QUERY = `
+  query ListVaultV2Addresses($chainId: [Int!]!, $first: Int!, $skip: Int!) {
+    vaultV2s(
+      where: { chainId_in: $chainId, listed: true }
+      first: $first
+      skip: $skip
+    ) {
+      items {
+        address
+        asset { decimals }
+      }
+      pageInfo { count countTotal }
+    }
+  }
+`;
+
+/** Rich details for a specific set of V2 vaults (the user's matched hits only). */
+export const VAULT_V2_DETAILS_QUERY = `
+  query VaultV2Details($chainId: [Int!]!, $addresses: [String!]!) {
+    vaultV2s(where: { chainId_in: $chainId, address_in: $addresses }) {
+      items {
+        address
+        name
+        symbol
+        sharePrice
+        netApy
+        totalAssetsUsd
+        asset {
+          symbol
+          address
+          logoURI
+          decimals
+          price { usd }
+        }
+      }
+    }
+  }
+`;
+
 export const VAULT_V2_LIST_QUERY = `
   query ListVaultV2s($chainId: [Int!]!, $first: Int!, $skip: Int!) {
     vaultV2s(

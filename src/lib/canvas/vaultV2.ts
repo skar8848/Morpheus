@@ -23,32 +23,48 @@ import { readContracts } from "wagmi/actions";
 import { erc4626Abi } from "viem";
 import { wagmiConfig } from "@/lib/web3/config";
 import { morphoQuery } from "@/lib/graphql/client";
-import { VAULT_V2_LIST_QUERY } from "@/lib/graphql/queries";
-import type {
-  VaultV2ListResponse,
-  VaultV2Listing,
-  UserVaultPosition,
-} from "@/lib/graphql/types";
+import { VAULT_V2_ADDRESSES_QUERY, VAULT_V2_DETAILS_QUERY } from "@/lib/graphql/queries";
+import type { UserVaultPosition } from "@/lib/graphql/types";
 import type { SupportedChainId } from "@/lib/web3/chains";
 
 const PAGE_SIZE = 1000;
 
-/** Fetch all V2 vaults for a chain via paginated GraphQL. */
-async function fetchAllV2Vaults(chainId: number): Promise<VaultV2Listing[]> {
-  const all: VaultV2Listing[] = [];
+type SlimVault = { address: string; decimals: number };
+interface V2Details {
+  address: string;
+  name: string;
+  symbol: string;
+  netApy: number | null;
+  totalAssetsUsd: number | null;
+  asset: { symbol: string; address: string; logoURI: string; decimals: number; price?: { usd: number | null } | null };
+}
+
+/** Fetch just the addresses (+ decimals) of every listed V2 vault. Cheap. */
+async function fetchV2Addresses(chainId: number): Promise<SlimVault[]> {
+  const all: SlimVault[] = [];
   let skip = 0;
   for (let page = 0; page < 10; page++) {
-    const data = await morphoQuery<VaultV2ListResponse>(VAULT_V2_LIST_QUERY, {
-      chainId: [chainId],
-      first: PAGE_SIZE,
-      skip,
-    });
+    const data = await morphoQuery<{
+      vaultV2s: { items: { address: string; asset: { decimals: number } }[] };
+    }>(VAULT_V2_ADDRESSES_QUERY, { chainId: [chainId], first: PAGE_SIZE, skip });
     const items = data.vaultV2s?.items ?? [];
-    all.push(...items);
+    all.push(...items.map((v) => ({ address: v.address, decimals: v.asset.decimals })));
     if (items.length < PAGE_SIZE) break;
     skip += PAGE_SIZE;
   }
   return all;
+}
+
+/** Rich details for the user's matched vaults only. */
+async function fetchV2Details(chainId: number, addresses: string[]): Promise<Map<string, V2Details>> {
+  if (addresses.length === 0) return new Map();
+  const data = await morphoQuery<{ vaultV2s: { items: V2Details[] } }>(VAULT_V2_DETAILS_QUERY, {
+    chainId: [chainId],
+    addresses,
+  });
+  const map = new Map<string, V2Details>();
+  for (const v of data.vaultV2s?.items ?? []) map.set(v.address.toLowerCase(), v);
+  return map;
 }
 
 /**
@@ -60,10 +76,10 @@ export async function fetchUserVaultV2Positions(
   userAddress: `0x${string}`,
   chainId: number
 ): Promise<UserVaultPosition[]> {
-  // 1. List all V2 vaults
-  let vaults: VaultV2Listing[];
+  // 1. List every listed V2 vault (addresses only — cheap query).
+  let vaults: SlimVault[];
   try {
-    vaults = await fetchAllV2Vaults(chainId);
+    vaults = await fetchV2Addresses(chainId);
   } catch (err) {
     console.warn("[vaultV2] failed to list V2 vaults:", err);
     return [];
@@ -71,19 +87,17 @@ export async function fetchUserVaultV2Positions(
 
   if (vaults.length === 0) return [];
 
-  // 2. Multicall balanceOf(user) for every V2 vault
-  const balanceContracts = vaults.map((v) => ({
-    address: v.address as `0x${string}`,
-    abi: erc4626Abi,
-    functionName: "balanceOf" as const,
-    args: [userAddress] as const,
-    chainId: chainId as SupportedChainId,
-  }));
-
+  // 2. Multicall balanceOf(user) for every V2 vault.
   let balances;
   try {
     balances = await readContracts(wagmiConfig, {
-      contracts: balanceContracts,
+      contracts: vaults.map((v) => ({
+        address: v.address as `0x${string}`,
+        abi: erc4626Abi,
+        functionName: "balanceOf" as const,
+        args: [userAddress] as const,
+        chainId: chainId as SupportedChainId,
+      })),
       allowFailure: true,
     });
   } catch (err) {
@@ -91,8 +105,8 @@ export async function fetchUserVaultV2Positions(
     return [];
   }
 
-  // 3. Filter to non-zero positions and remember their indexes
-  type Hit = { vault: VaultV2Listing; shares: bigint };
+  // 3. Filter to non-zero positions.
+  type Hit = { vault: SlimVault; shares: bigint };
   const hits: Hit[] = [];
   for (let i = 0; i < vaults.length; i++) {
     const result = balances[i];
@@ -103,31 +117,33 @@ export async function fetchUserVaultV2Positions(
 
   if (hits.length === 0) return [];
 
-  // 4. For each hit, fetch convertToAssets(shares) to get the actual asset
-  // amount (V2 vaults have continuous interest accrual so shares × sharePrice
-  // can drift). One additional multicall over a small set.
-  const assetContracts = hits.map((h) => ({
-    address: h.vault.address as `0x${string}`,
-    abi: erc4626Abi,
-    functionName: "convertToAssets" as const,
-    args: [h.shares] as const,
-    chainId: chainId as SupportedChainId,
-  }));
+  // 4. Rich details + convertToAssets, both scoped to the matched vaults only.
+  let details: Map<string, V2Details>;
+  try {
+    details = await fetchV2Details(chainId, hits.map((h) => h.vault.address));
+  } catch (err) {
+    console.warn("[vaultV2] failed to fetch V2 details:", err);
+    details = new Map();
+  }
 
   let assetResults;
   try {
     assetResults = await readContracts(wagmiConfig, {
-      contracts: assetContracts,
+      contracts: hits.map((h) => ({
+        address: h.vault.address as `0x${string}`,
+        abi: erc4626Abi,
+        functionName: "convertToAssets" as const,
+        args: [h.shares] as const,
+        chainId: chainId as SupportedChainId,
+      })),
       allowFailure: true,
     });
   } catch (err) {
     console.warn("[vaultV2] convertToAssets multicall failed:", err);
-    // Fall back to using shares directly — assets value will be inaccurate
-    // but the position still surfaces.
     assetResults = hits.map(() => ({ status: "failure" as const, result: undefined }));
   }
 
-  // 5. Normalize into UserVaultPosition shape
+  // 5. Normalize into UserVaultPosition shape.
   return hits.map((h, i) => {
     const assetResult = assetResults[i];
     const assetsRaw =
@@ -135,25 +151,26 @@ export async function fetchUserVaultV2Positions(
         ? (assetResult.result as bigint)
         : h.shares; // best-effort fallback
 
-    const decimals = h.vault.asset.decimals;
+    const d = details.get(h.vault.address.toLowerCase());
+    const decimals = d?.asset.decimals ?? h.vault.decimals;
     const assetsFloat = Number(assetsRaw) / 10 ** decimals;
-    const priceUsd = h.vault.asset.priceUsd ?? 0;
+    const priceUsd = d?.asset.price?.usd ?? 0;
     const assetsUsd = assetsFloat * priceUsd;
 
     return {
       vault: {
         address: h.vault.address,
-        name: h.vault.name || "Vault V2",
-        symbol: h.vault.symbol || "V2",
+        name: d?.name || "Vault V2",
+        symbol: d?.symbol || "V2",
         asset: {
-          symbol: h.vault.asset.symbol,
-          address: h.vault.asset.address,
-          logoURI: h.vault.asset.logoURI,
+          symbol: d?.asset.symbol ?? "",
+          address: d?.asset.address ?? h.vault.address,
+          logoURI: d?.asset.logoURI ?? "",
           decimals,
         },
         state: {
-          netApy: h.vault.netApy ?? 0,
-          totalAssetsUsd: h.vault.totalAssetsUsd,
+          netApy: d?.netApy ?? 0,
+          totalAssetsUsd: d?.totalAssetsUsd ?? null,
         },
       },
       state: {
