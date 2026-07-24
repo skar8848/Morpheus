@@ -9,9 +9,10 @@ import Image from "next/image";
 import { useChain } from "@/lib/context/ChainContext";
 import { useAllAssets } from "@/lib/hooks/useAllAssets";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
-import { useBridgeQuote } from "@/lib/hooks/useBridgeQuote";
-import { CHAIN_CONFIGS, chainLogo, type SupportedChainId } from "@/lib/web3/chains";
-import { resolveBridgeRoute } from "@/lib/canvas/bridge";
+import { useBridgeRoutes } from "@/lib/hooks/useBridgeRoutes";
+import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
+import ChainIcon from "../ChainIcon";
+import { isUsdc } from "@/lib/canvas/bridge";
 import { formatUsd } from "@/lib/utils/format";
 import type { BridgeNodeData } from "@/lib/canvas/types";
 import type { Asset } from "@/lib/graphql/types";
@@ -61,7 +62,7 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
       CHAIN_CONFIGS.filter((c) => c.chainId !== srcChainId).map((c) => ({
         value: String(c.chainId),
         label: c.label,
-        icon: c.logo,
+        iconNode: <ChainIcon chainId={c.chainId} />,
       })),
     [srcChainId]
   );
@@ -94,10 +95,6 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
   );
 
   const tokenIn = d.tokenIn ?? upstreamAsset;
-  const route = useMemo(
-    () => resolveBridgeRoute(tokenIn, d.tokenOut ?? null, srcChainId, dstChainId),
-    [tokenIn, d.tokenOut, srcChainId, dstChainId]
-  );
 
   // USD value of the input + price of the output token (for token-denominated
   // receive display).
@@ -110,39 +107,54 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
   const tokenOutPrice = d.tokenOut?.address ? prices[d.tokenOut.address.toLowerCase()] ?? 0 : 0;
   const amountInUsd = upstreamAmount * tokenInPrice;
 
-  // Live CCTP v2 quote from Circle's Iris fee schedule.
-  const quote = useBridgeQuote(srcChainId, dstChainId, amountInUsd, route);
+  // Candidate routes, ranked best-first. CCTP is offered first for USDC but
+  // never imposed — the user picks the route.
+  const inIsUsdc = isUsdc(tokenIn, srcChainId);
+  const outIsUsdc = isUsdc(d.tokenOut ?? null, dstChainId);
+  const { routes, loading: routesLoading } = useBridgeRoutes(
+    srcChainId,
+    dstChainId,
+    amountInUsd,
+    inIsUsdc && (outIsUsdc || !d.tokenOut)
+  );
 
-  // Persist the quote onto node data for later serialization / execution.
+  const selected = useMemo(
+    () => routes.find((r) => r.id === d.routeId && !r.unavailable) ?? routes.find((r) => !r.unavailable) ?? null,
+    [routes, d.routeId]
+  );
+
+  // Persist the chosen route + quote onto node data for serialization/execution.
   useEffect(() => {
-    const q = quote.receivedUsd > 0 ? String(quote.receivedUsd) : "";
-    if (amountInUsd !== d.amountInUsd || q !== d.quoteOut || quote.loading !== d.quoteLoading) {
-      updateNodeData(id, { amountInUsd, quoteOut: q, quoteLoading: quote.loading });
+    const q = selected && selected.receivedUsd > 0 ? String(selected.receivedUsd) : "";
+    if (
+      amountInUsd !== d.amountInUsd ||
+      q !== d.quoteOut ||
+      routesLoading !== d.quoteLoading ||
+      (selected && selected.id !== d.routeId)
+    ) {
+      updateNodeData(id, {
+        amountInUsd,
+        quoteOut: q,
+        quoteLoading: routesLoading,
+        routeId: selected?.id,
+      });
     }
-  }, [amountInUsd, quote.receivedUsd, quote.loading, d.amountInUsd, d.quoteOut, d.quoteLoading, id, updateNodeData]);
+  }, [amountInUsd, selected, routesLoading, d.amountInUsd, d.quoteOut, d.quoteLoading, d.routeId, id, updateNodeData]);
 
   const srcLabel = CHAIN_CONFIGS.find((c) => c.chainId === srcChainId)?.label ?? `Chain ${srcChainId}`;
-
-  const routeBadge =
-    route.rail === "cctp-v2"
-      ? { text: `CCTP v2 · Fast · ~${quote.etaFastSeconds}s`, cls: "text-success" }
-      : route.rail === "stargate"
-        ? { text: "Stargate", cls: "text-brand" }
-        : { text: "Unsupported", cls: "text-error" };
 
   return (
     <NodeShell
       nodeType="bridge"
       title="Bridge (Stargate)"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
-      invalid={route.rail === "unsupported"}
+      invalid={routes.length > 0 && !selected}
     >
       <div className="space-y-2">
         {/* Route: source (fixed) → destination */}
         <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-2 py-1.5">
           <span className="flex items-center gap-1 text-[10px] text-text-tertiary">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            {chainLogo(srcChainId) && <img src={chainLogo(srcChainId)} alt="" width={14} height={14} className="rounded-full" />}
+            <ChainIcon chainId={srcChainId} />
             {srcLabel}
           </span>
           <span className="text-text-tertiary">⇄</span>
@@ -195,61 +207,67 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
           </div>
         </div>
 
-        {/* Route + estimate */}
-        <div className="rounded-lg bg-bg-secondary px-2 py-1.5 text-[10px]">
+        {/* Routes — ranked best-first, pick one (Stargate-style comparison) */}
+        <div>
           <div className="flex items-center justify-between">
-            <span className="text-text-tertiary">Route</span>
-            <span className={`font-semibold ${routeBadge.cls}`}>{routeBadge.text}</span>
+            <label className="text-[10px] text-text-tertiary">Routes</label>
+            {routesLoading && <span className="text-[9px] text-text-tertiary">quoting…</span>}
           </div>
-          {route.rail === "cctp-v2" && amountInUsd > 0 && (
-            <>
-              <div className="mt-0.5 flex items-center justify-between">
-                <span className="text-text-tertiary">Bridge fee</span>
-                <span className="text-text-secondary">
-                  {quote.loading
-                    ? "…"
-                    : quote.fastFeeBps != null
-                      ? `${quote.fastFeeBps} bps · ${formatUsd(quote.feeUsd)}`
-                      : "—"}
-                </span>
-              </div>
-              <div className="mt-0.5 flex items-center justify-between">
-                <span className="text-text-tertiary">Est. received</span>
-                <span className="text-text-secondary">
-                  {quote.loading
-                    ? "…"
-                    : (() => {
-                        // token amount: USDC direct is 1:1; otherwise USD / price
-                        const tokenAmt =
-                          d.tokenOut && !route.needsDstSwap
-                            ? quote.receivedUsd
-                            : tokenOutPrice > 0
-                              ? quote.receivedUsd / tokenOutPrice
-                              : null;
-                        const amtStr =
-                          tokenAmt != null && d.tokenOut
-                            ? `~${tokenAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${d.tokenOut.symbol} `
-                            : "";
-                        return `${amtStr}(${formatUsd(quote.receivedUsd)})`;
-                      })()}
-                </span>
-              </div>
-              {quote.standardFeeBps === 0 && (
-                <div className="mt-0.5 text-[9px] text-text-tertiary">
-                  Standard transfer: free, ~{Math.round(quote.etaStandardSeconds / 60)} min
-                </div>
-              )}
-              {quote.error && <div className="mt-0.5 text-[9px] text-error">Quote: {quote.error}</div>}
-            </>
-          )}
-          {(route.needsSrcSwap || route.needsDstSwap) && route.rail === "cctp-v2" && (
-            <div className="mt-0.5 text-[9px] text-yellow-400">
-              Internal swap {route.needsSrcSwap ? "→USDC" : ""}{route.needsSrcSwap && route.needsDstSwap ? " / " : ""}{route.needsDstSwap ? "USDC→" : ""} (slippage applies)
-            </div>
-          )}
-          {route.note && route.rail === "unsupported" && (
-            <div className="mt-0.5 text-[9px] text-error">{route.note}</div>
-          )}
+          <div className="nodrag mt-0.5 space-y-1">
+            {routes.length === 0 && !routesLoading && (
+              <p className="text-[9px] text-text-tertiary">Pick a destination chain and asset</p>
+            )}
+            {routes.map((r) => {
+              const isSel = selected?.id === r.id;
+              const tokenAmt =
+                d.tokenOut && tokenOutPrice > 0 ? r.receivedUsd / tokenOutPrice : null;
+              const eta =
+                r.etaSeconds >= 60 ? `~${Math.round(r.etaSeconds / 60)} min` : `~${r.etaSeconds}s`;
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  disabled={!!r.unavailable}
+                  onClick={() => updateNodeData(id, { routeId: r.id })}
+                  className={`w-full rounded-lg border px-2 py-1.5 text-left transition-colors ${
+                    r.unavailable
+                      ? "cursor-not-allowed border-border bg-bg-secondary/40 opacity-50"
+                      : isSel
+                        ? "border-brand/50 bg-brand/10"
+                        : "border-border bg-bg-secondary hover:border-brand/30"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-1 text-[10px] font-semibold text-text-primary">
+                      {r.name}
+                      {r.preferred && !r.unavailable && (
+                        <span className="rounded bg-success/15 px-1 text-[8px] font-semibold text-success">
+                          best for USDC
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-[10px] text-text-tertiary">{eta}</span>
+                  </div>
+                  {r.unavailable ? (
+                    <div className="mt-0.5 text-[9px] text-text-tertiary">{r.unavailable}</div>
+                  ) : (
+                    <div className="mt-0.5 flex items-center justify-between text-[9px] text-text-tertiary">
+                      <span className="text-text-secondary">
+                        {tokenAmt != null && d.tokenOut
+                          ? `~${tokenAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${d.tokenOut.symbol} (${formatUsd(r.receivedUsd)})`
+                          : formatUsd(r.receivedUsd)}
+                      </span>
+                      <span>
+                        fee {r.feeBps != null ? `${r.feeBps} bps · ` : ""}
+                        {formatUsd(r.feeUsd)}
+                        {r.gasUsd != null ? ` · gas ~${formatUsd(r.gasUsd)}` : ""}
+                      </span>
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 

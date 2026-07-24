@@ -11,6 +11,7 @@ import Image from "next/image";
 import NavTab from "./NavTab";
 import { useChain } from "@/lib/context/ChainContext";
 import { CHAIN_CONFIGS } from "@/lib/web3/chains";
+import ChainIcon from "@/components/canvas/ChainIcon";
 
 export default function Navbar() {
   const { slug } = useChain();
@@ -83,20 +84,7 @@ export default function Navbar() {
             onClick={() => setChainMenuOpen(!chainMenuOpen)}
             className="flex items-center gap-2 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-sm text-text-secondary transition-colors hover:bg-bg-card"
           >
-            {currentChain.slug === "ethereum" ? (
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <circle cx="8" cy="8" r="7" fill="#627EEA" />
-                <path d="M8 2v4.5L11.5 8 8 2z" fill="white" fillOpacity="0.6" />
-                <path d="M8 2L4.5 8 8 6.5V2z" fill="white" />
-                <path d="M8 10.5v3.5l3.5-5L8 10.5z" fill="white" fillOpacity="0.6" />
-                <path d="M8 14v-3.5L4.5 9 8 14z" fill="white" />
-              </svg>
-            ) : (
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <circle cx="8" cy="8" r="7" fill="#0052FF" />
-                <text x="8" y="11" textAnchor="middle" fill="white" fontSize="8" fontWeight="bold">B</text>
-              </svg>
-            )}
+            <ChainIcon chainId={currentChain.chainId} size={16} />
             {currentChain.label}
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
               <path d="M3 5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -121,6 +109,7 @@ export default function Navbar() {
                       : "text-text-secondary"
                   }`}
                 >
+                  <ChainIcon chainId={chain.chainId} size={16} />
                   {chain.label}
                   {chain.slug === slug && (
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="ml-auto">

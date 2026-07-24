@@ -10,6 +10,8 @@ interface Option {
   value: string;
   label: string;
   icon?: string;
+  /** Rendered instead of `icon` when set (for inline SVG marks). */
+  iconNode?: React.ReactNode;
 }
 
 interface SearchSelectProps {
@@ -84,16 +86,18 @@ export default function SearchSelect({
         }}
         className="flex w-full items-center gap-2 rounded-lg border border-border bg-bg-secondary px-2 py-1.5 text-xs text-text-primary outline-none transition-colors hover:border-brand/30"
       >
-        {selected?.icon && (
-          <Image
-            src={selected.icon}
-            alt=""
-            width={14}
-            height={14}
-            className="rounded-full shrink-0"
-            unoptimized
-          />
-        )}
+        {selected?.iconNode
+          ? selected.iconNode
+          : selected?.icon && (
+              <Image
+                src={selected.icon}
+                alt=""
+                width={14}
+                height={14}
+                className="rounded-full shrink-0"
+                unoptimized
+              />
+            )}
         <span className={`flex-1 text-left ${selected ? "text-text-primary" : "text-text-tertiary"}`}>
           {selected ? selected.label : placeholder}
         </span>
@@ -117,8 +121,8 @@ export default function SearchSelect({
             />
           </div>
 
-          {/* Options */}
-          <div className="max-h-40 overflow-y-auto py-1">
+          {/* Options — scrollable but with the bar hidden (see no-scrollbar) */}
+          <div className="no-scrollbar max-h-40 overflow-y-auto py-1">
             {/* Import from CA button */}
             {addressNotInList && onImportAddress && (
               <button
@@ -157,16 +161,18 @@ export default function SearchSelect({
                       : "text-text-primary"
                   }`}
                 >
-                  {o.icon && (
-                    <Image
-                      src={o.icon}
-                      alt=""
-                      width={14}
-                      height={14}
-                      className="rounded-full shrink-0"
-                      unoptimized
-                    />
-                  )}
+                  {o.iconNode
+                    ? o.iconNode
+                    : o.icon && (
+                        <Image
+                          src={o.icon}
+                          alt=""
+                          width={14}
+                          height={14}
+                          className="rounded-full shrink-0"
+                          unoptimized
+                        />
+                      )}
                   <span className="flex-1 text-center">{o.label}</span>
                 </button>
               ))

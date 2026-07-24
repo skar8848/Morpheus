@@ -994,7 +994,7 @@ export default function CanvasPage() {
                   No saved strategies yet
                 </p>
               ) : (
-                <div className="max-h-64 space-y-1.5 overflow-y-auto">
+                <div className="no-scrollbar max-h-64 space-y-1.5 overflow-y-auto">
                   {savedStrategies.map((s) => (
                     <div
                       key={s.id}

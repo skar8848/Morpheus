@@ -4,7 +4,7 @@
 import type { Edge, Connection } from "@xyflow/react";
 import type { CanvasNode, BridgeNodeData } from "./types";
 import { VALID_CONNECTIONS } from "./types";
-import { resolveBridgeRoute } from "./bridge";
+
 import { isAddress } from "viem";
 
 /** Safe parseFloat that rejects NaN, Infinity, and negatives */
@@ -298,9 +298,8 @@ export function validateGraph(
         if (!d.tokenOut) errors.push(`Bridge node: no destination asset selected`);
         else if (!isValidAddr(d.tokenOut.address))
           errors.push(`Bridge node: invalid destination asset`);
-        const route = resolveBridgeRoute(d.tokenIn, d.tokenOut, d.srcChainId, d.dstChainId);
-        if (route.rail === "unsupported")
-          errors.push(`Bridge node: ${route.note ?? "unsupported route"}`);
+        // Routes are proposed and ranked, never imposed — the node itself
+        // greys out any rail it can't quote, so nothing to reject here.
         break;
       }
     }

@@ -152,3 +152,15 @@ body {
 .animate-fade-in {
   animation: fade-in-up 0.25s ease-out;
 }
+/* Hide scrollbars while keeping the area scrollable.
+   Used on the sidebar and in-node dropdowns so a scrollbar appearing (e.g. when
+   the Templates section expands) never reflows the content next to it. */
+.no-scrollbar {
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* legacy Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;                  /* Chrome/Safari */
+}

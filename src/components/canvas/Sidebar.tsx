@@ -98,7 +98,7 @@ export default function Sidebar({
       </button>
 
       {!collapsed && (
-        <div className="flex-1 overflow-y-auto p-3">
+        <div className="no-scrollbar flex-1 overflow-y-auto p-3">
           {/* Node types */}
           <div className="mb-4">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">

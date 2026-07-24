@@ -808,14 +808,14 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         <div
           className={`transition-all duration-300 ${
             expanded || isExecuting
-              ? "max-h-[85vh] overflow-y-auto opacity-100 scrollbar-thin"
+              ? "no-scrollbar max-h-[85vh] overflow-y-auto opacity-100"
               : "max-h-0 overflow-hidden opacity-0"
           }`}
         >
           <div className="border-t border-border px-5 py-4">
             {/* Steps timeline */}
             {steps.length > 0 ? (
-              <div className="relative max-h-[280px] overflow-y-auto pr-1 scrollbar-thin">
+              <div className="no-scrollbar relative max-h-[280px] overflow-y-auto pr-1">
                 <div className="space-y-0">
                   {steps.map((step, i) => {
                     const done = !!txHash;
