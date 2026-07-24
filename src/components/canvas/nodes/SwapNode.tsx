@@ -5,7 +5,6 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position, useReactFlow, useEdges, useNodes, type NodeProps } from "@xyflow/react";
-import Image from "next/image";
 import { erc20Abi, isAddress } from "viem";
 import { readContracts } from "wagmi/actions";
 import { useChain } from "@/lib/context/ChainContext";
@@ -21,6 +20,7 @@ import type { SwapNodeData, CanvasNode } from "@/lib/canvas/types";
 import type { Asset } from "@/lib/graphql/types";
 import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
 import ChainIcon from "../ChainIcon";
+import TokenIcon from "../TokenIcon";
 import NodeShell from "./NodeShell";
 import SearchSelect from "./SearchSelect";
 
@@ -290,9 +290,18 @@ function SwapNodeComponent({ id, data }: NodeProps) {
     }
   }, [d.tokenIn, d.tokenOut, allTokens]);
 
+  // Badge every token with the chain the swap actually settles on — after a
+  // bridge that isn't the canvas chain, and the logos alone don't say so.
   const assetOptions = useMemo(
-    () => allTokens.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI || undefined })),
-    [allTokens]
+    () =>
+      allTokens.map((a) => ({
+        value: a.address,
+        label: a.symbol,
+        iconNode: (
+          <TokenIcon logoURI={a.logoURI || undefined} symbol={a.symbol} chainId={chainId} size={14} />
+        ),
+      })),
+    [allTokens, chainId]
   );
 
   // Handle import of a custom token by contract address
@@ -374,16 +383,12 @@ function SwapNodeComponent({ id, data }: NodeProps) {
             <label className="text-[10px] text-text-tertiary">From</label>
             {d.tokenIn && availableIn > 0 && (
               <div className="flex items-center gap-1.5">
-                {d.tokenIn.logoURI && (
-                  <Image
-                    src={d.tokenIn.logoURI}
-                    alt=""
-                    width={11}
-                    height={11}
-                    className="rounded-full"
-                    unoptimized
-                  />
-                )}
+                <TokenIcon
+                  logoURI={d.tokenIn.logoURI}
+                  symbol={d.tokenIn.symbol}
+                  chainId={chainId}
+                  size={11}
+                />
                 <span className="text-[9px] text-text-tertiary">
                   {tokenInMatchesUpstream ? "Upstream" : "Wallet"}:{" "}
                   <span className="text-text-secondary">{availableIn.toFixed(4)}</span>
@@ -491,16 +496,12 @@ function SwapNodeComponent({ id, data }: NodeProps) {
             <label className="text-[10px] text-text-tertiary">To</label>
             {d.tokenOut && walletBalanceOut > 0 && (
               <div className="flex items-center gap-1.5">
-                {d.tokenOut.logoURI && (
-                  <Image
-                    src={d.tokenOut.logoURI}
-                    alt=""
-                    width={11}
-                    height={11}
-                    className="rounded-full"
-                    unoptimized
-                  />
-                )}
+                <TokenIcon
+                  logoURI={d.tokenOut.logoURI}
+                  symbol={d.tokenOut.symbol}
+                  chainId={chainId}
+                  size={11}
+                />
                 <span className="text-[9px] text-text-tertiary">
                   Wallet:{" "}
                   <span className="text-text-secondary">{walletBalanceOut.toFixed(4)}</span>
@@ -539,16 +540,12 @@ function SwapNodeComponent({ id, data }: NodeProps) {
             ) : quote ? (
               <>
                 <div className="flex items-center gap-1.5">
-                  {d.tokenOut.logoURI && (
-                    <Image
-                      src={d.tokenOut.logoURI}
-                      alt={d.tokenOut.symbol}
-                      width={14}
-                      height={14}
-                      className="rounded-full"
-                      unoptimized
-                    />
-                  )}
+                  <TokenIcon
+                    logoURI={d.tokenOut.logoURI}
+                    symbol={d.tokenOut.symbol}
+                    chainId={chainId}
+                    size={14}
+                  />
                   <span className="text-xs font-medium text-text-primary">
                     {quote} {d.tokenOut.symbol}
                   </span>

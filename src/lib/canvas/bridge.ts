@@ -127,12 +127,28 @@ export function findChainConflictEdges(
   for (const incoming of byTarget.values()) {
     if (incoming.length < 2) continue;
     const chains = incoming.map((e) => getNodeOutputChainId(e.source, nodes, edges, homeChainId));
-    const distinct = Array.from(new Set(chains));
-    if (distinct.length < 2) continue;
-    const names = distinct.map((c) => CHAIN_LABELS[c] ?? `chain ${c}`).join(" and ");
-    for (const e of incoming) {
-      conflicts.set(e.id, `Inputs arrive on ${names} — a node settles on one chain only`);
+    if (new Set(chains).size < 2) continue;
+
+    // The node settles on the chain most of its inputs agree on (ties go to the
+    // canvas chain). Only the inputs that DISAGREE are at fault — flagging every
+    // edge would blame links that are perfectly fine.
+    const counts = new Map<SupportedChainId, number>();
+    for (const c of chains) counts.set(c, (counts.get(c) ?? 0) + 1);
+    let settleChain = chains[0];
+    let best = -1;
+    for (const [chain, n] of counts) {
+      if (n > best || (n === best && chain === homeChainId)) {
+        best = n;
+        settleChain = chain;
+      }
     }
+
+    const settleName = CHAIN_LABELS[settleChain] ?? `chain ${settleChain}`;
+    incoming.forEach((e, i) => {
+      if (chains[i] === settleChain) return;
+      const fromName = CHAIN_LABELS[chains[i]] ?? `chain ${chains[i]}`;
+      conflicts.set(e.id, `Arrives on ${fromName}, but this node settles on ${settleName}`);
+    });
   }
   return conflicts;
 }
