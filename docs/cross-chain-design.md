@@ -255,6 +255,18 @@ New rules in `validation.ts` / `preflight.ts`:
 4. **M3 — Option-A execution**: plan compiler (split graph into segments +
    bridge legs), source signature (bundle+`depositForBurn`/`sendToken`),
    `bridgeStatus` poller, destination signature, resumable stepper. *Large.*
+   - **Landed (verified engine):** `crossChainPlan.ts` (segment/leg compiler +
+     `sliceSegment`), `cctp.ts` (verified TokenMessengerV2/MessageTransmitterV2
+     addresses + `depositForBurn`/`receiveMessage` encoding), `/api/bridge-
+     attestation` (Iris message+attestation poller). All compile; pure/testable.
+   - **Remaining (needs live validation before enabling):** the two-phase
+     execute stepper. Phase A = source segment Bundler3 bundle (via
+     `buildExecutionBundle` on `sliceSegment`) + USDC approve to TokenMessengerV2
+     + `depositForBurn`. Phase B = destination segment bundle — this needs the
+     bridged funds modelled as a **wallet input** (the dest segment's entry node
+     has no in-graph funding source), a small executor change. Plus resumable
+     localStorage state for the pending plan. **Do not enable without a
+     small-amount mainnet test** — it moves real USDC across chains.
 5. **M4 (optional) — Option B**: `MorpheusComposer` contract + relayer for
    one-signature UX. *Large, separate track, needs audit.*
 
