@@ -102,6 +102,14 @@ function SwapNodeComponent({ id, data }: NodeProps) {
       }
       return { upstreamAsset: collateralAsset, upstreamAmount: amt };
     }
+    if (sd.type === "bridge") {
+      // Funds delivered on the bridge's destination chain. The amount is the
+      // route's quoted output (USD), converted below via the token price when
+      // the rail doesn't give a token figure.
+      const tokenOut = sd.tokenOut as AssetInfo | null;
+      const quoted = parseFloat((sd.quoteOut as string) || "0");
+      return { upstreamAsset: tokenOut ?? null, upstreamAmount: isFinite(quoted) ? quoted : 0 };
+    }
     return { upstreamAsset: null, upstreamAmount: 0 };
   }, [edges, allNodes, id]);
 

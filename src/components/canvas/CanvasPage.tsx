@@ -33,6 +33,46 @@ import ChatPanel from "./ChatPanel";
 // and work; only the mount point is gated.
 const ENABLE_CHAT_PANEL = false;
 
+/**
+ * Replace every <img> src inside `root` with an inlined data URI, so the
+ * screenshot rasterizer never has to fetch anything mid-render.
+ *
+ * Images are handled independently: a token or route logo that 404s or blocks
+ * CORS just stays as-is instead of failing the whole export. Returns a function
+ * that restores the original srcs — always call it in a `finally`.
+ */
+async function inlineImagesForExport(root: HTMLElement): Promise<() => void> {
+  const imgs = Array.from(root.querySelectorAll("img"));
+  const restores: (() => void)[] = [];
+
+  await Promise.all(
+    imgs.map(async (img) => {
+      const original = img.getAttribute("src");
+      const src = img.currentSrc || img.src;
+      if (!original || !src || src.startsWith("data:")) return;
+      try {
+        const res = await fetch(src, { mode: "cors", cache: "force-cache" });
+        if (!res.ok) return;
+        const blob = await res.blob();
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        });
+        img.setAttribute("src", dataUrl);
+        restores.push(() => img.setAttribute("src", original));
+        // Make sure the new source is decoded before we rasterize.
+        await img.decode().catch(() => {});
+      } catch {
+        // Leave this image alone; the rest of the export is unaffected.
+      }
+    })
+  );
+
+  return () => restores.forEach((r) => r());
+}
+
 export default function CanvasPage() {
   const {
     nodes,
@@ -866,7 +906,7 @@ export default function CanvasPage() {
           Organize
         </button>
         <button
-          onClick={() => {
+          onClick={async () => {
             const viewport = document.querySelector(".react-flow__viewport") as HTMLElement;
             if (!viewport || nodes.length === 0) return;
 
@@ -889,7 +929,7 @@ export default function CanvasPage() {
             const tx = -minX + padding;
             const ty = -minY + padding;
 
-            const doExport = (skipImages: boolean) =>
+            const doExport = () =>
               toPng(viewport, {
                 backgroundColor: "#15181a",
                 width: contentW,
@@ -900,7 +940,6 @@ export default function CanvasPage() {
                 filter: (node) => {
                   if (node?.classList?.contains("react-flow__minimap")) return false;
                   if (node?.classList?.contains("react-flow__controls")) return false;
-                  if (skipImages && node instanceof HTMLImageElement) return false;
                   return true;
                 },
                 style: {
@@ -910,14 +949,23 @@ export default function CanvasPage() {
                 },
               });
 
-            doExport(false)
-              .catch(() => doExport(true))
-              .then((dataUrl) => {
-                const a = document.createElement("a");
-                a.download = "morpheus-strategy.png";
-                a.href = dataUrl;
-                a.click();
-              });
+            // Inline every <img> as a data URI first, one by one. Rasterizing
+            // remote images inside toPng is all-or-nothing: a single failure
+            // used to abort the export and the retry then dropped EVERY image,
+            // losing the chain and route logos. Failing one image here just
+            // leaves that one blank.
+            const restore = await inlineImagesForExport(viewport);
+            try {
+              const dataUrl = await doExport();
+              const a = document.createElement("a");
+              a.download = "morpheus-strategy.png";
+              a.href = dataUrl;
+              a.click();
+            } catch (err) {
+              console.error("[screenshot] export failed:", err);
+            } finally {
+              restore();
+            }
           }}
           className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-card/90 px-3 py-1.5 text-[10px] text-text-tertiary transition-colors hover:text-brand"
         >

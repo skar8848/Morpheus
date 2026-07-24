@@ -3,7 +3,7 @@
 
 "use client";
 
-import { memo, useEffect, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo } from "react";
 import { Handle, Position, useReactFlow, useEdges, useNodes, type NodeProps } from "@xyflow/react";
 import Image from "next/image";
 import { parseUnits, formatUnits } from "viem";
@@ -11,7 +11,7 @@ import { useAccount } from "wagmi";
 import { useChain } from "@/lib/context/ChainContext";
 import { useAllAssets } from "@/lib/hooks/useAllAssets";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
-import { useBridgeRoutes } from "@/lib/hooks/useBridgeRoutes";
+import { useBridgeRoutes, type RouteQuote } from "@/lib/hooks/useBridgeRoutes";
 import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
 import ChainIcon from "../ChainIcon";
 import { isUsdc } from "@/lib/canvas/bridge";
@@ -149,7 +149,10 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
   const amountRaw = useMemo(() => {
     if (!tokenIn || !(amountIn > 0)) return "0";
     try {
-      return parseUnits(String(amountIn), tokenIn.decimals).toString();
+      // toFixed, not String(): below 1e-6 JS switches to exponential notation
+      // ("1e-7"), which parseUnits rejects — that silently zeroed the amount
+      // and no route was ever quoted for small balances.
+      return parseUnits(amountIn.toFixed(tokenIn.decimals), tokenIn.decimals).toString();
     } catch {
       return "0";
     }
@@ -171,23 +174,57 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
     [routes, d.routeId]
   );
 
-  // Persist the chosen route + quote onto node data for serialization/execution.
+  /** Destination amount in tokenOut units: the rail's own figure when it gives
+   *  one, else derived from the USD value and the token price. */
+  const routeTokenAmount = useCallback(
+    (r: RouteQuote | null): number | null => {
+      if (!r || !d.tokenOut) return null;
+      if (r.dstAmount) {
+        try {
+          return Number(formatUnits(BigInt(r.dstAmount), d.tokenOut.decimals));
+        } catch {
+          /* fall through to the price-derived figure */
+        }
+      }
+      return tokenOutPrice > 0 ? r.receivedUsd / tokenOutPrice : null;
+    },
+    [d.tokenOut, tokenOutPrice]
+  );
+
+  // Persist the chosen route + quote onto node data for serialization/execution
+  // and for downstream nodes (swap / vault deposit) to pick up.
+  const selectedTokenAmount = routeTokenAmount(selected);
   useEffect(() => {
-    const q = selected && selected.receivedUsd > 0 ? String(selected.receivedUsd) : "";
+    const q = selectedTokenAmount && selectedTokenAmount > 0 ? String(selectedTokenAmount) : "";
+    const qUsd = selected?.receivedUsd ?? 0;
     if (
       amountInUsd !== d.amountInUsd ||
       q !== d.quoteOut ||
+      qUsd !== d.quoteOutUsd ||
       routesLoading !== d.quoteLoading ||
       (selected && selected.id !== d.routeId)
     ) {
       updateNodeData(id, {
         amountInUsd,
         quoteOut: q,
+        quoteOutUsd: qUsd,
         quoteLoading: routesLoading,
         routeId: selected?.id,
       });
     }
-  }, [amountInUsd, selected, routesLoading, d.amountInUsd, d.quoteOut, d.quoteLoading, d.routeId, id, updateNodeData]);
+  }, [
+    amountInUsd,
+    selected,
+    selectedTokenAmount,
+    routesLoading,
+    d.amountInUsd,
+    d.quoteOut,
+    d.quoteOutUsd,
+    d.quoteLoading,
+    d.routeId,
+    id,
+    updateNodeData,
+  ]);
 
   const srcLabel = CHAIN_CONFIGS.find((c) => c.chainId === srcChainId)?.label ?? `Chain ${srcChainId}`;
 
@@ -308,18 +345,7 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
             )}
             {routes.map((r) => {
               const isSel = selected?.id === r.id;
-              // Prefer the rail's own destination amount; fall back to USD/price.
-              let tokenAmt: number | null = null;
-              if (r.dstAmount && d.tokenOut) {
-                try {
-                  tokenAmt = Number(formatUnits(BigInt(r.dstAmount), d.tokenOut.decimals));
-                } catch {
-                  tokenAmt = null;
-                }
-              }
-              if (tokenAmt == null && d.tokenOut && tokenOutPrice > 0) {
-                tokenAmt = r.receivedUsd / tokenOutPrice;
-              }
+              const tokenAmt = routeTokenAmount(r);
               const eta =
                 r.etaSeconds >= 60 ? `~${Math.round(r.etaSeconds / 60)} min` : `~${r.etaSeconds}s`;
               return (

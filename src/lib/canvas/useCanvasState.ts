@@ -244,6 +244,7 @@ export function useCanvasState() {
             amountIn: "",
             amountInUsd: 0,
             quoteOut: "",
+            quoteOutUsd: 0,
             quoteLoading: false,
           };
           break;

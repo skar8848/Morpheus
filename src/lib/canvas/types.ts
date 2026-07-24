@@ -105,7 +105,11 @@ export interface BridgeNodeData {
   tokenOut: Asset | null; // asset delivered on the destination chain
   amountIn: string;
   amountInUsd: number;
-  quoteOut: string; // estimated received on the destination chain
+  /** Estimated amount received on the destination chain, in tokenOut units —
+   *  same convention as SwapNode.quoteOut so downstream nodes can read either. */
+  quoteOut: string;
+  /** USD value of quoteOut. */
+  quoteOutUsd: number;
   quoteLoading: boolean;
   /** Chosen route id (e.g. "cctp-fast"); defaults to the best-ranked one. */
   routeId?: string;

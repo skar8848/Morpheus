@@ -73,6 +73,13 @@ interface ApiRoute {
  */
 const QUOTE_DEBOUNCE_MS = 700;
 
+/**
+ * Bridge quotes go stale (fees, liquidity, gas), so re-quote on a timer the way
+ * LI.FI's own UI does. Kept a little above the 30s server cache so a refresh
+ * actually fetches instead of replaying the cached answer.
+ */
+const QUOTE_REFRESH_MS = 35_000;
+
 export interface BridgeRoutesParams {
   srcChainId: SupportedChainId;
   dstChainId: SupportedChainId;
@@ -101,6 +108,16 @@ export function useBridgeRoutes(params: BridgeRoutesParams): BridgeRoutesResult 
   // Same-chain isn't a bridge at all — derived below rather than pushed into
   // state, so the effect never has to setState just to blank the list.
   const sameChain = srcChainId === dstChainId;
+
+  // Bumped on a timer to force a re-quote of the same parameters.
+  const [refreshTick, setRefreshTick] = useState(0);
+  const quotable = !sameChain && amountRaw !== "0" && !!srcToken && !!dstToken;
+
+  useEffect(() => {
+    if (!quotable) return;
+    const iv = setInterval(() => setRefreshTick((t) => t + 1), QUOTE_REFRESH_MS);
+    return () => clearInterval(iv);
+  }, [quotable]);
 
   useEffect(() => {
     if (sameChain) return;
@@ -171,7 +188,7 @@ export function useBridgeRoutes(params: BridgeRoutesParams): BridgeRoutesResult 
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [sameChain, srcChainId, dstChainId, amountUsd, amountRaw, srcToken, dstToken, isUsdc, wallet]);
+  }, [sameChain, refreshTick, srcChainId, dstChainId, amountUsd, amountRaw, srcToken, dstToken, isUsdc, wallet]);
 
   return sameChain ? { loading: false, routes: [], error: null } : result;
 }
