@@ -82,6 +82,9 @@ const typeLabels: Record<string, string> = {
 const EXPLORER_BASE: Record<number, string> = {
   1: "https://etherscan.io",
   8453: "https://basescan.org",
+  42161: "https://arbiscan.io",
+  999: "https://hyperevmscan.io",
+  143: "https://monadscan.com",
 };
 
 /** Safe parseFloat */
@@ -485,7 +488,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         let isAuth = false;
         try {
           isAuth = (await readContract(wagmiConfig, {
-            address: MORPHO_BLUE,
+            address: MORPHO_BLUE[cid],
             abi: morphoBlueAbi,
             functionName: "isAuthorized",
             args: [currentAddress, adapter],

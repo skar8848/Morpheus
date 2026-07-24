@@ -4,7 +4,9 @@
 import type { Asset } from "../graphql/types";
 import type { SupportedChainId } from "../web3/chains";
 
-export const COLLATERAL_ASSETS: Record<SupportedChainId, Asset[]> = {
+// Partial: chains without a preset list still work for browsing and importing
+// positions; the collateral picker just starts empty until seeded here.
+export const COLLATERAL_ASSETS: Partial<Record<SupportedChainId, Asset[]>> = {
   // Ethereum mainnet
   1: [
     {
@@ -135,6 +137,44 @@ export const COLLATERAL_ASSETS: Record<SupportedChainId, Asset[]> = {
       address: "0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb",
       decimals: 18,
       logoURI: "https://cdn.morpho.org/assets/logos/dai.svg",
+    },
+  ],
+  // Arbitrum One
+  42161: [
+    {
+      symbol: "WETH",
+      name: "Wrapped Ether",
+      address: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+      decimals: 18,
+      logoURI: "https://cdn.morpho.org/assets/logos/weth.svg",
+    },
+    {
+      symbol: "wstETH",
+      name: "Wrapped Lido Staked ETH",
+      address: "0x5979D7b546E38E414F7E9822514be443A4800529",
+      decimals: 18,
+      logoURI: "https://cdn.morpho.org/assets/logos/wsteth.svg",
+    },
+    {
+      symbol: "WBTC",
+      name: "Wrapped Bitcoin",
+      address: "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f",
+      decimals: 8,
+      logoURI: "https://cdn.morpho.org/assets/logos/wbtc.svg",
+    },
+    {
+      symbol: "USDC",
+      name: "USD Coin",
+      address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      decimals: 6,
+      logoURI: "https://cdn.morpho.org/assets/logos/usdc.svg",
+    },
+    {
+      symbol: "USDT",
+      name: "Tether USD",
+      address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
+      decimals: 6,
+      logoURI: "https://cdn.morpho.org/assets/logos/usdt.svg",
     },
   ],
 };

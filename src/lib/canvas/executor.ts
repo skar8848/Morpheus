@@ -323,9 +323,10 @@ export function buildMorphoAuthorizationTx(
   chainId: SupportedChainId
 ): { to: `0x${string}`; data: `0x${string}` } | null {
   const adapter = GENERAL_ADAPTER1[chainId];
-  if (!adapter) return null;
+  const morpho = MORPHO_BLUE[chainId];
+  if (!adapter || !morpho) return null;
   return {
-    to: MORPHO_BLUE,
+    to: morpho,
     data: encodeFunctionData({
       abi: morphoBlueAbi,
       functionName: "setAuthorization",

@@ -3,16 +3,33 @@
 
 import type { SupportedChainId } from "../web3/chains";
 
-export const MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb" as const;
+// Morpho Blue is NOT the same address on every chain — the 0xBBBB… vanity was
+// only reproduced on Ethereum + Base. All values verified against the official
+// @morpho-org/morpho-ts address registry.
+export const MORPHO_BLUE: Record<SupportedChainId, `0x${string}`> = {
+  1: "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+  8453: "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+  42161: "0x6c247b1F6182318877311737BaC0844bAa518F5e",
+  999: "0x68e37dE8d93d3496ae143F2E900490f6280C57cD",
+  143: "0xD5D960E8C380B724a48AC59E2DfF1b2CB4a1eAee",
+};
 
 export const BUNDLER3: Record<SupportedChainId, `0x${string}`> = {
   1: "0x6566194141eefa99Af43Bb5Aa71460Ca2Dc90245",
   8453: "0x6BFd8137e702540E7A42B74178A4a49Ba43920C4",
+  42161: "0x1FA4431bC113D308beE1d46B0e98Cb805FB48C13",
+  999: "0xa3F50477AfA601C771874260A3B34B40e244Fa0e",
+  143: "0x82b684483e844422FD339df0b67b3B111F02c66E",
 };
 
 export const GENERAL_ADAPTER1: Record<SupportedChainId, `0x${string}`> = {
   1: "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0",
+  // NOTE: the SDK registry lists 0xb98c948CFA24072e58935BC004a8A7b376AE746A for
+  // Base — this older GeneralAdapter1 is kept as-is pending confirmation.
   8453: "0x12fa4A73d40E2F7a8cFfE97FB2e690213d9A5bCe",
+  42161: "0x9954aFB60BB5A222714c478ac86990F221788B88",
+  999: "0xD7F48aDE56613E8605863832B7B8A1985B934aE4",
+  143: "0x725AB8CAd931BCb80Fdbf10955a806765cCe00e5",
 };
 
 // Minimal ABIs for encoding bundler calls
@@ -110,6 +127,9 @@ export const morphoBlueAbi = [
 export const USDT_ADDRESSES: Record<SupportedChainId, `0x${string}` | null> = {
   1: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
   8453: null, // Native USDT not deployed on Base
+  42161: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
+  999: null,
+  143: null,
 };
 
 export const generalAdapterAbi = [

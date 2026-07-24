@@ -208,10 +208,11 @@ export async function runPreflight(
   let isAuthorized = true;
   if (needsAuth) {
     const adapter = GENERAL_ADAPTER1[chainId as SupportedChainId];
-    if (adapter) {
+    const morpho = MORPHO_BLUE[chainId as SupportedChainId];
+    if (adapter && morpho) {
       try {
         isAuthorized = (await readContract(wagmiConfig, {
-          address: MORPHO_BLUE,
+          address: morpho,
           abi: morphoBlueAbi,
           functionName: "isAuthorized",
           args: [userAddress, adapter],
