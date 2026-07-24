@@ -332,7 +332,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     setApprovalStep(0);
 
     // 1. Validate current graph
-    const errors = validateGraph(nodes, edges);
+    const errors = validateGraph(nodes, edges, chainId as SupportedChainId);
     setValidationErrors(errors);
     if (errors.length > 0) {
       setShowConfirm(false);

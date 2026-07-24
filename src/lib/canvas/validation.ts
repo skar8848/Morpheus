@@ -4,6 +4,8 @@
 import type { Edge, Connection } from "@xyflow/react";
 import type { CanvasNode, BridgeNodeData } from "./types";
 import { VALID_CONNECTIONS } from "./types";
+import { findChainConflictEdges } from "./bridge";
+import type { SupportedChainId } from "@/lib/web3/chains";
 
 import { isAddress } from "viem";
 
@@ -106,9 +108,22 @@ export function getConnectionHint(
  */
 export function validateGraph(
   nodes: CanvasNode[],
-  edges: Edge[]
+  edges: Edge[],
+  homeChainId?: SupportedChainId
 ): string[] {
   const errors: string[] = [];
+
+  // --- Cross-chain input conflicts ---
+  // A node settles on a single chain, so it can't be fed from two at once.
+  // Reported here so the strategy can't be executed, not just flagged in the UI.
+  if (homeChainId !== undefined) {
+    const seen = new Set<string>();
+    for (const reason of findChainConflictEdges(nodes, edges, homeChainId).values()) {
+      if (seen.has(reason)) continue;
+      seen.add(reason);
+      errors.push(reason);
+    }
+  }
 
   // --- Self-loop and duplicate edge detection ---
   const seenEdges = new Set<string>();

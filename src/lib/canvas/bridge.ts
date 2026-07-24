@@ -90,6 +90,62 @@ export function resolveBridgeRoute(
  * a bridge, in which case it's that bridge's destination chain. Used by
  * validation now and by the execution plan compiler later (M3).
  */
+export function getNodeOutputChainId(
+  nodeId: string,
+  nodes: CanvasNode[],
+  edges: Edge[],
+  homeChainId: SupportedChainId
+): SupportedChainId {
+  const node = nodes.find((n) => n.id === nodeId);
+  // A bridge consumes on its source chain but *delivers* on its destination.
+  if (node && (node.data as { type?: string }).type === "bridge") {
+    return (node.data as BridgeNodeData).dstChainId ?? homeChainId;
+  }
+  return getNodeChainId(nodeId, nodes, edges, homeChainId);
+}
+
+/**
+ * Edges that feed a node from a different chain than its other inputs.
+ *
+ * A node can only execute on one chain, so mixing (say) a mainnet borrow and a
+ * Base bridge output into the same vault deposit can never settle. Returns the
+ * ids of every edge into such a node so the UI can grey them and explain why.
+ */
+export function findChainConflictEdges(
+  nodes: CanvasNode[],
+  edges: Edge[],
+  homeChainId: SupportedChainId
+): Map<string, string> {
+  const conflicts = new Map<string, string>();
+  const byTarget = new Map<string, Edge[]>();
+  for (const e of edges) {
+    const arr = byTarget.get(e.target) ?? [];
+    arr.push(e);
+    byTarget.set(e.target, arr);
+  }
+
+  for (const incoming of byTarget.values()) {
+    if (incoming.length < 2) continue;
+    const chains = incoming.map((e) => getNodeOutputChainId(e.source, nodes, edges, homeChainId));
+    const distinct = Array.from(new Set(chains));
+    if (distinct.length < 2) continue;
+    const names = distinct.map((c) => CHAIN_LABELS[c] ?? `chain ${c}`).join(" and ");
+    for (const e of incoming) {
+      conflicts.set(e.id, `Inputs arrive on ${names} — a node settles on one chain only`);
+    }
+  }
+  return conflicts;
+}
+
+/** Short chain names for user-facing conflict messages. */
+const CHAIN_LABELS: Partial<Record<SupportedChainId, string>> = {
+  1: "Ethereum",
+  8453: "Base",
+  42161: "Arbitrum",
+  999: "HyperEVM",
+  143: "Monad",
+};
+
 export function getNodeChainId(
   nodeId: string,
   nodes: CanvasNode[],

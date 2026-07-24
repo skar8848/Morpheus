@@ -14,6 +14,7 @@ import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
 import { useBridgeRoutes, type RouteQuote } from "@/lib/hooks/useBridgeRoutes";
 import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
 import ChainIcon from "../ChainIcon";
+import TokenIcon from "../TokenIcon";
 import { isUsdc } from "@/lib/canvas/bridge";
 import { formatUsd } from "@/lib/utils/format";
 import type { BridgeNodeData } from "@/lib/canvas/types";
@@ -119,12 +120,22 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
   }, [manualSource, upstreamAsset, upstreamAmount, d.tokenIn, d.amountIn, id, updateNodeData]);
 
   const tokenOutOptions = useMemo(
-    () => dstAssets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
-    [dstAssets]
+    () =>
+      dstAssets.map((a) => ({
+        value: a.address,
+        label: a.symbol,
+        iconNode: <TokenIcon logoURI={a.logoURI} symbol={a.symbol} chainId={dstChainId} size={14} />,
+      })),
+    [dstAssets, dstChainId]
   );
   const tokenInOptions = useMemo(
-    () => srcAssets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
-    [srcAssets]
+    () =>
+      srcAssets.map((a) => ({
+        value: a.address,
+        label: a.symbol,
+        iconNode: <TokenIcon logoURI={a.logoURI} symbol={a.symbol} chainId={srcChainId} size={14} />,
+      })),
+    [srcAssets, srcChainId]
   );
 
   // Effective source asset/amount: upstream-driven, or the user's own picks.
@@ -292,17 +303,13 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
         ) : (
           <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-2 py-1.5">
             <span className="text-[10px] text-text-tertiary">In</span>
-            <span className="flex items-center gap-1.5 text-xs text-text-primary">
-              {tokenIn?.logoURI && (
-                <Image
-                  src={tokenIn.logoURI}
-                  alt=""
-                  width={14}
-                  height={14}
-                  className="rounded-full"
-                  unoptimized
-                />
-              )}
+            <span className="flex items-center gap-2 text-xs text-text-primary">
+              <TokenIcon
+                logoURI={tokenIn?.logoURI}
+                symbol={tokenIn?.symbol}
+                chainId={srcChainId}
+                size={14}
+              />
               {amountIn > 0 ? amountIn.toLocaleString(undefined, { maximumFractionDigits: 4 }) : ""}{" "}
               {tokenIn?.symbol ?? "—"}
             </span>

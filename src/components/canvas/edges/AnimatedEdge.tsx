@@ -3,7 +3,7 @@
 
 "use client";
 
-import { memo, useState, useCallback, useRef } from "react";
+import { memo, useState, useCallback, useMemo, useRef } from "react";
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -13,6 +13,10 @@ import {
   useEdges,
   type EdgeProps,
 } from "@xyflow/react";
+import { useChain } from "@/lib/context/ChainContext";
+import { findChainConflictEdges } from "@/lib/canvas/bridge";
+import type { CanvasNode } from "@/lib/canvas/types";
+import type { SupportedChainId } from "@/lib/web3/chains";
 
 /** Walk upstream from a node and return true if it or any ancestor has a blocking error */
 function isUpstreamBlocked(
@@ -43,8 +47,13 @@ function AnimatedEdgeComponent({
   markerEnd,
 }: EdgeProps) {
   const { deleteElements } = useReactFlow();
+  const { chainId: homeChainId } = useChain();
   const allNodes = useNodes();
   const allEdges = useEdges();
+  const chainConflicts = useMemo(
+    () => findChainConflictEdges(allNodes as CanvasNode[], allEdges, homeChainId as SupportedChainId),
+    [allNodes, allEdges, homeChainId]
+  );
   const [hovered, setHovered] = useState(false);
   const leaveTimer = useRef<NodeJS.Timeout | null>(null);
   const lockedPos = useRef<{ x: number; y: number } | null>(null);
@@ -142,7 +151,18 @@ function AnimatedEdgeComponent({
   const btnX = lockedPos.current?.x ?? labelX;
   const btnY = lockedPos.current?.y ?? labelY;
 
-  const edgeColor = blocked ? "var(--text-tertiary)" : hovered ? "var(--error)" : "var(--brand)";
+  // A link feeding a node from a chain its other inputs don't share can never
+  // settle — grey it like a blocked edge and say why on the label.
+  const chainConflict = chainConflicts.get(id) ?? null;
+  const inert = blocked || !!chainConflict;
+
+  const edgeColor = chainConflict
+    ? "var(--error)"
+    : blocked
+      ? "var(--text-tertiary)"
+      : hovered
+        ? "var(--error)"
+        : "var(--brand)";
 
   return (
     <>
@@ -156,14 +176,14 @@ function AnimatedEdgeComponent({
           stroke: edgeColor,
           strokeWidth: 2,
           strokeDasharray: "6 3",
-          animation: blocked ? "none" : "dash-flow 1s linear infinite",
+          animation: inert ? "none" : "dash-flow 1s linear infinite",
           transition: "stroke 0.15s ease",
-          opacity: blocked ? 0.35 : 1,
+          opacity: inert ? 0.35 : 1,
           pointerEvents: "none",
         }}
       />
       {/* Glow layer */}
-      {!blocked && (
+      {!inert && (
         <BaseEdge
           id={`${id}-glow`}
           path={edgePath}
@@ -190,7 +210,21 @@ function AnimatedEdgeComponent({
       {/* Flow label + delete button */}
       <EdgeLabelRenderer>
         {/* Flow amount label — always visible */}
-        {flowLabel && !hovered && (
+        {chainConflict && !hovered && (
+          <div
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - 14}px)`,
+              pointerEvents: "none",
+            }}
+            className="nodrag nopan"
+          >
+            <span className="rounded-md border border-error/40 bg-error/10 px-1.5 py-0.5 text-[9px] font-medium text-error backdrop-blur-sm">
+              ⚠ {chainConflict}
+            </span>
+          </div>
+        )}
+        {flowLabel && !hovered && !chainConflict && (
           <div
             style={{
               position: "absolute",
@@ -201,7 +235,7 @@ function AnimatedEdgeComponent({
           >
             <span
               className={`rounded-md px-1.5 py-0.5 text-[9px] font-medium backdrop-blur-sm transition-opacity ${
-                blocked
+                inert
                   ? "bg-bg-secondary/80 text-text-tertiary"
                   : "bg-bg-card/90 text-text-secondary border border-border/50"
               }`}
