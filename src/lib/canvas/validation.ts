@@ -2,8 +2,9 @@
 // Copyright (c) 2025-2026 Alban Derouin. All rights reserved.
 
 import type { Edge, Connection } from "@xyflow/react";
-import type { CanvasNode } from "./types";
+import type { CanvasNode, BridgeNodeData } from "./types";
 import { VALID_CONNECTIONS } from "./types";
+import { resolveBridgeRoute } from "./bridge";
 import { isAddress } from "viem";
 
 /** Safe parseFloat that rejects NaN, Infinity, and negatives */
@@ -288,6 +289,18 @@ export function validateGraph(
         }
         if (safeParseAmount(d.amount) <= 0)
           errors.push(`Withdraw node: no amount`);
+        break;
+      }
+      case "bridge": {
+        const d = node.data as BridgeNodeData;
+        if (d.srcChainId === d.dstChainId)
+          errors.push(`Bridge node: source and destination chains are the same`);
+        if (!d.tokenOut) errors.push(`Bridge node: no destination asset selected`);
+        else if (!isValidAddr(d.tokenOut.address))
+          errors.push(`Bridge node: invalid destination asset`);
+        const route = resolveBridgeRoute(d.tokenIn, d.tokenOut, d.srcChainId, d.dstChainId);
+        if (route.rail === "unsupported")
+          errors.push(`Bridge node: ${route.note ?? "unsupported route"}`);
         break;
       }
     }

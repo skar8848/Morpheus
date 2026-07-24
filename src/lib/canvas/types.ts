@@ -10,6 +10,7 @@ import type {
   UserMarketPosition,
   UserVaultPosition,
 } from "@/lib/graphql/types";
+import type { SupportedChainId } from "@/lib/web3/chains";
 
 // --- Node Data Interfaces ---
 // Index signatures required for React Flow compatibility
@@ -91,6 +92,23 @@ export interface RepayNodeData {
   collateralToWithdraw?: string;
 }
 
+/**
+ * Cross-chain bridge — CowSwap-style: resolves its route from tokenIn (source
+ * chain) → tokenOut (destination chain). See docs/cross-chain-design.md.
+ */
+export interface BridgeNodeData {
+  [key: string]: unknown;
+  type: "bridge";
+  srcChainId: SupportedChainId;
+  dstChainId: SupportedChainId;
+  tokenIn: Asset | null; // asset entering on the source chain (from upstream)
+  tokenOut: Asset | null; // asset delivered on the destination chain
+  amountIn: string;
+  amountInUsd: number;
+  quoteOut: string; // estimated received on the destination chain
+  quoteLoading: boolean;
+}
+
 export interface PositionNodeData {
   [key: string]: unknown;
   type: "position";
@@ -109,6 +127,7 @@ export type CanvasNodeData =
   | VaultDepositNodeData
   | VaultWithdrawNodeData
   | RepayNodeData
+  | BridgeNodeData
   | PositionNodeData;
 
 export type CanvasNode = Node<CanvasNodeData>;
@@ -118,18 +137,21 @@ export type CanvasNode = Node<CanvasNodeData>;
 export const VALID_CONNECTIONS: Record<string, string[]> = {
   // Wallet can directly fund a vault deposit (pure earn flow), supply
   // collateral (borrow flow), swap, or repay an existing borrow.
-  wallet: ["vaultDeposit", "supplyCollateral", "swap", "repay"],
+  wallet: ["vaultDeposit", "supplyCollateral", "swap", "repay", "bridge"],
   supplyCollateral: ["borrow", "vaultDeposit"],
-  borrow: ["swap", "vaultDeposit"],
-  swap: ["vaultDeposit", "supplyCollateral", "wallet", "repay"],
+  borrow: ["swap", "vaultDeposit", "bridge"],
+  swap: ["vaultDeposit", "supplyCollateral", "wallet", "repay", "bridge"],
   vaultDeposit: [],
-  vaultWithdraw: ["swap", "vaultDeposit", "supplyCollateral", "repay"],
+  vaultWithdraw: ["swap", "vaultDeposit", "supplyCollateral", "repay", "bridge"],
+  // Bridge output lands on the destination chain and can feed the earn/borrow
+  // legs there. It is the ONLY edge allowed to cross chains.
+  bridge: ["supplyCollateral", "vaultDeposit", "swap", "repay"],
   // Repay is a valid SOURCE when withdrawCollateralAfterRepay is true:
   // the freed collateral can be re-supplied, swapped, or deposited.
   // The downstream node auto-detects the freed collateral asset + amount
   // from the upstream repay (see SwapNode/SupplyCollateralNode/VaultDepositNode).
   repay: ["swap", "supplyCollateral", "vaultDeposit"],
-  position: ["vaultWithdraw", "supplyCollateral", "swap"],
+  position: ["vaultWithdraw", "supplyCollateral", "swap", "bridge"],
 };
 
 // --- Node accent colors ---
@@ -142,6 +164,7 @@ export const NODE_COLORS: Record<string, string> = {
   vaultDeposit: "#a855f7",
   vaultWithdraw: "#f97316",
   repay: "#ef4444",
+  bridge: "#0ea5e9",
   position: "#6b7079",
 };
 
@@ -154,6 +177,7 @@ export const DRAGGABLE_NODE_TYPES = [
   { type: "vaultDeposit", label: "Vault Deposit", icon: "V", shortcut: "D" },
   { type: "vaultWithdraw", label: "Vault Withdraw", icon: "W", shortcut: "W" },
   { type: "repay", label: "Repay", icon: "R", shortcut: "R" },
+  { type: "bridge", label: "Bridge (cross-chain)", icon: "⇄", shortcut: "G" },
 ] as const;
 
 /** Keyboard shortcut → node type mapping (lowercase key) */

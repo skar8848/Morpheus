@@ -40,8 +40,13 @@ interface AllAssetsResponse {
   };
 }
 
-export function useAllAssets() {
-  const { chainId } = useChain();
+/**
+ * Assets available on a chain. Defaults to the canvas home chain; pass an
+ * explicit chainId to fetch another chain's assets (e.g. a bridge destination).
+ */
+export function useAllAssets(overrideChainId?: number) {
+  const { chainId: homeChainId } = useChain();
+  const chainId = overrideChainId ?? homeChainId;
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(false);
 

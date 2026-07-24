@@ -20,6 +20,7 @@ import { useChain } from "@/lib/context/ChainContext";
 import { buildInitialLayout } from "./layout";
 import { isValidConnection } from "./validation";
 import { VALID_CONNECTIONS, type CanvasNode, type CanvasNodeData } from "./types";
+import type { SupportedChainId } from "@/lib/web3/chains";
 import { consumeImportedStrategy, parseDeepLink } from "./importStrategy";
 import { stripDustNodes } from "./dust";
 
@@ -233,6 +234,19 @@ export function useCanvasState() {
         case "repay":
           data = { type: "repay", market: null, amount: "", amountUsd: 0 };
           break;
+        case "bridge":
+          data = {
+            type: "bridge",
+            srcChainId: chainId as SupportedChainId,
+            dstChainId: chainId as SupportedChainId, // BridgeNode defaults this to a non-source chain
+            tokenIn: null,
+            tokenOut: null,
+            amountIn: "",
+            amountInUsd: 0,
+            quoteOut: "",
+            quoteLoading: false,
+          };
+          break;
         default:
           return;
       }
@@ -244,6 +258,7 @@ export function useCanvasState() {
         vaultDeposit: "vaultDepositNode",
         vaultWithdraw: "vaultWithdrawNode",
         repay: "repayNode",
+        bridge: "bridgeNode",
       };
 
       const newNode: CanvasNode = {

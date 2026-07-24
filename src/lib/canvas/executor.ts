@@ -365,6 +365,13 @@ export function buildExecutionBundle(
   const bundler = BUNDLER3[chainId];
   if (!adapter || !bundler) throw new Error("Chain not supported");
 
+  // Cross-chain execution (bridge nodes) is a multi-phase flow that a single
+  // Bundler3 multicall cannot express — see docs/cross-chain-design.md (M3).
+  // Until that lands, refuse rather than silently drop the bridge leg.
+  if (nodes.some((n) => (n.data as { type?: string }).type === "bridge")) {
+    throw new Error("Cross-chain execution isn't available yet — bridge nodes can be built but not executed");
+  }
+
   const sorted = topologicalSort(nodes, edges);
   const calls: BundlerCall[] = [];
   let hasSwap = false;

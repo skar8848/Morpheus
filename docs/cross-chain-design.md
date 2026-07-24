@@ -3,7 +3,23 @@
 
 # Cross-chain strategies — design doc
 
-Status: **DRAFT / for review** · Owner: Alban · Last updated: 2026-07-24
+Status: **DECISIONS LOCKED — implementing M1** · Owner: Alban · Last updated: 2026-07-24
+
+### Decisions (locked 2026-07-24)
+
+- **Execution: Option A** — two signatures, no new contracts (§4).
+- **Bridge node = cross-chain swap, CowSwap-style.** The block resolves its route
+  from its **input asset (chain A)** and **output asset (chain B)**, exactly like
+  the `swap` node resolves tokenIn/tokenOut. Any EURC↔USDC conversion needed for
+  the CCTP rail is **internal to the bridge block** (in/out driven), not separate
+  auto-inserted swap nodes. So §2.3's "swap-to-USDC-first" becomes the bridge's
+  own internal route, surfaced as the quote.
+- **No Unichain chain.** The original "unichain mode" ask was a naming mix-up for
+  *multichain* = the existing single-network abstraction (you pick the network).
+  M0 (add the Unichain L2) is **cancelled**.
+- **Start on mainnet.** First implementation is anchored on Ethereum as the home
+  chain; first bridge pair is Ethereum ↔ Base (both CCTP-native, both already
+  wired with bundler addresses).
 
 Goal: let a single Morpheus canvas span more than one chain — e.g. *withdraw
 USDC on Base → bridge to Arbitrum → supply as collateral → borrow → deposit into
@@ -230,12 +246,10 @@ New rules in `validation.ts` / `preflight.ts`:
 
 ## 7. Delivery plan (milestones)
 
-1. **M0 — Unichain as a plain chain** (no bridging). Add to `CHAIN_CONFIGS`,
-   wagmi, `contracts.ts` (Bundler3/GA1/Morpho Blue from the SDK registry),
-   collateral list. Same shape as the arbitrum/hyperevm/monad add. *Small.*
-2. **M1 — Data model**: per-node `chainId`, `bridge` node type, route resolver,
-   validation for chain continuity. Canvas renders + serializes multi-chain;
-   no execution yet. *Medium.*
+1. ~~**M0 — Unichain**~~ — **cancelled** (naming mix-up, see Decisions).
+2. **M1 — Data model + bridge node**: per-node `chainId`, `bridge` node type
+   (CowSwap-style in/out), route resolver, validation for chain continuity.
+   Canvas renders + serializes multi-chain; no execution yet. *Medium.* ← **now**
 3. **M2 — Bridge quoting**: Iris fee + CCTP domain map; Stargate `quoteOFT/
    quoteSend`. Bridge node shows real numbers. *Medium.*
 4. **M3 — Option-A execution**: plan compiler (split graph into segments +

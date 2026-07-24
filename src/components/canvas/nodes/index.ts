@@ -9,6 +9,7 @@ import SwapNode from "./SwapNode";
 import VaultDepositNode from "./VaultDepositNode";
 import VaultWithdrawNode from "./VaultWithdrawNode";
 import RepayNode from "./RepayNode";
+import BridgeNode from "./BridgeNode";
 import PositionNode from "./PositionNode";
 
 // MUST be defined outside any component to avoid React Flow re-renders
@@ -20,5 +21,6 @@ export const nodeTypes: NodeTypes = {
   vaultDepositNode: VaultDepositNode,
   vaultWithdrawNode: VaultWithdrawNode,
   repayNode: RepayNode,
+  bridgeNode: BridgeNode,
   positionNode: PositionNode,
 };
