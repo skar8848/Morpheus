@@ -8,6 +8,7 @@ import { useState, useEffect, useRef } from "react";
 const COW_API_BASE: Record<number, string> = {
   1: "https://api.cow.fi/mainnet/api/v1",
   8453: "https://api.cow.fi/base/api/v1",
+  42161: "https://api.cow.fi/arbitrum_one/api/v1",
 };
 
 interface UseCowQuoteParams {
@@ -51,7 +52,15 @@ export function useCowQuote({
     abortRef.current?.abort();
 
     const apiBase = COW_API_BASE[chainId];
-    if (!enabled || !apiBase || !tokenIn || !tokenOut || !amountIn || parseFloat(amountIn) <= 0) {
+    // An unsupported chain is a real, actionable condition — surface it instead
+    // of bailing silently, which used to leave the node blank with no reason.
+    if (enabled && !apiBase) {
+      setQuote(null);
+      setLoading(false);
+      setError(`CowSwap isn't available on this chain (${chainId})`);
+      return;
+    }
+    if (!enabled || !tokenIn || !tokenOut || !amountIn || parseFloat(amountIn) <= 0) {
       setQuote(null);
       setLoading(false);
       setError(null);

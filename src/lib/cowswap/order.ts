@@ -4,19 +4,32 @@
 import { signTypedData } from "wagmi/actions";
 import { wagmiConfig } from "@/lib/web3/config";
 
+/**
+ * CoW Protocol API per chain. CoW does NOT run on every chain Morpheus
+ * integrates — HyperEVM (999) and Monad (143) have no CoW deployment, so swaps
+ * there must be reported as unsupported rather than silently doing nothing.
+ */
 const COW_API_BASE: Record<number, string> = {
   1: "https://api.cow.fi/mainnet/api/v1",
   8453: "https://api.cow.fi/base/api/v1",
+  42161: "https://api.cow.fi/arbitrum_one/api/v1",
 };
+
+/** Chains where a CowSwap swap can actually be quoted and settled. */
+export function isCowSupported(chainId: number): boolean {
+  return COW_API_BASE[chainId] !== undefined;
+}
 
 // GPv2Settlement — same address on all EVM chains
 const GPV2_SETTLEMENT =
   "0x9008D19f58AAbD9eD0D60971565AA8510560ab41" as `0x${string}`;
 
 // CowSwap VaultRelayer — user must approve sell tokens to this address
+// Same address on every chain CoW is deployed to (verified on-chain).
 export const COW_VAULT_RELAYER: Record<number, `0x${string}`> = {
   1: "0xC92E8bdf79f0507f65a392b0ab4667716BFE0110" as `0x${string}`,
   8453: "0xC92E8bdf79f0507f65a392b0ab4667716BFE0110" as `0x${string}`,
+  42161: "0xC92E8bdf79f0507f65a392b0ab4667716BFE0110" as `0x${string}`,
 };
 
 const ORDER_TYPES = {

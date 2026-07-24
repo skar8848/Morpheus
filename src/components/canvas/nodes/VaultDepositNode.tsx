@@ -7,10 +7,13 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position, useReactFlow, useEdges, useNodes, type NodeProps } from "@xyflow/react";
 import Image from "next/image";
 import { useChain } from "@/lib/context/ChainContext";
+import { getNodeChainId } from "@/lib/canvas/bridge";
+import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
+import ChainIcon from "../ChainIcon";
 import { useVaults } from "@/lib/hooks/useVaults";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
 import { formatApy, formatUsd } from "@/lib/utils/format";
-import type { VaultDepositNodeData } from "@/lib/canvas/types";
+import type { VaultDepositNodeData, CanvasNode } from "@/lib/canvas/types";
 import NodeShell from "./NodeShell";
 import SearchSelect from "./SearchSelect";
 
@@ -85,9 +88,6 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     const sources: UpstreamSource[] = [];
     let loanAddr: string | null = null;
     let swapInfo: UpstreamSwapInfo | null = null;
-    // When fed by a bridge, this node lives on the bridge's destination chain —
-    // its markets/vaults must be fetched there, not on the canvas home chain.
-    let bridgeChainId: number | undefined;
 
     for (const edge of incomingEdges) {
       const sourceNode = allNodes.find((n) => n.id === edge.source);
@@ -190,7 +190,6 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
         const tokenOut = sd.tokenOut as { address: string; symbol?: string } | null;
         if (tokenOut?.address) {
           loanAddr = tokenOut.address;
-          bridgeChainId = sd.dstChainId as number | undefined;
           sources.push({
             nodeId: sourceNode.id,
             label: `Bridge → ${tokenOut.symbol ?? "?"}`,
@@ -201,10 +200,20 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
       }
     }
 
-    return { sources, connectedLoanAddress: loanAddr, swapInfo, bridgeChainId };
+    return { sources, connectedLoanAddress: loanAddr, swapInfo };
   }, [edges, allNodes, id]);
 
-  const { sources, connectedLoanAddress, swapInfo, bridgeChainId } = upstreamSources;
+  const { sources, connectedLoanAddress, swapInfo } = upstreamSources;
+
+  // Effective chain: walk the whole upstream chain, not just the direct
+  // neighbour — with `bridge → swap → vault` the vault's neighbour is the swap,
+  // so looking one hop back missed the bridge and listed vaults on the wrong
+  // network (which is why nothing matched the bridged asset).
+  const nodeChainId = useMemo(
+    () => getNodeChainId(id, allNodes as CanvasNode[], edges, chainId as SupportedChainId),
+    [id, allNodes, edges, chainId]
+  );
+  const chainLabel = CHAIN_CONFIGS.find((c) => c.chainId === nodeChainId)?.label ?? `Chain ${nodeChainId}`;
   const hasBorrowUpstream = sources.some((s) => s.borrowAmount > 0);
   const hasSwapUpstream = !!swapInfo;
   const swapQuoteNum = parseFloat(swapInfo?.quoteOut || "0");
@@ -240,7 +249,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     () => (connectedLoanAddress ? [connectedLoanAddress] : []),
     [connectedLoanAddress]
   );
-  const { vaults: filteredVaults, loading: vaultsLoading } = useVaults(vaultAssetAddresses, bridgeChainId);
+  const { vaults: filteredVaults, loading: vaultsLoading } = useVaults(vaultAssetAddresses, nodeChainId);
 
   // Sort vaults
   const sortedVaults = useMemo(() => {
@@ -329,6 +338,19 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
       loading={vaultsLoading}
     >
       <div className="space-y-2">
+        {/* Which chain the vault list comes from — differs from the canvas
+            chain when this node sits downstream of a bridge. */}
+        <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-2 py-1">
+          <span className="flex items-center gap-1 text-[9px] text-text-tertiary">
+            <ChainIcon chainId={nodeChainId} size={12} />
+            {chainLabel}
+          </span>
+          {nodeChainId !== chainId && (
+            <span className="rounded bg-brand/15 px-1 py-0.5 text-[8px] font-semibold text-brand">
+              via bridge
+            </span>
+          )}
+        </div>
         {/* Hint only when the node is fully standalone (no incoming edges
             AT ALL). If there's already a wallet/borrow/swap upstream the
             user has wired something — they don't need the hint anymore. */}

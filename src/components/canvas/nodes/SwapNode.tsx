@@ -13,11 +13,14 @@ import { useAllAssets } from "@/lib/hooks/useAllAssets";
 import { useTokenBalances } from "@/lib/hooks/useTokenBalances";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
 import { useCowQuote } from "@/lib/hooks/useCowQuote";
+import { isCowSupported } from "@/lib/cowswap/order";
+import { getNodeChainId } from "@/lib/canvas/bridge";
 import { wagmiConfig } from "@/lib/web3/config";
 import { formatUsd } from "@/lib/utils/format";
-import type { SwapNodeData } from "@/lib/canvas/types";
+import type { SwapNodeData, CanvasNode } from "@/lib/canvas/types";
 import type { Asset } from "@/lib/graphql/types";
-import type { SupportedChainId } from "@/lib/web3/chains";
+import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
+import ChainIcon from "../ChainIcon";
 import NodeShell from "./NodeShell";
 import SearchSelect from "./SearchSelect";
 
@@ -57,11 +60,20 @@ async function fetchTokenInfo(
 
 function SwapNodeComponent({ id, data }: NodeProps) {
   const { updateNodeData, deleteElements } = useReactFlow();
-  const { chainId } = useChain();
+  const { chainId: homeChainId } = useChain();
   const d = data as unknown as SwapNodeData;
   const edges = useEdges();
   const allNodes = useNodes();
-  const { assets, loading: assetsLoading } = useAllAssets();
+  // Effective chain: the home chain, or the bridge's destination chain when
+  // this swap sits downstream of a bridge. Quoting on the home chain there
+  // would price the swap on the wrong network entirely.
+  const chainId = useMemo(
+    () => getNodeChainId(id, allNodes as CanvasNode[], edges, homeChainId as SupportedChainId),
+    [id, allNodes, edges, homeChainId]
+  );
+  const chainLabel = CHAIN_CONFIGS.find((c) => c.chainId === chainId)?.label ?? `Chain ${chainId}`;
+  const cowSupported = isCowSupported(chainId);
+  const { assets, loading: assetsLoading } = useAllAssets(chainId);
   const [importLoading, setImportLoading] = useState(false);
   // Custom imported tokens (not in Morpho markets)
   const [customTokens, setCustomTokens] = useState<Asset[]>([]);
@@ -331,10 +343,31 @@ function SwapNodeComponent({ id, data }: NodeProps) {
       nodeType="swap"
       title="Swap (CowSwap)"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
-      invalid={exceedsBalance}
+      invalid={exceedsBalance || !cowSupported}
       loading={assetsLoading || quoteLoading}
     >
       <div className="space-y-2">
+        {/* Which chain this swap actually runs on — differs from the canvas
+            chain when the node sits after a bridge. */}
+        <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-2 py-1">
+          <span className="flex items-center gap-1 text-[9px] text-text-tertiary">
+            <ChainIcon chainId={chainId} size={12} />
+            {chainLabel}
+          </span>
+          {chainId !== homeChainId && (
+            <span className="rounded bg-brand/15 px-1 py-0.5 text-[8px] font-semibold text-brand">
+              via bridge
+            </span>
+          )}
+        </div>
+
+        {!cowSupported && (
+          <div className="rounded-lg border border-error/20 bg-error/5 px-2 py-1.5 text-[10px] text-error">
+            CowSwap isn&apos;t deployed on {chainLabel} — this swap can&apos;t be quoted or
+            executed here. Bridge to Ethereum, Base or Arbitrum first.
+          </div>
+        )}
+
         {/* Token In */}
         <div>
           <div className="flex items-center justify-between">
