@@ -9,8 +9,9 @@ import { MARKETS_QUERY } from "../graphql/queries";
 import type { Market, MarketsResponse } from "../graphql/types";
 import { useChain } from "../context/ChainContext";
 
-export function useMarkets(collateralAddresses: string[], loanAddresses: string[]) {
-  const { chainId } = useChain();
+export function useMarkets(collateralAddresses: string[], loanAddresses: string[], overrideChainId?: number) {
+  const { chainId: homeChainId } = useChain();
+  const chainId = overrideChainId ?? homeChainId;
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

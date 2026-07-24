@@ -9,8 +9,9 @@ import { LOAN_ASSETS_QUERY } from "../graphql/queries";
 import type { Asset, LoanAssetsResponse } from "../graphql/types";
 import { useChain } from "../context/ChainContext";
 
-export function useLoanAssets(collateralAddresses: string[]) {
-  const { chainId } = useChain();
+export function useLoanAssets(collateralAddresses: string[], overrideChainId?: number) {
+  const { chainId: homeChainId } = useChain();
+  const chainId = overrideChainId ?? homeChainId;
   const [loanAssets, setLoanAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

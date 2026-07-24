@@ -12,7 +12,8 @@ import type { SupportedChainId } from "@/lib/web3/chains";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
 import { useTokenBalances } from "@/lib/hooks/useTokenBalances";
 import { formatApy, formatLltv } from "@/lib/utils/format";
-import type { SupplyCollateralNodeData } from "@/lib/canvas/types";
+import { getNodeChainId } from "@/lib/canvas/bridge";
+import type { SupplyCollateralNodeData, CanvasNode } from "@/lib/canvas/types";
 import NodeShell from "./NodeShell";
 import SearchSelect from "./SearchSelect";
 
@@ -20,16 +21,22 @@ interface UpstreamInput {
   nodeId: string;
   label: string;
   amount: number;
-  type: "wallet" | "swap" | "vaultWithdraw" | "repay";
+  type: "wallet" | "swap" | "vaultWithdraw" | "repay" | "bridge";
 }
 
 function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
   const { updateNodeData, deleteElements } = useReactFlow();
   const { chainId } = useChain();
-  const assets = COLLATERAL_ASSETS[chainId as SupportedChainId] ?? [];
   const d = data as unknown as SupplyCollateralNodeData;
   const edges = useEdges();
   const allNodes = useNodes();
+  // Downstream of a bridge, this node is on the bridge's destination chain —
+  // propose that chain's collateral assets.
+  const nodeChainId = useMemo(
+    () => getNodeChainId(id, allNodes as CanvasNode[], edges, chainId as SupportedChainId),
+    [id, allNodes, edges, chainId]
+  );
+  const assets = COLLATERAL_ASSETS[nodeChainId as SupportedChainId] ?? [];
 
   // Detect ALL upstream inputs
   const { upstreamInputs, suggestedAsset } = useMemo(() => {
@@ -86,6 +93,18 @@ function SupplyCollateralNodeComponent({ id, data }: NodeProps) {
             label: `Freed ${collateralAsset.symbol}`,
             amount: amt,
             type: "repay",
+          });
+        }
+      } else if (sd.type === "bridge") {
+        // Bridge output on the destination chain becomes the collateral.
+        const tokenOut = sd.tokenOut as AssetInfo | null;
+        if (tokenOut?.address) {
+          suggested = tokenOut;
+          inputs.push({
+            nodeId: sourceNode.id,
+            label: `Bridge → ${tokenOut.symbol}`,
+            amount: 0,
+            type: "bridge",
           });
         }
       } else if (sd.type === "wallet") {

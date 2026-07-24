@@ -11,7 +11,9 @@ import { useMarkets } from "@/lib/hooks/useMarkets";
 import { useLoanAssets } from "@/lib/hooks/useLoanAssets";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
 import { formatApy, formatLltv } from "@/lib/utils/format";
-import type { BorrowNodeData } from "@/lib/canvas/types";
+import { getNodeChainId } from "@/lib/canvas/bridge";
+import type { BorrowNodeData, CanvasNode } from "@/lib/canvas/types";
+import type { SupportedChainId } from "@/lib/web3/chains";
 import NodeShell from "./NodeShell";
 import SearchSelect from "./SearchSelect";
 
@@ -127,12 +129,19 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
     prevCollateralRef.current = connectedCollateralAddress;
   }, [connectedCollateralAddress]);
 
+  // Effective chain: home chain, or the bridge's destination chain if this
+  // borrow sits downstream of a bridge — so we propose markets on that chain.
+  const nodeChainId = useMemo(
+    () => getNodeChainId(id, nodes as CanvasNode[], edges, chainId as SupportedChainId),
+    [id, nodes, edges, chainId]
+  );
+
   // Fetch loan assets for this collateral
   const collateralAddresses = useMemo(
     () => (connectedCollateralAddress ? [connectedCollateralAddress] : []),
     [connectedCollateralAddress]
   );
-  const { loanAssets, loading: loanAssetsLoading } = useLoanAssets(collateralAddresses);
+  const { loanAssets, loading: loanAssetsLoading } = useLoanAssets(collateralAddresses, nodeChainId);
 
   const selectedLoanAddress = (d as unknown as { loanAssetAddress?: string }).loanAssetAddress;
 
@@ -141,7 +150,7 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
     () => (selectedLoanAddress ? [selectedLoanAddress] : []),
     [selectedLoanAddress]
   );
-  const { markets, loading: marketsLoading } = useMarkets(collateralAddresses, loanAddresses);
+  const { markets, loading: marketsLoading } = useMarkets(collateralAddresses, loanAddresses, nodeChainId);
 
   // Compute borrow amount + HF reactively from LTV
   // borrowAmountUsd = USD value, borrowAmount = token amount (for executor)
