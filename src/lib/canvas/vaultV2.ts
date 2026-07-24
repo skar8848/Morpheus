@@ -160,6 +160,10 @@ export async function fetchUserVaultV2Positions(
         assets: assetsRaw.toString(),
         assetsUsd: assetsUsd > 0 ? assetsUsd : null,
         shares: h.shares.toString(),
+        // V2 positions are discovered on-chain (no userAddress-filtered API
+        // query), so there's no cost basis to derive earned interest from.
+        pnl: null,
+        pnlUsd: null,
       },
     };
   });

@@ -162,6 +162,15 @@ function BorrowPositionCard({ position }: { position: UserMarketPosition }) {
             {formatApy(Math.abs(market.state.netBorrowApy))}
           </span>
         </div>
+        {/* Interest actually paid since the position opened (borrowPnl is negative) */}
+        {state.borrowPnlUsd != null && Math.abs(state.borrowPnlUsd) >= 0.01 && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-text-tertiary">Interest paid</span>
+            <span className="text-xs font-medium text-error">
+              −{formatUsd(Math.abs(state.borrowPnlUsd))}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -238,6 +247,12 @@ function VaultPositionCard({ position }: { position: UserVaultPosition }) {
         </div>
         {state.assetsUsd != null && (
           <div className="text-[11px] text-text-tertiary">{formatUsd(state.assetsUsd)}</div>
+        )}
+        {/* Interest earned since inception (pnl positive). Null for V2 vaults. */}
+        {state.pnlUsd != null && Math.abs(state.pnlUsd) >= 0.01 && (
+          <div className="text-[11px] font-medium text-success">
+            +{formatUsd(state.pnlUsd)} earned
+          </div>
         )}
       </div>
     </div>

@@ -119,6 +119,15 @@ function PositionNodeComponent({ data }: NodeProps) {
                         : "—"}
                     </span>
                   </div>
+                  {d.marketPosition.state.borrowPnlUsd != null &&
+                    Math.abs(d.marketPosition.state.borrowPnlUsd) >= 0.01 && (
+                      <div className="flex justify-between">
+                        <span className="text-text-tertiary">Interest paid</span>
+                        <span className="text-error">
+                          −{formatUsd(Math.abs(d.marketPosition.state.borrowPnlUsd))}
+                        </span>
+                      </div>
+                    )}
                 </>
               )}
 
@@ -186,6 +195,15 @@ function PositionNodeComponent({ data }: NodeProps) {
                   </span>
                 </div>
               )}
+              {d.vaultPosition.state?.pnlUsd != null &&
+                Math.abs(d.vaultPosition.state.pnlUsd) >= 0.01 && (
+                  <div className="flex justify-between">
+                    <span className="text-text-tertiary">Earned</span>
+                    <span className="text-success">
+                      +{formatUsd(d.vaultPosition.state.pnlUsd)}
+                    </span>
+                  </div>
+                )}
             </div>
           </>
         )}

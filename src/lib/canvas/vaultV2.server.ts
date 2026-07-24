@@ -177,6 +177,8 @@ export async function fetchUserVaultV2PositionsServer(
         assets: assetsRaw.toString(),
         assetsUsd: assetsUsd > 0 ? assetsUsd : null,
         shares: h.shares.toString(),
+        pnl: null,
+        pnlUsd: null,
       },
     };
   });

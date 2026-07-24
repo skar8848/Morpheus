@@ -134,6 +134,8 @@ export const USER_MARKET_POSITIONS_QUERY = `
           supplyAssetsUsd
           borrowAssets
           borrowAssetsUsd
+          borrowPnl
+          borrowPnlUsd
         }
       }
     }
@@ -168,6 +170,8 @@ export const USER_VAULT_POSITIONS_QUERY = `
           assets
           assetsUsd
           shares
+          pnl
+          pnlUsd
         }
       }
     }

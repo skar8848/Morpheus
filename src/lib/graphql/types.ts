@@ -135,6 +135,10 @@ export interface UserMarketPosition {
     supplyAssetsUsd: number | null;
     borrowAssets: string | null;
     borrowAssetsUsd: number | null;
+    /** Interest paid on the borrow side since inception (loan-asset units, negative). */
+    borrowPnl: string | null;
+    /** Interest paid on the borrow side since inception, in USD (negative = cost). */
+    borrowPnlUsd: number | null;
   } | null;
 }
 
@@ -158,6 +162,10 @@ export interface UserVaultPosition {
     assets: string | null;
     assetsUsd: number | null;
     shares: string;
+    /** Interest earned since inception (asset units, positive). */
+    pnl: string | null;
+    /** Interest earned since inception, in USD (positive = gain). */
+    pnlUsd: number | null;
   } | null;
 }
 
