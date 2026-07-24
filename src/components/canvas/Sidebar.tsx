@@ -10,6 +10,7 @@ import { useUserPositions } from "@/lib/hooks/useUserPositions";
 import { formatUsd, formatApy, formatTokenAmount } from "@/lib/utils/format";
 import { safeBigInt } from "@/lib/utils/bigint";
 import { DRAGGABLE_NODE_TYPES, NODE_COLORS } from "@/lib/canvas/types";
+import { isBorrowDust, isVaultDust } from "@/lib/canvas/dust";
 import { useChain } from "@/lib/context/ChainContext";
 import { getTemplatesForChain, type StrategyTemplate } from "@/lib/canvas/templates";
 
@@ -59,12 +60,12 @@ export default function Sidebar({
 
   const borrowPositions = marketPositions.filter((p) => {
     if (!p.state || !p.state.borrowAssets || safeBigInt(p.state.borrowAssets) <= 0n) return false;
-    if (hideDust && (p.state.borrowAssetsUsd ?? 0) < 1) return false;
+    if (hideDust && isBorrowDust(p)) return false;
     return true;
   });
   const vaultPos = vaultPositions.filter((p) => {
     if (!p.state || safeBigInt(p.state.shares) <= 0n) return false;
-    if (hideDust && (p.state.assetsUsd ?? 0) < 1) return false;
+    if (hideDust && isVaultDust(p)) return false;
     return true;
   });
 

@@ -9,6 +9,7 @@ import type {
 } from "@/lib/graphql/types";
 
 import { safeBigInt } from "@/lib/utils/bigint";
+import { isBorrowDust, isSupplyDust, isVaultDust } from "./dust";
 
 const COL = { wallet: 50, supply: 380, borrow: 710, vault: 1040 };
 const ROW_GAP = 220;
@@ -60,15 +61,18 @@ export function buildStrategyFromPositions(
     },
   });
 
-  // Separate borrow positions from supply-only
+  // Separate borrow positions from supply-only. Dust (sub-$1) positions are
+  // dropped — a sub-cent leftover isn't worth a node on the graph.
   const borrowPositions = marketPositions.filter(
-    (p) => p.state?.borrowAssets && safeBigInt(p.state.borrowAssets) > 0n
+    (p) =>
+      p.state?.borrowAssets && safeBigInt(p.state.borrowAssets) > 0n && !isBorrowDust(p)
   );
   const supplyOnlyPositions = marketPositions.filter(
     (p) =>
       p.state?.supplyAssets &&
       safeBigInt(p.state.supplyAssets) > 0n &&
-      (!p.state?.borrowAssets || safeBigInt(p.state.borrowAssets) === 0n)
+      (!p.state?.borrowAssets || safeBigInt(p.state.borrowAssets) === 0n) &&
+      !isSupplyDust(p)
   );
 
   // Track borrow node outputs by loan asset address (for linking to vaults)
@@ -219,9 +223,10 @@ export function buildStrategyFromPositions(
     borrowRow++;
   }
 
-  // 4. Vault positions: VaultDeposit nodes
+  // 4. Vault positions: VaultDeposit nodes (dust vaults dropped)
   let vaultRow = 0;
   for (const pos of vaultPositions) {
+    if (isVaultDust(pos)) continue;
     const y = START_Y + vaultRow * ROW_GAP;
 
     const vaultId = makeId("vault");

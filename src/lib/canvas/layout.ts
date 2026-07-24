@@ -8,6 +8,7 @@ import type {
   UserVaultPosition,
 } from "@/lib/graphql/types";
 import { safeBigInt } from "@/lib/utils/bigint";
+import { isBorrowDust, isSupplyDust, isVaultDust } from "./dust";
 
 const COLUMN_X = {
   wallet: 50,
@@ -47,7 +48,8 @@ export function buildInitialLayout(
 
   // Borrow positions
   const borrowPositions = marketPositions.filter(
-    (p) => p.state && p.state.borrowAssets && safeBigInt(p.state.borrowAssets) > 0n
+    (p) =>
+      p.state && p.state.borrowAssets && safeBigInt(p.state.borrowAssets) > 0n && !isBorrowDust(p)
   );
   borrowPositions.forEach((pos, i) => {
     nodes.push({
@@ -63,8 +65,8 @@ export function buildInitialLayout(
     });
   });
 
-  // Vault positions
-  vaultPositions.forEach((pos, i) => {
+  // Vault positions (dust vaults dropped)
+  vaultPositions.filter((p) => !isVaultDust(p)).forEach((pos, i) => {
     nodes.push({
       id: `position-vault-${pos.vault.address}`,
       type: "positionNode",
@@ -87,7 +89,8 @@ export function buildInitialLayout(
       p.state &&
       p.state.supplyAssets &&
       safeBigInt(p.state.supplyAssets) > 0n &&
-      !(p.state.borrowAssets && safeBigInt(p.state.borrowAssets) > 0n)
+      !(p.state.borrowAssets && safeBigInt(p.state.borrowAssets) > 0n) &&
+      !isSupplyDust(p)
   );
   const offsetY = borrowPositions.length * ROW_SPACING;
   supplyPositions.forEach((pos, i) => {
