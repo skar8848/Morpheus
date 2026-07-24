@@ -10,7 +10,7 @@ import { useChain } from "@/lib/context/ChainContext";
 import { useAllAssets } from "@/lib/hooks/useAllAssets";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
 import { useBridgeQuote } from "@/lib/hooks/useBridgeQuote";
-import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
+import { CHAIN_CONFIGS, chainLogo, type SupportedChainId } from "@/lib/web3/chains";
 import { resolveBridgeRoute } from "@/lib/canvas/bridge";
 import { formatUsd } from "@/lib/utils/format";
 import type { BridgeNodeData } from "@/lib/canvas/types";
@@ -61,6 +61,7 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
       CHAIN_CONFIGS.filter((c) => c.chainId !== srcChainId).map((c) => ({
         value: String(c.chainId),
         label: c.label,
+        icon: c.logo,
       })),
     [srcChainId]
   );
@@ -98,9 +99,15 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
     [tokenIn, d.tokenOut, srcChainId, dstChainId]
   );
 
-  // USD value of the input (source chain = home chain).
-  const { prices } = useAssetPrices(tokenIn?.address ? [tokenIn.address] : []);
+  // USD value of the input + price of the output token (for token-denominated
+  // receive display).
+  const priceAddrs = useMemo(
+    () => [tokenIn?.address, d.tokenOut?.address].filter(Boolean) as string[],
+    [tokenIn?.address, d.tokenOut?.address]
+  );
+  const { prices } = useAssetPrices(priceAddrs);
   const tokenInPrice = tokenIn?.address ? prices[tokenIn.address.toLowerCase()] ?? 0 : 0;
+  const tokenOutPrice = d.tokenOut?.address ? prices[d.tokenOut.address.toLowerCase()] ?? 0 : 0;
   const amountInUsd = upstreamAmount * tokenInPrice;
 
   // Live CCTP v2 quote from Circle's Iris fee schedule.
@@ -126,14 +133,18 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
   return (
     <NodeShell
       nodeType="bridge"
-      title="Bridge"
+      title="Bridge (Stargate)"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
       invalid={route.rail === "unsupported"}
     >
       <div className="space-y-2">
         {/* Route: source (fixed) → destination */}
         <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-2 py-1.5">
-          <span className="text-[10px] text-text-tertiary">{srcLabel}</span>
+          <span className="flex items-center gap-1 text-[10px] text-text-tertiary">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            {chainLogo(srcChainId) && <img src={chainLogo(srcChainId)} alt="" width={14} height={14} className="rounded-full" />}
+            {srcLabel}
+          </span>
           <span className="text-text-tertiary">⇄</span>
           <div className="nodrag">
             <SearchSelect
@@ -205,8 +216,22 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
               <div className="mt-0.5 flex items-center justify-between">
                 <span className="text-text-tertiary">Est. received</span>
                 <span className="text-text-secondary">
-                  {quote.loading ? "…" : `~${formatUsd(quote.receivedUsd)}`}
-                  {d.tokenOut && !route.needsDstSwap ? ` ${d.tokenOut.symbol}` : ""}
+                  {quote.loading
+                    ? "…"
+                    : (() => {
+                        // token amount: USDC direct is 1:1; otherwise USD / price
+                        const tokenAmt =
+                          d.tokenOut && !route.needsDstSwap
+                            ? quote.receivedUsd
+                            : tokenOutPrice > 0
+                              ? quote.receivedUsd / tokenOutPrice
+                              : null;
+                        const amtStr =
+                          tokenAmt != null && d.tokenOut
+                            ? `~${tokenAmt.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${d.tokenOut.symbol} `
+                            : "";
+                        return `${amtStr}(${formatUsd(quote.receivedUsd)})`;
+                      })()}
                 </span>
               </div>
               {quote.standardFeeBps === 0 && (

@@ -9,8 +9,9 @@ import { VAULTS_QUERY } from "../graphql/queries";
 import type { Vault, VaultsResponse } from "../graphql/types";
 import { useChain } from "../context/ChainContext";
 
-export function useVaults(assetAddresses: string[]) {
-  const { chainId } = useChain();
+export function useVaults(assetAddresses: string[], overrideChainId?: number) {
+  const { chainId: homeChainId } = useChain();
+  const chainId = overrideChainId ?? homeChainId;
   const [vaults, setVaults] = useState<Vault[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -177,7 +177,7 @@ export const DRAGGABLE_NODE_TYPES = [
   { type: "vaultDeposit", label: "Vault Deposit", icon: "V", shortcut: "D" },
   { type: "vaultWithdraw", label: "Vault Withdraw", icon: "W", shortcut: "W" },
   { type: "repay", label: "Repay", icon: "R", shortcut: "R" },
-  { type: "bridge", label: "Bridge (cross-chain)", icon: "⇄", shortcut: "G" },
+  { type: "bridge", label: "Bridge (cross-chains)", icon: "⇄", shortcut: "G" },
 ] as const;
 
 /** Keyboard shortcut → node type mapping (lowercase key) */

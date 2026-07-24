@@ -85,6 +85,9 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     const sources: UpstreamSource[] = [];
     let loanAddr: string | null = null;
     let swapInfo: UpstreamSwapInfo | null = null;
+    // When fed by a bridge, this node lives on the bridge's destination chain —
+    // its markets/vaults must be fetched there, not on the canvas home chain.
+    let bridgeChainId: number | undefined;
 
     for (const edge of incomingEdges) {
       const sourceNode = allNodes.find((n) => n.id === edge.source);
@@ -182,12 +185,26 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
           });
         }
       }
+
+      if (sd.type === "bridge") {
+        const tokenOut = sd.tokenOut as { address: string; symbol?: string } | null;
+        if (tokenOut?.address) {
+          loanAddr = tokenOut.address;
+          bridgeChainId = sd.dstChainId as number | undefined;
+          sources.push({
+            nodeId: sourceNode.id,
+            label: `Bridge → ${tokenOut.symbol ?? "?"}`,
+            borrowAmount: 0,
+            loanAddress: tokenOut.address,
+          });
+        }
+      }
     }
 
-    return { sources, connectedLoanAddress: loanAddr, swapInfo };
+    return { sources, connectedLoanAddress: loanAddr, swapInfo, bridgeChainId };
   }, [edges, allNodes, id]);
 
-  const { sources, connectedLoanAddress, swapInfo } = upstreamSources;
+  const { sources, connectedLoanAddress, swapInfo, bridgeChainId } = upstreamSources;
   const hasBorrowUpstream = sources.some((s) => s.borrowAmount > 0);
   const hasSwapUpstream = !!swapInfo;
   const swapQuoteNum = parseFloat(swapInfo?.quoteOut || "0");
@@ -223,7 +240,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     () => (connectedLoanAddress ? [connectedLoanAddress] : []),
     [connectedLoanAddress]
   );
-  const { vaults: filteredVaults, loading: vaultsLoading } = useVaults(vaultAssetAddresses);
+  const { vaults: filteredVaults, loading: vaultsLoading } = useVaults(vaultAssetAddresses, bridgeChainId);
 
   // Sort vaults
   const sortedVaults = useMemo(() => {

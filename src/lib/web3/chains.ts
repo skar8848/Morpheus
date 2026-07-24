@@ -27,15 +27,22 @@ export interface ChainConfig {
   chainId: number;
   chain: Chain;
   label: string;
+  /** Chain logo under /public (drop the asset files there). */
+  logo: string;
 }
 
 export const CHAIN_CONFIGS: ChainConfig[] = [
-  { slug: "ethereum", chainId: 1, chain: mainnet, label: "Ethereum" },
-  { slug: "base", chainId: 8453, chain: base, label: "Base" },
-  { slug: "arbitrum", chainId: 42161, chain: arbitrum, label: "Arbitrum" },
-  { slug: "hyperevm", chainId: 999, chain: hyperevm, label: "HyperEVM" },
-  { slug: "monad", chainId: 143, chain: monad, label: "Monad" },
+  { slug: "ethereum", chainId: 1, chain: mainnet, label: "Ethereum", logo: "/chains/mainnet.svg" },
+  { slug: "base", chainId: 8453, chain: base, label: "Base", logo: "/chains/base.svg" },
+  { slug: "arbitrum", chainId: 42161, chain: arbitrum, label: "Arbitrum", logo: "/chains/arbitrum.svg" },
+  { slug: "hyperevm", chainId: 999, chain: hyperevm, label: "HyperEVM", logo: "/chains/hype.webp" },
+  { slug: "monad", chainId: 143, chain: monad, label: "Monad", logo: "/chains/monad.ico" },
 ];
+
+/** Chain logo path by chainId (falls back to empty string). */
+export function chainLogo(chainId: number): string {
+  return CHAIN_CONFIGS.find((c) => c.chainId === chainId)?.logo ?? "";
+}
 
 export type SupportedChainId = 1 | 8453 | 42161 | 999 | 143;
 
