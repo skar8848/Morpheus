@@ -67,6 +67,10 @@ function useStrategyMetrics(nodes: CanvasNode[], edges: Edge[]) {
     let weightedEarnApy = 0; // weighted by deposit amount
     let weightedBorrowApy = 0; // weighted by borrow amount
     let lowestHf: number | null = null;
+    // Morpho markets are isolated: each borrow has its own HF and liquidates
+    // independently. We keep them per-market so the gauge can show each one
+    // (a single min hides the other markets and never reacts to their sliders).
+    const borrowHfs: { label: string; hf: number }[] = [];
     let vaultCount = 0;
     let borrowCount = 0;
 
@@ -88,6 +92,10 @@ function useStrategyMetrics(nodes: CanvasNode[], edges: Edge[]) {
             const apy = d.market.state?.netBorrowApy ?? 0;
             weightedBorrowApy += apy * (d.borrowAmountUsd || 0);
             if (d.healthFactor !== null && d.healthFactor > 0) {
+              borrowHfs.push({
+                label: d.market.collateralAsset?.symbol ?? "HF",
+                hf: d.healthFactor,
+              });
               if (lowestHf === null || d.healthFactor < lowestHf) {
                 lowestHf = d.healthFactor;
               }
@@ -141,13 +149,14 @@ function useStrategyMetrics(nodes: CanvasNode[], edges: Edge[]) {
       avgBorrowApy,
       netApy,
       lowestHf,
+      borrowHfs,
       vaultCount,
       borrowCount,
     };
   }, [nodes]);
 }
 
-function HfIndicator({ hf }: { hf: number | null }) {
+function HfIndicator({ hf, label = "Health" }: { hf: number | null; label?: string }) {
   if (hf === null) return null;
   const color = hf > 2 ? "text-success" : hf > 1.2 ? "text-yellow-400" : "text-error";
   const bgColor = hf > 2 ? "bg-success" : hf > 1.2 ? "bg-yellow-400" : "bg-error";
@@ -158,7 +167,7 @@ function HfIndicator({ hf }: { hf: number | null }) {
   return (
     <div className="flex flex-col items-center gap-1">
       <span className="text-[8px] font-semibold uppercase tracking-wider text-text-tertiary">
-        Health
+        {label}
       </span>
       <div className="relative h-1.5 w-16 overflow-hidden rounded-full bg-bg-secondary">
         {/* Gradient track */}
@@ -247,13 +256,21 @@ export default function StrategyGauge({ nodes, edges, sidebarCollapsed }: Strate
           </div>
         )}
 
-        {/* Health Factor */}
-        {metrics.lowestHf !== null && (
+        {/* Health Factor — one per isolated market (they liquidate independently);
+            fall back to a single "Health" when there's only one borrow */}
+        {metrics.borrowHfs.length > 1 ? (
+          metrics.borrowHfs.map((b, i) => (
+            <div key={`${b.label}-${i}`} className="flex items-center gap-6">
+              <div className="h-8 w-px bg-border" />
+              <HfIndicator hf={b.hf} label={`HF ${b.label}`} />
+            </div>
+          ))
+        ) : metrics.lowestHf !== null ? (
           <>
             <div className="h-8 w-px bg-border" />
             <HfIndicator hf={metrics.lowestHf} />
           </>
-        )}
+        ) : null}
 
         {/* TVL */}
         {metrics.totalDepositUsd > 0 && (
