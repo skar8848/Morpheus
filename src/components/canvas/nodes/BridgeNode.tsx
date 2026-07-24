@@ -265,10 +265,20 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
                 >
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-1 text-[10px] font-semibold text-text-primary">
+                      {r.logoURI && (
+                        <Image
+                          src={r.logoURI}
+                          alt=""
+                          width={12}
+                          height={12}
+                          className="rounded-full"
+                          unoptimized
+                        />
+                      )}
                       {r.name}
                       {r.preferred && !r.unavailable && (
                         <span className="rounded bg-success/15 px-1 text-[8px] font-semibold text-success">
-                          best for USDC
+                          native
                         </span>
                       )}
                     </span>

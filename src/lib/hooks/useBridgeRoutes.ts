@@ -12,9 +12,12 @@ import type { SupportedChainId } from "@/lib/web3/chains";
  */
 export interface RouteQuote {
   id: string;
-  /** Display name, e.g. "CCTP v2 · Fast". */
+  /** Display name, e.g. "CCTP v2 · Fast" or "StargateV2 (Fast mode)". */
   name: string;
-  provider: "cctp" | "stargate";
+  provider: "cctp" | "lifi" | "stargate";
+  /** Aggregator tool key, e.g. "stargateV2Bus". */
+  tool?: string;
+  logoURI?: string;
   /** USD delivered on the destination, after the bridge fee. */
   receivedUsd: number;
   /** Destination amount in raw token units, when the rail quotes it. */
@@ -23,7 +26,7 @@ export interface RouteQuote {
   feeUsd: number;
   /** Fee in basis points, when the rail quotes it that way. */
   feeBps: number | null;
-  /** Estimated source-chain gas in USD (null when unknown). */
+  /** Estimated gas in USD (null when unknown). */
   gasUsd: number | null;
   etaSeconds: number;
   /** Shown first for USDC — the native, capital-efficient rail. */
@@ -50,15 +53,25 @@ const GAS_USD_ESTIMATE: Partial<Record<SupportedChainId, number>> = {
 interface ApiRoute {
   id: string;
   name: string;
-  provider: "cctp" | "stargate";
+  provider: "cctp" | "lifi" | "stargate";
+  tool?: string;
+  logoURI?: string;
   dstAmount: string | null;
   dstAmountUsd: number | null;
   feeUsd: number | null;
   feeBps: number | null;
+  gasUsd: number | null;
   etaSeconds: number | null;
   preferred?: boolean;
   unavailable?: string;
 }
+
+/**
+ * Debounce before hitting the quote API. LI.FI allows ~75 route requests per
+ * 2h without a key, so re-quoting on every keystroke would burn the budget in
+ * seconds. Server-side results are additionally cached for 30s.
+ */
+const QUOTE_DEBOUNCE_MS = 700;
 
 export interface BridgeRoutesParams {
   srcChainId: SupportedChainId;
@@ -91,7 +104,7 @@ export function useBridgeRoutes(params: BridgeRoutesParams): BridgeRoutesResult 
       return;
     }
 
-    const gasUsd = GAS_USD_ESTIMATE[srcChainId] ?? null;
+    const fallbackGas = GAS_USD_ESTIMATE[srcChainId] ?? null;
     let cancelled = false;
     setResult((r) => ({ ...r, loading: true, error: null }));
 
@@ -106,48 +119,54 @@ export function useBridgeRoutes(params: BridgeRoutesParams): BridgeRoutesResult 
       ...(wallet ? { wallet } : {}),
     });
 
-    fetch(`/api/bridge-routes?${qs}`)
-      .then((r) => r.json())
-      .then((data: { ok: boolean; routes?: ApiRoute[]; error?: string }) => {
-        if (cancelled) return;
-        if (!data.ok) {
-          setResult({ loading: false, routes: [], error: data.error ?? "quote failed" });
-          return;
-        }
-        const routes: RouteQuote[] = (data.routes ?? []).map((r) => ({
-          id: r.id,
-          name: r.name,
-          provider: r.provider,
-          receivedUsd: r.dstAmountUsd ?? 0,
-          dstAmount: r.dstAmount,
-          feeUsd: r.feeUsd ?? 0,
-          feeBps: r.feeBps,
-          gasUsd,
-          etaSeconds: r.etaSeconds ?? 60,
-          preferred: r.preferred,
-          unavailable: r.unavailable,
-        }));
+    const timer = setTimeout(() => {
+      fetch(`/api/bridge-routes?${qs}`)
+        .then((r) => r.json())
+        .then((data: { ok: boolean; routes?: ApiRoute[]; error?: string }) => {
+          if (cancelled) return;
+          if (!data.ok) {
+            setResult({ loading: false, routes: [], error: data.error ?? "quote failed" });
+            return;
+          }
+          const routes: RouteQuote[] = (data.routes ?? []).map((r) => ({
+            id: r.id,
+            name: r.name,
+            provider: r.provider,
+            tool: r.tool,
+            logoURI: r.logoURI,
+            receivedUsd: r.dstAmountUsd ?? 0,
+            dstAmount: r.dstAmount,
+            feeUsd: r.feeUsd ?? 0,
+            feeBps: r.feeBps,
+            // Aggregators report real gas; native CCTP doesn't, so estimate it.
+            gasUsd: r.gasUsd ?? fallbackGas,
+            etaSeconds: r.etaSeconds ?? 60,
+            preferred: r.preferred,
+            unavailable: r.unavailable,
+          }));
 
-        // Rank by net value received; unquotable routes sink to the end.
-        routes.sort((a, b) => {
-          if (!!a.unavailable !== !!b.unavailable) return a.unavailable ? 1 : -1;
-          const net = (r: RouteQuote) => r.receivedUsd - (r.gasUsd ?? 0);
-          return net(b) - net(a);
-        });
-
-        setResult({ loading: false, routes, error: null });
-      })
-      .catch((err) => {
-        if (!cancelled)
-          setResult({
-            loading: false,
-            routes: [],
-            error: err instanceof Error ? err.message : "quote failed",
+          // Rank by net value received; unquotable routes sink to the end.
+          routes.sort((a, b) => {
+            if (!!a.unavailable !== !!b.unavailable) return a.unavailable ? 1 : -1;
+            const net = (r: RouteQuote) => r.receivedUsd - (r.gasUsd ?? 0);
+            return net(b) - net(a);
           });
-      });
+
+          setResult({ loading: false, routes, error: null });
+        })
+        .catch((err) => {
+          if (!cancelled)
+            setResult({
+              loading: false,
+              routes: [],
+              error: err instanceof Error ? err.message : "quote failed",
+            });
+        });
+    }, QUOTE_DEBOUNCE_MS);
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [srcChainId, dstChainId, amountUsd, amountRaw, srcToken, dstToken, isUsdc, wallet]);
 

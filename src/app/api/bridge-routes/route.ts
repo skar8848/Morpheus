@@ -4,15 +4,24 @@
 /**
  * Unified bridge route quoting.
  *
- * Queries every rail we support in parallel and returns them as one comparable
- * list (the client ranks/renders; see useBridgeRoutes):
- *   - CCTP v2  — Circle Iris fee schedule (USDC only, no key needed)
- *   - Stargate — LayerZero Value Transfer API (any supported token, needs a key)
+ * Queries every rail we support in parallel and returns one comparable list
+ * (the client ranks/renders; see useBridgeRoutes):
  *
- * The LayerZero key is read from LAYERZERO_API_KEY and never leaves the server.
+ *   - CCTP v2  — Circle Iris fee schedule. Keyless. This is the *native* rail
+ *                our own executor implements (depositForBurn), so it stays
+ *                quoted separately from any aggregator-wrapped CCTP route.
+ *   - LI.FI    — aggregator covering Stargate V2 (Fast + Economy), Across,
+ *                Relay, Eco, Mayan… Keyless; a free key only raises rate
+ *                limits. This is what surfaces Stargate today, since
+ *                LayerZero's own Value Transfer API is partner-gated.
+ *   - LayerZero VT — optional, only when LAYERZERO_API_KEY is set.
+ *
+ * Rate limits: LI.FI allows ~75 route requests / 2h without a key, so results
+ * are cached in-process (QUOTE_TTL_MS) and the client debounces.
  */
 
 const IRIS_FEES = "https://iris-api.circle.com/v2/burn/USDC/fees";
+const LIFI_ROUTES = "https://li.quest/v1/advanced/routes";
 const LZ_QUOTES = "https://transfer.layerzero-api.com/v1/quotes";
 
 /** CCTP v2 domain ids (≠ chainId). */
@@ -33,22 +42,49 @@ const LZ_CHAIN_KEYS: Record<number, string> = {
   143: "monad",
 };
 
-/** Quote-only placeholder when no wallet is connected (docs' own example). */
+/** Quote-only placeholder when no wallet is connected. */
 const PLACEHOLDER_WALLET = "0x1234567890123456789012345678901234567890";
+
+const QUOTE_TTL_MS = 30_000;
 
 export interface ApiRoute {
   id: string;
   name: string;
-  provider: "cctp" | "stargate";
+  provider: "cctp" | "lifi" | "stargate";
+  /** Aggregator tool key, e.g. "stargateV2Bus". */
+  tool?: string;
+  logoURI?: string;
   /** Destination amount in raw token units, when the rail quotes it. */
   dstAmount: string | null;
   dstAmountUsd: number | null;
   feeUsd: number | null;
   feeBps: number | null;
+  gasUsd: number | null;
   etaSeconds: number | null;
   preferred?: boolean;
   unavailable?: string;
 }
+
+// --- tiny in-process TTL cache (keeps us under LI.FI's keyless rate limit) ---
+const cache = new Map<string, { at: number; routes: ApiRoute[] }>();
+
+function cacheGet(key: string): ApiRoute[] | null {
+  const hit = cache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > QUOTE_TTL_MS) {
+    cache.delete(key);
+    return null;
+  }
+  return hit.routes;
+}
+
+function cacheSet(key: string, routes: ApiRoute[]) {
+  // Bound the map so a long-lived instance can't grow without limit.
+  if (cache.size > 200) cache.clear();
+  cache.set(key, { at: Date.now(), routes });
+}
+
+// --- providers ---
 
 async function cctpRoutes(
   srcChainId: number,
@@ -77,6 +113,7 @@ async function cctpRoutes(
         dstAmountUsd: Math.max(0, amountUsd - feeUsd),
         feeUsd,
         feeBps: bps,
+        gasUsd: null,
         etaSeconds: eta,
         preferred,
       };
@@ -92,7 +129,120 @@ async function cctpRoutes(
   }
 }
 
-async function stargateRoutes(
+interface LifiStep {
+  tool?: string;
+  toolDetails?: { key?: string; name?: string; logoURI?: string };
+  estimate?: {
+    executionDuration?: number;
+    feeCosts?: { amountUSD?: string }[];
+  };
+}
+
+async function lifiRoutes(
+  srcChainId: number,
+  dstChainId: number,
+  srcToken: string,
+  dstToken: string,
+  amountRaw: string,
+  wallet: string
+): Promise<ApiRoute[]> {
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    // Optional: a free self-serve key (portal.li.fi) only raises rate limits.
+    if (process.env.LIFI_API_KEY) headers["x-lifi-api-key"] = process.env.LIFI_API_KEY;
+
+    const res = await fetch(LIFI_ROUTES, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        fromChainId: srcChainId,
+        toChainId: dstChainId,
+        fromTokenAddress: srcToken,
+        toTokenAddress: dstToken,
+        fromAmount: amountRaw,
+        fromAddress: wallet,
+      }),
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      const reason =
+        res.status === 429 ? "LI.FI rate limit reached — retry shortly" : `LI.FI ${res.status}`;
+      return [
+        {
+          id: "lifi",
+          name: "Bridges (LI.FI)",
+          provider: "lifi",
+          dstAmount: null,
+          dstAmountUsd: null,
+          feeUsd: null,
+          feeBps: null,
+          gasUsd: null,
+          etaSeconds: null,
+          unavailable: reason,
+        },
+      ];
+    }
+
+    const data = (await res.json()) as {
+      routes?: {
+        id?: string;
+        steps?: LifiStep[];
+        toAmount?: string;
+        toAmountUSD?: string;
+        fromAmountUSD?: string;
+        gasCostUSD?: string;
+      }[];
+    };
+
+    return (data.routes ?? []).map((r, i) => {
+      const steps = r.steps ?? [];
+      const head = steps[0];
+      const fromUsd = Number(r.fromAmountUSD ?? 0);
+      const toUsd = Number(r.toAmountUSD ?? 0);
+      const feeUsd = steps.reduce(
+        (sum, s) => sum + (s.estimate?.feeCosts ?? []).reduce((a, f) => a + Number(f.amountUSD ?? 0), 0),
+        0
+      );
+      const eta = steps.reduce((sum, s) => sum + (s.estimate?.executionDuration ?? 0), 0);
+      const gasUsd = Number(r.gasCostUSD ?? 0);
+      const tool = head?.tool;
+
+      return {
+        id: r.id ? `lifi-${r.id}` : `lifi-${i}`,
+        name: head?.toolDetails?.name ?? "LI.FI route",
+        // Tag Stargate routes as such so the UI can group/badge them.
+        provider: tool?.toLowerCase().startsWith("stargate") ? "stargate" : "lifi",
+        tool,
+        logoURI: head?.toolDetails?.logoURI,
+        dstAmount: r.toAmount ?? null,
+        dstAmountUsd: isFinite(toUsd) && toUsd > 0 ? toUsd : null,
+        feeUsd: isFinite(feeUsd) ? feeUsd : null,
+        feeBps: fromUsd > 0 && isFinite(feeUsd) ? (feeUsd / fromUsd) * 10_000 : null,
+        gasUsd: isFinite(gasUsd) ? gasUsd : null,
+        etaSeconds: eta > 0 ? eta : null,
+      } satisfies ApiRoute;
+    });
+  } catch (err) {
+    return [
+      {
+        id: "lifi",
+        name: "Bridges (LI.FI)",
+        provider: "lifi",
+        dstAmount: null,
+        dstAmountUsd: null,
+        feeUsd: null,
+        feeBps: null,
+        gasUsd: null,
+        etaSeconds: null,
+        unavailable: err instanceof Error ? err.message : "quote failed",
+      },
+    ];
+  }
+}
+
+/** Native Stargate via LayerZero's Value Transfer API — partner-gated, opt-in. */
+async function layerZeroRoutes(
   srcChainId: number,
   dstChainId: number,
   srcToken: string,
@@ -103,22 +253,7 @@ async function stargateRoutes(
   const apiKey = process.env.LAYERZERO_API_KEY;
   const srcKey = LZ_CHAIN_KEYS[srcChainId];
   const dstKey = LZ_CHAIN_KEYS[dstChainId];
-  if (!srcKey || !dstKey) return [];
-  if (!apiKey) {
-    return [
-      {
-        id: "stargate",
-        name: "Stargate",
-        provider: "stargate",
-        dstAmount: null,
-        dstAmountUsd: null,
-        feeUsd: null,
-        feeBps: null,
-        etaSeconds: null,
-        unavailable: "LAYERZERO_API_KEY not configured",
-      },
-    ];
-  }
+  if (!apiKey || !srcKey || !dstKey) return [];
 
   try {
     const res = await fetch(LZ_QUOTES, {
@@ -135,28 +270,11 @@ async function stargateRoutes(
       }),
       cache: "no-store",
     });
-
-    if (!res.ok) {
-      const reason = res.status === 401 ? "Invalid LayerZero API key" : `LayerZero ${res.status}`;
-      return [
-        {
-          id: "stargate",
-          name: "Stargate",
-          provider: "stargate",
-          dstAmount: null,
-          dstAmountUsd: null,
-          feeUsd: null,
-          feeBps: null,
-          etaSeconds: null,
-          unavailable: reason,
-        },
-      ];
-    }
+    if (!res.ok) return [];
 
     const data = (await res.json()) as {
       quotes?: {
         id?: string;
-        routeSteps?: { type?: string; description?: string }[];
         duration?: { estimated?: string | null };
         feeUsd?: string;
         dstAmount?: string;
@@ -165,40 +283,24 @@ async function stargateRoutes(
       }[];
     };
 
-    const quotes = data.quotes ?? [];
-    if (quotes.length === 0) return [];
-
-    return quotes.map((q, i) => {
+    return (data.quotes ?? []).map((q, i) => {
       const srcUsd = Number(q.srcAmountUsd ?? 0);
       const feeUsd = Number(q.feeUsd ?? 0);
       const dstUsd = Number(q.dstAmountUsd ?? 0);
-      // Name the route by its steps when available (e.g. "Stargate · CCTP").
-      const step = q.routeSteps?.find((s) => s.type)?.type;
       return {
-        id: q.id ? `stargate-${q.id}` : `stargate-${i}`,
-        name: step ? `Stargate · ${step}` : "Stargate",
+        id: q.id ? `lz-${q.id}` : `lz-${i}`,
+        name: "Stargate (native)",
         provider: "stargate" as const,
         dstAmount: q.dstAmount ?? null,
         dstAmountUsd: isFinite(dstUsd) && dstUsd > 0 ? dstUsd : null,
         feeUsd: isFinite(feeUsd) ? feeUsd : null,
         feeBps: srcUsd > 0 && isFinite(feeUsd) ? (feeUsd / srcUsd) * 10_000 : null,
+        gasUsd: null,
         etaSeconds: q.duration?.estimated ? Number(q.duration.estimated) : null,
       };
     });
-  } catch (err) {
-    return [
-      {
-        id: "stargate",
-        name: "Stargate",
-        provider: "stargate",
-        dstAmount: null,
-        dstAmountUsd: null,
-        feeUsd: null,
-        feeBps: null,
-        etaSeconds: null,
-        unavailable: err instanceof Error ? err.message : "quote failed",
-      },
-    ];
+  } catch {
+    return [];
   }
 }
 
@@ -214,17 +316,30 @@ export async function GET(req: Request) {
   const wallet = p.get("wallet") || PLACEHOLDER_WALLET;
 
   if (!srcChainId || !dstChainId || srcChainId === dstChainId) {
-    return Response.json({ ok: false, error: "distinct srcChainId and dstChainId required" }, { status: 400 });
+    return Response.json(
+      { ok: false, error: "distinct srcChainId and dstChainId required" },
+      { status: 400 }
+    );
   }
 
-  const canQuoteStargate = /^0x[0-9a-fA-F]{40}$/.test(srcToken) && /^0x[0-9a-fA-F]{40}$/.test(dstToken) && amountRaw !== "0";
+  const key = `${srcChainId}:${dstChainId}:${srcToken}:${dstToken}:${amountRaw}:${isUsdc}`;
+  const cached = cacheGet(key);
+  if (cached) return Response.json({ ok: true, routes: cached, cached: true });
 
-  const [cctp, stargate] = await Promise.all([
+  const canQuoteAggregators =
+    /^0x[0-9a-fA-F]{40}$/.test(srcToken) && /^0x[0-9a-fA-F]{40}$/.test(dstToken) && amountRaw !== "0";
+
+  const [cctp, lifi, lz] = await Promise.all([
     cctpRoutes(srcChainId, dstChainId, amountUsd, isUsdc),
-    canQuoteStargate
-      ? stargateRoutes(srcChainId, dstChainId, srcToken, dstToken, amountRaw, wallet)
+    canQuoteAggregators
+      ? lifiRoutes(srcChainId, dstChainId, srcToken, dstToken, amountRaw, wallet)
+      : Promise.resolve([] as ApiRoute[]),
+    canQuoteAggregators
+      ? layerZeroRoutes(srcChainId, dstChainId, srcToken, dstToken, amountRaw, wallet)
       : Promise.resolve([] as ApiRoute[]),
   ]);
 
-  return Response.json({ ok: true, routes: [...cctp, ...stargate] });
+  const routes = [...cctp, ...lz, ...lifi];
+  cacheSet(key, routes);
+  return Response.json({ ok: true, routes });
 }
