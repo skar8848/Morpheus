@@ -66,11 +66,12 @@ function useStrategyMetrics(nodes: CanvasNode[], edges: Edge[]) {
     let totalRepayUsd = 0;
     let weightedEarnApy = 0; // weighted by deposit amount
     let weightedBorrowApy = 0; // weighted by borrow amount
-    let lowestHf: number | null = null;
-    // Morpho markets are isolated: each borrow has its own HF and liquidates
-    // independently. We keep them per-market so the gauge can show each one
-    // (a single min hides the other markets and never reacts to their sliders).
-    const borrowHfs: { label: string; hf: number }[] = [];
+    // Portfolio health factor, aggregated across isolated markets:
+    //   HF = Σ(collateral_i × LLTV_i) / Σ(debt_i)
+    // which equals the debt-weighted average of each market's HF. A single
+    // blended number that reacts to every borrow slider — unlike a min, which
+    // sticks on the worst market and ignores the others.
+    let weightedHfNumerator = 0; // Σ(HF_i × debt_i) = Σ(collateral_i × LLTV_i)
     let vaultCount = 0;
     let borrowCount = 0;
 
@@ -92,13 +93,7 @@ function useStrategyMetrics(nodes: CanvasNode[], edges: Edge[]) {
             const apy = d.market.state?.netBorrowApy ?? 0;
             weightedBorrowApy += apy * (d.borrowAmountUsd || 0);
             if (d.healthFactor !== null && d.healthFactor > 0) {
-              borrowHfs.push({
-                label: d.market.collateralAsset?.symbol ?? "HF",
-                hf: d.healthFactor,
-              });
-              if (lowestHf === null || d.healthFactor < lowestHf) {
-                lowestHf = d.healthFactor;
-              }
+              weightedHfNumerator += d.healthFactor * (d.borrowAmountUsd || 0);
             }
           }
           break;
@@ -148,8 +143,8 @@ function useStrategyMetrics(nodes: CanvasNode[], edges: Edge[]) {
       avgEarnApy,
       avgBorrowApy,
       netApy,
-      lowestHf,
-      borrowHfs,
+      // Debt-weighted portfolio HF across all borrow markets (null if no debt)
+      healthFactor: totalBorrowUsd > 0 ? weightedHfNumerator / totalBorrowUsd : null,
       vaultCount,
       borrowCount,
     };
@@ -256,21 +251,13 @@ export default function StrategyGauge({ nodes, edges, sidebarCollapsed }: Strate
           </div>
         )}
 
-        {/* Health Factor — one per isolated market (they liquidate independently);
-            fall back to a single "Health" when there's only one borrow */}
-        {metrics.borrowHfs.length > 1 ? (
-          metrics.borrowHfs.map((b, i) => (
-            <div key={`${b.label}-${i}`} className="flex items-center gap-6">
-              <div className="h-8 w-px bg-border" />
-              <HfIndicator hf={b.hf} label={`HF ${b.label}`} />
-            </div>
-          ))
-        ) : metrics.lowestHf !== null ? (
+        {/* Health Factor — debt-weighted average across all borrow markets */}
+        {metrics.healthFactor !== null && (
           <>
             <div className="h-8 w-px bg-border" />
-            <HfIndicator hf={metrics.lowestHf} />
+            <HfIndicator hf={metrics.healthFactor} />
           </>
-        ) : null}
+        )}
 
         {/* TVL */}
         {metrics.totalDepositUsd > 0 && (
