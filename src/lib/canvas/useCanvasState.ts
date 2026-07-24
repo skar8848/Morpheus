@@ -21,6 +21,7 @@ import { buildInitialLayout } from "./layout";
 import { isValidConnection } from "./validation";
 import { VALID_CONNECTIONS, type CanvasNode, type CanvasNodeData } from "./types";
 import { consumeImportedStrategy, parseDeepLink } from "./importStrategy";
+import { stripDustNodes } from "./dust";
 
 const MAX_HISTORY = 50;
 
@@ -123,8 +124,9 @@ export function useCanvasState() {
     // 2. Next: import from /address page (localStorage handoff)
     const imported = consumeImportedStrategy();
     if (imported) {
-      setNodes(imported.nodes);
-      setEdges(imported.edges);
+      const clean = stripDustNodes(imported.nodes, imported.edges);
+      setNodes(clean.nodes);
+      setEdges(clean.edges);
       wasImported.current = true;
       return;
     }
@@ -135,8 +137,9 @@ export function useCanvasState() {
       if (saved) {
         const parsed = JSON.parse(saved) as SavedGraph;
         if (Array.isArray(parsed.nodes) && parsed.nodes.length > 0) {
-          setNodes(parsed.nodes);
-          setEdges(parsed.edges || []);
+          const clean = stripDustNodes(parsed.nodes, parsed.edges || []);
+          setNodes(clean.nodes);
+          setEdges(clean.edges);
           return;
         }
       }

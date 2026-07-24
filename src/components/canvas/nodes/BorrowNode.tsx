@@ -3,7 +3,7 @@
 
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position, useReactFlow, useEdges, useNodes, type NodeProps } from "@xyflow/react";
 import Image from "next/image";
 import { useChain } from "@/lib/context/ChainContext";
@@ -14,6 +14,35 @@ import { formatApy, formatLltv } from "@/lib/utils/format";
 import type { BorrowNodeData } from "@/lib/canvas/types";
 import NodeShell from "./NodeShell";
 import SearchSelect from "./SearchSelect";
+
+/** Market utilization donut, à la Morpho — borrowed / supplied. */
+function UtilizationRing({ pct }: { pct: number }) {
+  const p = Math.max(0, Math.min(1, pct));
+  const r = 6;
+  const c = 2 * Math.PI * r;
+  // Green under 80%, amber 80–95%, red above — high utilization = thin liquidity
+  const color = p > 0.95 ? "#eb365a" : p > 0.8 ? "#f5a623" : "#02c77b";
+  return (
+    <div
+      className="flex items-center"
+      title={`Market utilization ${(p * 100).toFixed(1)}%`}
+    >
+      <svg width="15" height="15" viewBox="0 0 16 16" className="-rotate-90">
+        <circle cx="8" cy="8" r={r} fill="none" strokeWidth="2.5" className="stroke-bg-card" />
+        <circle
+          cx="8"
+          cy="8"
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeDasharray={`${p * c} ${c}`}
+        />
+      </svg>
+    </div>
+  );
+}
 
 function BorrowNodeComponent({ id, data }: NodeProps) {
   const { updateNodeData, deleteElements } = useReactFlow();
@@ -170,6 +199,22 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
     return "text-error";
   };
 
+  // Desired-HF input. HF = LLTV% / LTV% (prices cancel), so a target HF maps
+  // to LTV% = LLTV% / HF. Kept as a local draft while focused so the reactive
+  // HF (derived from ltvPercent) doesn't fight the user's typing.
+  const [hfFocused, setHfFocused] = useState(false);
+  const [hfDraft, setHfDraft] = useState("");
+  useEffect(() => {
+    if (!hfFocused) setHfDraft(d.healthFactor ? d.healthFactor.toFixed(2) : "");
+  }, [d.healthFactor, hfFocused]);
+  const applyHf = (raw: string) => {
+    const hf = parseFloat(raw);
+    if (!d.market || !isFinite(hf) || hf <= 0) return;
+    const lltvPct = (Number(d.market.lltv) / 1e18) * 100;
+    const ltv = Math.round(lltvPct / hf);
+    updateNodeData(id, { ltvPercent: Math.max(0, Math.min(Math.floor(lltvPct), ltv)) });
+  };
+
   // SearchSelect options
   const loanOptions = useMemo(
     () => loanAssets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
@@ -263,9 +308,17 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
               <span className="text-xs text-text-primary">
                 {d.market.collateralAsset.symbol}/{d.market.loanAsset.symbol}
               </span>
-              <span className={`ml-auto text-[10px] ${d.market.state.netBorrowApy <= 0 ? "text-success" : "text-error"}`}>
-                {formatApy(Math.abs(d.market.state.netBorrowApy))}
-              </span>
+              <div className="ml-auto flex items-center gap-1.5">
+                {(() => {
+                  const supply = Number(d.market.state.supplyAssets);
+                  const borrow = Number(d.market.state.borrowAssets);
+                  if (!isFinite(supply) || supply <= 0) return null;
+                  return <UtilizationRing pct={borrow / supply} />;
+                })()}
+                <span className={`text-[10px] ${d.market.state.netBorrowApy <= 0 ? "text-success" : "text-error"}`}>
+                  {formatApy(Math.abs(d.market.state.netBorrowApy))}
+                </span>
+              </div>
             </div>
 
             {/* Collateral value (auto-filled from supply) */}
@@ -331,6 +384,25 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
                 <span>0%</span>
                 <span>LLTV {formatLltv(d.market.lltv)}</span>
               </div>
+
+              {/* Target HF — inverse of the LTV, so you can pin a health factor */}
+              <div className="mt-1.5 flex items-center justify-between">
+                <label className="text-[10px] text-text-tertiary">Target HF</label>
+                <input
+                  type="number"
+                  min={1}
+                  step={0.01}
+                  value={hfDraft}
+                  placeholder="—"
+                  onFocus={() => setHfFocused(true)}
+                  onBlur={() => setHfFocused(false)}
+                  onChange={(e) => {
+                    setHfDraft(e.target.value);
+                    applyHf(e.target.value);
+                  }}
+                  className="w-14 rounded bg-bg-secondary px-1 py-0.5 text-right text-xs font-medium text-text-primary outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                />
+              </div>
             </div>
 
             {/* Borrow amount + HF + live liquidation distance */}
@@ -376,6 +448,9 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
                     : dropPct > 15
                       ? "bg-yellow-400"
                       : "bg-error";
+                // Price at which this position gets liquidated:
+                // liqPrice = currentPrice × (LTV / LLTV) = currentPrice × (1 − drop)
+                const liqPrice = collateralPrice > 0 ? collateralPrice * (1 - dropPct / 100) : null;
                 return (
                   <div className="mt-1.5 border-t border-border/40 pt-1.5">
                     <div className="flex items-center justify-between text-[9px] text-text-tertiary">
@@ -390,6 +465,17 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
                         style={{ width: `${trackPct}%` }}
                       />
                     </div>
+                    {liqPrice !== null && (
+                      <div className="mt-1 flex items-center justify-between text-[9px] text-text-tertiary">
+                        <span>Liq. price</span>
+                        <span className="font-medium text-text-secondary">
+                          ${liqPrice.toLocaleString(undefined, {
+                            maximumFractionDigits: liqPrice < 10 ? 4 : 2,
+                          })}{" "}
+                          <span className="text-text-tertiary">{d.market!.collateralAsset.symbol}</span>
+                        </span>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
