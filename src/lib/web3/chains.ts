@@ -36,7 +36,9 @@ export const CHAIN_CONFIGS: ChainConfig[] = [
   { slug: "base", chainId: 8453, chain: base, label: "Base", logo: "/chains/base.svg" },
   { slug: "arbitrum", chainId: 42161, chain: arbitrum, label: "Arbitrum", logo: "/chains/arbitrum.svg" },
   { slug: "hyperevm", chainId: 999, chain: hyperevm, label: "HyperEVM", logo: "/chains/hype.webp" },
-  { slug: "monad", chainId: 143, chain: monad, label: "Monad", logo: "/chains/monad.ico" },
+  // Note: the source file was named monad.ico but is actually a 256x256 PNG —
+  // stored as .png so it's served with the right content type.
+  { slug: "monad", chainId: 143, chain: monad, label: "Monad", logo: "/chains/monad.png" },
 ];
 
 /** Chain logo path by chainId (falls back to empty string). */
