@@ -8,8 +8,11 @@ import { Handle, Position, useReactFlow, useEdges, useNodes, type NodeProps } fr
 import Image from "next/image";
 import { useChain } from "@/lib/context/ChainContext";
 import { useAllAssets } from "@/lib/hooks/useAllAssets";
+import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
+import { useBridgeQuote } from "@/lib/hooks/useBridgeQuote";
 import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
 import { resolveBridgeRoute } from "@/lib/canvas/bridge";
+import { formatUsd } from "@/lib/utils/format";
 import type { BridgeNodeData } from "@/lib/canvas/types";
 import type { Asset } from "@/lib/graphql/types";
 import NodeShell from "./NodeShell";
@@ -89,20 +92,33 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
     [dstAssets]
   );
 
+  const tokenIn = d.tokenIn ?? upstreamAsset;
   const route = useMemo(
-    () => resolveBridgeRoute(d.tokenIn ?? upstreamAsset, d.tokenOut ?? null, srcChainId, dstChainId),
-    [d.tokenIn, d.tokenOut, upstreamAsset, srcChainId, dstChainId]
+    () => resolveBridgeRoute(tokenIn, d.tokenOut ?? null, srcChainId, dstChainId),
+    [tokenIn, d.tokenOut, srcChainId, dstChainId]
   );
 
-  // M1 estimate: CCTP moves USDC ~1:1; show input minus a token fee placeholder.
-  // Live Iris/Stargate quote lands in M2.
-  const estReceived = upstreamAmount > 0 ? upstreamAmount * 0.999 : 0;
+  // USD value of the input (source chain = home chain).
+  const { prices } = useAssetPrices(tokenIn?.address ? [tokenIn.address] : []);
+  const tokenInPrice = tokenIn?.address ? prices[tokenIn.address.toLowerCase()] ?? 0 : 0;
+  const amountInUsd = upstreamAmount * tokenInPrice;
+
+  // Live CCTP v2 quote from Circle's Iris fee schedule.
+  const quote = useBridgeQuote(srcChainId, dstChainId, amountInUsd, route);
+
+  // Persist the quote onto node data for later serialization / execution.
+  useEffect(() => {
+    const q = quote.receivedUsd > 0 ? String(quote.receivedUsd) : "";
+    if (amountInUsd !== d.amountInUsd || q !== d.quoteOut || quote.loading !== d.quoteLoading) {
+      updateNodeData(id, { amountInUsd, quoteOut: q, quoteLoading: quote.loading });
+    }
+  }, [amountInUsd, quote.receivedUsd, quote.loading, d.amountInUsd, d.quoteOut, d.quoteLoading, id, updateNodeData]);
 
   const srcLabel = CHAIN_CONFIGS.find((c) => c.chainId === srcChainId)?.label ?? `Chain ${srcChainId}`;
 
   const routeBadge =
     route.rail === "cctp-v2"
-      ? { text: `CCTP v2 · ~${route.etaSeconds}s`, cls: "text-success" }
+      ? { text: `CCTP v2 · Fast · ~${quote.etaFastSeconds}s`, cls: "text-success" }
       : route.rail === "stargate"
         ? { text: "Stargate", cls: "text-brand" }
         : { text: "Unsupported", cls: "text-error" };
@@ -174,13 +190,32 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
             <span className="text-text-tertiary">Route</span>
             <span className={`font-semibold ${routeBadge.cls}`}>{routeBadge.text}</span>
           </div>
-          {estReceived > 0 && d.tokenOut && (
-            <div className="mt-0.5 flex items-center justify-between">
-              <span className="text-text-tertiary">Est. received</span>
-              <span className="text-text-secondary">
-                ~{estReceived.toLocaleString(undefined, { maximumFractionDigits: 4 })} {d.tokenOut.symbol}
-              </span>
-            </div>
+          {route.rail === "cctp-v2" && amountInUsd > 0 && (
+            <>
+              <div className="mt-0.5 flex items-center justify-between">
+                <span className="text-text-tertiary">Bridge fee</span>
+                <span className="text-text-secondary">
+                  {quote.loading
+                    ? "…"
+                    : quote.fastFeeBps != null
+                      ? `${quote.fastFeeBps} bps · ${formatUsd(quote.feeUsd)}`
+                      : "—"}
+                </span>
+              </div>
+              <div className="mt-0.5 flex items-center justify-between">
+                <span className="text-text-tertiary">Est. received</span>
+                <span className="text-text-secondary">
+                  {quote.loading ? "…" : `~${formatUsd(quote.receivedUsd)}`}
+                  {d.tokenOut && !route.needsDstSwap ? ` ${d.tokenOut.symbol}` : ""}
+                </span>
+              </div>
+              {quote.standardFeeBps === 0 && (
+                <div className="mt-0.5 text-[9px] text-text-tertiary">
+                  Standard transfer: free, ~{Math.round(quote.etaStandardSeconds / 60)} min
+                </div>
+              )}
+              {quote.error && <div className="mt-0.5 text-[9px] text-error">Quote: {quote.error}</div>}
+            </>
           )}
           {(route.needsSrcSwap || route.needsDstSwap) && route.rail === "cctp-v2" && (
             <div className="mt-0.5 text-[9px] text-yellow-400">
