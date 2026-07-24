@@ -138,6 +138,10 @@ function useStrategyMetrics(nodes: CanvasNode[], edges: Edge[]) {
 
     return {
       totalDepositUsd,
+      // Collateral only (deposits minus the vault leg). The vault is funded by
+      // borrowing against the collateral, so collateral + vault double-counts
+      // the same underlying capital — the real committed funds are the collateral.
+      totalCollateralUsd: totalDepositUsd - totalVaultDepositUsd,
       totalBorrowUsd,
       totalRepayUsd,
       avgEarnApy,
@@ -259,16 +263,17 @@ export default function StrategyGauge({ nodes, edges, sidebarCollapsed }: Strate
           </>
         )}
 
-        {/* TVL */}
-        {metrics.totalDepositUsd > 0 && (
+        {/* Collateral — the underlying committed capital (not collateral+vault,
+            which would double-count the borrowed funds sitting in the vault) */}
+        {metrics.totalCollateralUsd > 0 && (
           <>
             <div className="h-8 w-px bg-border" />
             <div className="flex flex-col items-center gap-0.5">
               <span className="text-[8px] font-semibold uppercase tracking-wider text-text-tertiary">
-                TVL
+                Collateral
               </span>
               <span className="text-xs font-semibold tabular-nums text-text-primary">
-                ${metrics.totalDepositUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                ${metrics.totalCollateralUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
               </span>
             </div>
           </>

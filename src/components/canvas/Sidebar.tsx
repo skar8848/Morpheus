@@ -251,7 +251,12 @@ export default function Sidebar({
                 onClick={() => setTemplatesOpen((o) => !o)}
                 className="flex w-full items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-text-tertiary transition-colors hover:text-text-secondary"
               >
-                <span>Templates</span>
+                <span className="flex items-center gap-1.5">
+                  Templates
+                  <span className="rounded bg-brand/15 px-1 py-0.5 text-[8px] font-semibold normal-case tracking-normal text-brand">
+                    beta
+                  </span>
+                </span>
                 <svg
                   width="10"
                   height="10"
