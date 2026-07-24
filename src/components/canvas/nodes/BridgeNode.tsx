@@ -31,31 +31,54 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
 
   const srcChainId = (d.srcChainId ?? homeChainId) as SupportedChainId;
 
-  // Detect the upstream asset + amount feeding this bridge (source chain).
-  const { upstreamAsset, upstreamAmount } = useMemo(() => {
+  /**
+   * Where the bridged funds come from. A producing node upstream (borrow, swap,
+   * withdraw…) dictates both asset and amount. A wallet — or nothing connected
+   * yet — leaves the user to pick them, so the node is usable on its own.
+   */
+  const { upstreamAsset, upstreamAmount, manualSource } = useMemo(() => {
+    const none = { upstreamAsset: null as Asset | null, upstreamAmount: 0, manualSource: true };
     const incoming = edges.find((e) => e.target === id);
-    if (!incoming) return { upstreamAsset: null as Asset | null, upstreamAmount: 0 };
+    if (!incoming) return none;
     const src = allNodes.find((n) => n.id === incoming.source);
-    if (!src) return { upstreamAsset: null as Asset | null, upstreamAmount: 0 };
+    if (!src) return none;
     const sd = src.data as Record<string, unknown>;
     switch (sd.type) {
       case "borrow": {
         const m = sd.market as { loanAsset: Asset } | null;
-        return { upstreamAsset: m?.loanAsset ?? null, upstreamAmount: (sd.borrowAmount as number) || 0 };
+        return {
+          upstreamAsset: m?.loanAsset ?? null,
+          upstreamAmount: (sd.borrowAmount as number) || 0,
+          manualSource: false,
+        };
       }
       case "swap": {
         const t = sd.tokenOut as Asset | null;
-        return { upstreamAsset: t ?? null, upstreamAmount: parseFloat((sd.quoteOut as string) || "0") };
+        return {
+          upstreamAsset: t ?? null,
+          upstreamAmount: parseFloat((sd.quoteOut as string) || "0"),
+          manualSource: false,
+        };
       }
       case "vaultWithdraw": {
         const p = sd.position as { vault: { asset: Asset } } | null;
-        return { upstreamAsset: p?.vault.asset ?? null, upstreamAmount: parseFloat((sd.amount as string) || "0") };
+        return {
+          upstreamAsset: p?.vault.asset ?? null,
+          upstreamAmount: parseFloat((sd.amount as string) || "0"),
+          manualSource: false,
+        };
       }
       case "supplyCollateral": {
-        return { upstreamAsset: (sd.asset as Asset) ?? null, upstreamAmount: parseFloat((sd.amount as string) || "0") };
+        return {
+          upstreamAsset: (sd.asset as Asset) ?? null,
+          upstreamAmount: parseFloat((sd.amount as string) || "0"),
+          manualSource: false,
+        };
       }
+      // A wallet funds the bridge but carries no asset/amount of its own.
+      case "wallet":
       default:
-        return { upstreamAsset: null as Asset | null, upstreamAmount: 0 };
+        return none;
     }
   }, [edges, allNodes, id]);
 
@@ -82,22 +105,31 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
 
   const dstChainId = (d.dstChainId ?? srcChainId) as SupportedChainId;
   const { assets: dstAssets } = useAllAssets(dstChainId);
+  const { assets: srcAssets } = useAllAssets(srcChainId);
 
-  // Keep tokenIn synced with the upstream asset.
+  // Keep tokenIn/amountIn synced with the upstream producer (auto mode only —
+  // in manual mode these are the user's own choices and must not be clobbered).
   useEffect(() => {
+    if (manualSource) return;
     if (upstreamAsset && d.tokenIn?.address?.toLowerCase() !== upstreamAsset.address.toLowerCase()) {
       updateNodeData(id, { tokenIn: upstreamAsset, amountIn: String(upstreamAmount) });
     } else if (upstreamAmount && String(upstreamAmount) !== d.amountIn) {
       updateNodeData(id, { amountIn: String(upstreamAmount) });
     }
-  }, [upstreamAsset, upstreamAmount, d.tokenIn, d.amountIn, id, updateNodeData]);
+  }, [manualSource, upstreamAsset, upstreamAmount, d.tokenIn, d.amountIn, id, updateNodeData]);
 
   const tokenOutOptions = useMemo(
     () => dstAssets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
     [dstAssets]
   );
+  const tokenInOptions = useMemo(
+    () => srcAssets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
+    [srcAssets]
+  );
 
-  const tokenIn = d.tokenIn ?? upstreamAsset;
+  // Effective source asset/amount: upstream-driven, or the user's own picks.
+  const tokenIn = manualSource ? d.tokenIn ?? null : d.tokenIn ?? upstreamAsset;
+  const amountIn = manualSource ? parseFloat(d.amountIn || "0") || 0 : upstreamAmount;
 
   // USD value of the input + price of the output token (for token-denominated
   // receive display).
@@ -108,20 +140,20 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
   const { prices } = useAssetPrices(priceAddrs);
   const tokenInPrice = tokenIn?.address ? prices[tokenIn.address.toLowerCase()] ?? 0 : 0;
   const tokenOutPrice = d.tokenOut?.address ? prices[d.tokenOut.address.toLowerCase()] ?? 0 : 0;
-  const amountInUsd = upstreamAmount * tokenInPrice;
+  const amountInUsd = amountIn * tokenInPrice;
 
   // Candidate routes, ranked best-first. CCTP is offered first for USDC but
   // never imposed — the user picks the route.
   const inIsUsdc = isUsdc(tokenIn, srcChainId);
   const outIsUsdc = isUsdc(d.tokenOut ?? null, dstChainId);
   const amountRaw = useMemo(() => {
-    if (!tokenIn || !(upstreamAmount > 0)) return "0";
+    if (!tokenIn || !(amountIn > 0)) return "0";
     try {
-      return parseUnits(String(upstreamAmount), tokenIn.decimals).toString();
+      return parseUnits(String(amountIn), tokenIn.decimals).toString();
     } catch {
       return "0";
     }
-  }, [tokenIn, upstreamAmount]);
+  }, [tokenIn, amountIn]);
 
   const { routes, loading: routesLoading } = useBridgeRoutes({
     srcChainId,
@@ -162,7 +194,7 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
   return (
     <NodeShell
       nodeType="bridge"
-      title="Bridge (Stargate)"
+      title="Bridge (LI.FI)"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
       invalid={routes.length > 0 && !selected}
     >
@@ -184,14 +216,49 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
           </div>
         </div>
 
-        {/* Input asset (from upstream) */}
-        <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-2 py-1.5">
-          <span className="text-[10px] text-text-tertiary">In</span>
-          {d.tokenIn || upstreamAsset ? (
+        {/* Source asset + amount. Read-only when an upstream node produces them;
+            editable when funded from the wallet (or nothing connected yet). */}
+        {manualSource ? (
+          <div>
+            <label className="text-[10px] text-text-tertiary">
+              Send from {srcLabel}
+            </label>
+            <div className="nodrag mt-0.5 space-y-1">
+              <SearchSelect
+                options={tokenInOptions}
+                value={d.tokenIn?.address ?? ""}
+                onChange={(v) => {
+                  const t = srcAssets.find((a) => a.address === v) ?? null;
+                  updateNodeData(id, { tokenIn: t });
+                }}
+                placeholder="Search asset…"
+              />
+              <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-secondary px-2 py-1.5">
+                <input
+                  type="number"
+                  min={0}
+                  step="any"
+                  value={d.amountIn ?? ""}
+                  placeholder="0.0"
+                  onChange={(e) => updateNodeData(id, { amountIn: e.target.value })}
+                  className="w-full bg-transparent text-xs text-text-primary outline-none [appearance:textfield] placeholder:text-text-tertiary [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                />
+                {d.tokenIn && (
+                  <span className="shrink-0 text-[10px] text-text-tertiary">{d.tokenIn.symbol}</span>
+                )}
+              </div>
+              {amountInUsd > 0 && (
+                <p className="text-right text-[9px] text-text-tertiary">{formatUsd(amountInUsd)}</p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-2 py-1.5">
+            <span className="text-[10px] text-text-tertiary">In</span>
             <span className="flex items-center gap-1.5 text-xs text-text-primary">
-              {(d.tokenIn ?? upstreamAsset)?.logoURI && (
+              {tokenIn?.logoURI && (
                 <Image
-                  src={(d.tokenIn ?? upstreamAsset)!.logoURI}
+                  src={tokenIn.logoURI}
                   alt=""
                   width={14}
                   height={14}
@@ -199,13 +266,11 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
                   unoptimized
                 />
               )}
-              {upstreamAmount > 0 ? upstreamAmount.toLocaleString(undefined, { maximumFractionDigits: 4 }) : ""}{" "}
-              {(d.tokenIn ?? upstreamAsset)?.symbol}
+              {amountIn > 0 ? amountIn.toLocaleString(undefined, { maximumFractionDigits: 4 }) : ""}{" "}
+              {tokenIn?.symbol ?? "—"}
             </span>
-          ) : (
-            <span className="text-[10px] text-text-tertiary">Connect an input</span>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Output asset on destination chain */}
         <div>
@@ -231,7 +296,15 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
           </div>
           <div className="nodrag mt-0.5 space-y-1">
             {routes.length === 0 && !routesLoading && (
-              <p className="text-[9px] text-text-tertiary">Pick a destination chain and asset</p>
+              <p className="text-[9px] text-text-tertiary">
+                {!tokenIn
+                  ? "Pick the asset to send"
+                  : !d.tokenOut
+                    ? "Pick the asset to receive"
+                    : amountIn > 0
+                      ? "No route found for this pair"
+                      : "Enter an amount to quote routes"}
+              </p>
             )}
             {routes.map((r) => {
               const isSel = selected?.id === r.id;

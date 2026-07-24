@@ -98,15 +98,15 @@ export function useBridgeRoutes(params: BridgeRoutesParams): BridgeRoutesResult 
     error: null,
   });
 
+  // Same-chain isn't a bridge at all — derived below rather than pushed into
+  // state, so the effect never has to setState just to blank the list.
+  const sameChain = srcChainId === dstChainId;
+
   useEffect(() => {
-    if (srcChainId === dstChainId) {
-      setResult({ loading: false, routes: [], error: null });
-      return;
-    }
+    if (sameChain) return;
 
     const fallbackGas = GAS_USD_ESTIMATE[srcChainId] ?? null;
     let cancelled = false;
-    setResult((r) => ({ ...r, loading: true, error: null }));
 
     const qs = new URLSearchParams({
       srcChainId: String(srcChainId),
@@ -120,6 +120,9 @@ export function useBridgeRoutes(params: BridgeRoutesParams): BridgeRoutesResult 
     });
 
     const timer = setTimeout(() => {
+      // Flip to "loading" only once the debounce actually fires — while the
+      // user is still typing there's nothing in flight to report.
+      setResult((r) => ({ ...r, loading: true, error: null }));
       fetch(`/api/bridge-routes?${qs}`)
         .then((r) => r.json())
         .then((data: { ok: boolean; routes?: ApiRoute[]; error?: string }) => {
@@ -168,7 +171,7 @@ export function useBridgeRoutes(params: BridgeRoutesParams): BridgeRoutesResult 
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [srcChainId, dstChainId, amountUsd, amountRaw, srcToken, dstToken, isUsdc, wallet]);
+  }, [sameChain, srcChainId, dstChainId, amountUsd, amountRaw, srcToken, dstToken, isUsdc, wallet]);
 
-  return result;
+  return sameChain ? { loading: false, routes: [], error: null } : result;
 }
