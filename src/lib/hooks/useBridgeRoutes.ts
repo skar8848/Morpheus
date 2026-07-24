@@ -4,7 +4,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { CCTP_DOMAINS } from "@/lib/canvas/bridge";
 import type { SupportedChainId } from "@/lib/web3/chains";
 
 /**
@@ -18,6 +17,8 @@ export interface RouteQuote {
   provider: "cctp" | "stargate";
   /** USD delivered on the destination, after the bridge fee. */
   receivedUsd: number;
+  /** Destination amount in raw token units, when the rail quotes it. */
+  dstAmount: string | null;
   /** Bridge/protocol fee in USD. */
   feeUsd: number;
   /** Fee in basis points, when the rail quotes it that way. */
@@ -46,32 +47,43 @@ const GAS_USD_ESTIMATE: Partial<Record<SupportedChainId, number>> = {
   143: 0.02,
 };
 
-/** Standard-transfer latency ≈ source-chain hard finality. */
-function standardEta(src: SupportedChainId): number {
-  return src === 1 ? 900 : 120;
+interface ApiRoute {
+  id: string;
+  name: string;
+  provider: "cctp" | "stargate";
+  dstAmount: string | null;
+  dstAmountUsd: number | null;
+  feeUsd: number | null;
+  feeBps: number | null;
+  etaSeconds: number | null;
+  preferred?: boolean;
+  unavailable?: string;
+}
+
+export interface BridgeRoutesParams {
+  srcChainId: SupportedChainId;
+  dstChainId: SupportedChainId;
+  amountUsd: number;
+  /** Input amount in raw token units (needed for the Stargate quote). */
+  amountRaw: string;
+  srcToken: string | null;
+  dstToken: string | null;
+  isUsdc: boolean;
+  wallet?: string;
 }
 
 /**
- * Quote every bridge route available for this hop and rank them by net value
- * received (received − gas), best first. CCTP is marked `preferred` for USDC
- * but never forced — the user picks.
+ * Quote every bridge rail for this hop and rank them by net value received
+ * (received − gas), best first. CCTP is flagged `preferred` for USDC but never
+ * forced — the user picks.
  */
-export function useBridgeRoutes(
-  srcChainId: SupportedChainId,
-  dstChainId: SupportedChainId,
-  amountUsd: number,
-  tokenIsUsdc: boolean
-): BridgeRoutesResult {
+export function useBridgeRoutes(params: BridgeRoutesParams): BridgeRoutesResult {
+  const { srcChainId, dstChainId, amountUsd, amountRaw, srcToken, dstToken, isUsdc, wallet } = params;
   const [result, setResult] = useState<BridgeRoutesResult>({
     loading: false,
     routes: [],
     error: null,
   });
-
-  const srcDomain = CCTP_DOMAINS[srcChainId];
-  const dstDomain = CCTP_DOMAINS[dstChainId];
-  const cctpPossible =
-    tokenIsUsdc && srcDomain !== undefined && dstDomain !== undefined && srcChainId !== dstChainId;
 
   useEffect(() => {
     if (srcChainId === dstChainId) {
@@ -80,73 +92,47 @@ export function useBridgeRoutes(
     }
 
     const gasUsd = GAS_USD_ESTIMATE[srcChainId] ?? null;
-
-    // Stargate: pooled-liquidity rail that also covers non-USDC assets. Its
-    // quote API (transfer.layerzero-api.com/v1/quotes) requires an API key, so
-    // we surface the route without inventing numbers rather than hide it.
-    const stargate: RouteQuote = {
-      id: "stargate",
-      name: "Stargate",
-      provider: "stargate",
-      receivedUsd: 0,
-      feeUsd: 0,
-      feeBps: null,
-      gasUsd,
-      etaSeconds: 60,
-      unavailable: "Quote unavailable (API key required)",
-    };
-
-    if (!cctpPossible) {
-      // Non-USDC or non-CCTP chain: Stargate is the only candidate.
-      setResult({ loading: false, routes: [stargate], error: null });
-      return;
-    }
-
     let cancelled = false;
     setResult((r) => ({ ...r, loading: true, error: null }));
 
-    fetch(`/api/bridge-quote?src=${srcDomain}&dst=${dstDomain}`)
+    const qs = new URLSearchParams({
+      srcChainId: String(srcChainId),
+      dstChainId: String(dstChainId),
+      amountUsd: String(amountUsd),
+      amountRaw,
+      srcToken: srcToken ?? "",
+      dstToken: dstToken ?? "",
+      isUsdc: isUsdc ? "1" : "0",
+      ...(wallet ? { wallet } : {}),
+    });
+
+    fetch(`/api/bridge-routes?${qs}`)
       .then((r) => r.json())
-      .then((data: { ok: boolean; fastFeeBps: number | null; standardFeeBps: number; error?: string }) => {
+      .then((data: { ok: boolean; routes?: ApiRoute[]; error?: string }) => {
         if (cancelled) return;
         if (!data.ok) {
-          setResult({ loading: false, routes: [stargate], error: data.error ?? "quote failed" });
+          setResult({ loading: false, routes: [], error: data.error ?? "quote failed" });
           return;
         }
-        const fastBps = data.fastFeeBps ?? 0;
-        const fastFee = (amountUsd * fastBps) / 10_000;
-        const stdBps = data.standardFeeBps ?? 0;
-        const stdFee = (amountUsd * stdBps) / 10_000;
+        const routes: RouteQuote[] = (data.routes ?? []).map((r) => ({
+          id: r.id,
+          name: r.name,
+          provider: r.provider,
+          receivedUsd: r.dstAmountUsd ?? 0,
+          dstAmount: r.dstAmount,
+          feeUsd: r.feeUsd ?? 0,
+          feeBps: r.feeBps,
+          gasUsd,
+          etaSeconds: r.etaSeconds ?? 60,
+          preferred: r.preferred,
+          unavailable: r.unavailable,
+        }));
 
-        const routes: RouteQuote[] = [
-          {
-            id: "cctp-fast",
-            name: "CCTP v2 · Fast",
-            provider: "cctp",
-            receivedUsd: Math.max(0, amountUsd - fastFee),
-            feeUsd: fastFee,
-            feeBps: fastBps,
-            gasUsd,
-            etaSeconds: 15,
-            preferred: true,
-          },
-          {
-            id: "cctp-standard",
-            name: "CCTP v2 · Standard",
-            provider: "cctp",
-            receivedUsd: Math.max(0, amountUsd - stdFee),
-            feeUsd: stdFee,
-            feeBps: stdBps,
-            gasUsd,
-            etaSeconds: standardEta(srcChainId),
-          },
-          stargate,
-        ];
-
-        // Rank by net value received; unavailable routes always sink to the end.
+        // Rank by net value received; unquotable routes sink to the end.
         routes.sort((a, b) => {
           if (!!a.unavailable !== !!b.unavailable) return a.unavailable ? 1 : -1;
-          return b.receivedUsd - b.gasUsd! - (a.receivedUsd - a.gasUsd!) || 0;
+          const net = (r: RouteQuote) => r.receivedUsd - (r.gasUsd ?? 0);
+          return net(b) - net(a);
         });
 
         setResult({ loading: false, routes, error: null });
@@ -155,7 +141,7 @@ export function useBridgeRoutes(
         if (!cancelled)
           setResult({
             loading: false,
-            routes: [stargate],
+            routes: [],
             error: err instanceof Error ? err.message : "quote failed",
           });
       });
@@ -163,7 +149,7 @@ export function useBridgeRoutes(
     return () => {
       cancelled = true;
     };
-  }, [cctpPossible, srcDomain, dstDomain, amountUsd, srcChainId, dstChainId]);
+  }, [srcChainId, dstChainId, amountUsd, amountRaw, srcToken, dstToken, isUsdc, wallet]);
 
   return result;
 }

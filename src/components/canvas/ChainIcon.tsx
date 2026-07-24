@@ -4,9 +4,15 @@
 "use client";
 
 /**
- * Chain marks as inline SVG — self-contained so they always render (no asset
- * files to ship, no CDN, no 404s). Brand colors per chain.
+ * Chain marks.
+ *
+ * Prefers the real brand asset under /public/chains (see CHAIN_CONFIGS.logo);
+ * if the file isn't there, falls back to an inline SVG so the icon always
+ * renders — no 404 placeholders, no hard dependency on shipping assets.
  */
+
+import { useState } from "react";
+import { chainLogo } from "@/lib/web3/chains";
 
 interface Props {
   chainId: number;
@@ -15,6 +21,29 @@ interface Props {
 }
 
 export default function ChainIcon({ chainId, size = 14, className = "" }: Props) {
+  const logo = chainLogo(chainId);
+  const [fileFailed, setFileFailed] = useState(false);
+
+  if (logo && !fileFailed) {
+    return (
+      // Plain <img>: these are static local files and next/image would need
+      // per-format config for .ico/.webp. onError swaps in the inline mark.
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={logo}
+        alt=""
+        width={size}
+        height={size}
+        onError={() => setFileFailed(true)}
+        className={`shrink-0 rounded-full object-contain ${className}`}
+      />
+    );
+  }
+
+  return <InlineChainMark chainId={chainId} size={size} className={className} />;
+}
+
+function InlineChainMark({ chainId, size, className }: Required<Omit<Props, "size">> & { size: number }) {
   const common = {
     width: size,
     height: size,

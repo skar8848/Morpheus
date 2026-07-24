@@ -6,6 +6,8 @@
 import { memo, useEffect, useMemo } from "react";
 import { Handle, Position, useReactFlow, useEdges, useNodes, type NodeProps } from "@xyflow/react";
 import Image from "next/image";
+import { parseUnits, formatUnits } from "viem";
+import { useAccount } from "wagmi";
 import { useChain } from "@/lib/context/ChainContext";
 import { useAllAssets } from "@/lib/hooks/useAllAssets";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
@@ -22,6 +24,7 @@ import SearchSelect from "./SearchSelect";
 function BridgeNodeComponent({ id, data }: NodeProps) {
   const { updateNodeData, deleteElements } = useReactFlow();
   const { chainId: homeChainId } = useChain();
+  const { address: account } = useAccount();
   const d = data as unknown as BridgeNodeData;
   const edges = useEdges();
   const allNodes = useNodes();
@@ -111,12 +114,25 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
   // never imposed — the user picks the route.
   const inIsUsdc = isUsdc(tokenIn, srcChainId);
   const outIsUsdc = isUsdc(d.tokenOut ?? null, dstChainId);
-  const { routes, loading: routesLoading } = useBridgeRoutes(
+  const amountRaw = useMemo(() => {
+    if (!tokenIn || !(upstreamAmount > 0)) return "0";
+    try {
+      return parseUnits(String(upstreamAmount), tokenIn.decimals).toString();
+    } catch {
+      return "0";
+    }
+  }, [tokenIn, upstreamAmount]);
+
+  const { routes, loading: routesLoading } = useBridgeRoutes({
     srcChainId,
     dstChainId,
-    amountInUsd,
-    inIsUsdc && (outIsUsdc || !d.tokenOut)
-  );
+    amountUsd: amountInUsd,
+    amountRaw,
+    srcToken: tokenIn?.address ?? null,
+    dstToken: d.tokenOut?.address ?? null,
+    isUsdc: inIsUsdc && (outIsUsdc || !d.tokenOut),
+    wallet: account,
+  });
 
   const selected = useMemo(
     () => routes.find((r) => r.id === d.routeId && !r.unavailable) ?? routes.find((r) => !r.unavailable) ?? null,
@@ -219,8 +235,18 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
             )}
             {routes.map((r) => {
               const isSel = selected?.id === r.id;
-              const tokenAmt =
-                d.tokenOut && tokenOutPrice > 0 ? r.receivedUsd / tokenOutPrice : null;
+              // Prefer the rail's own destination amount; fall back to USD/price.
+              let tokenAmt: number | null = null;
+              if (r.dstAmount && d.tokenOut) {
+                try {
+                  tokenAmt = Number(formatUnits(BigInt(r.dstAmount), d.tokenOut.decimals));
+                } catch {
+                  tokenAmt = null;
+                }
+              }
+              if (tokenAmt == null && d.tokenOut && tokenOutPrice > 0) {
+                tokenAmt = r.receivedUsd / tokenOutPrice;
+              }
               const eta =
                 r.etaSeconds >= 60 ? `~${Math.round(r.etaSeconds / 60)} min` : `~${r.etaSeconds}s`;
               return (
@@ -258,7 +284,7 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
                           : formatUsd(r.receivedUsd)}
                       </span>
                       <span>
-                        fee {r.feeBps != null ? `${r.feeBps} bps · ` : ""}
+                        fee {r.feeBps != null ? `${r.feeBps.toFixed(2)} bps · ` : ""}
                         {formatUsd(r.feeUsd)}
                         {r.gasUsd != null ? ` · gas ~${formatUsd(r.gasUsd)}` : ""}
                       </span>
