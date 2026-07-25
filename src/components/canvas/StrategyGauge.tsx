@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import type { Edge } from "@xyflow/react";
 import type { CanvasNode, CanvasNodeData } from "@/lib/canvas/types";
 import { formatApy } from "@/lib/utils/format";
+import { computeStrategyMetrics } from "@/lib/canvas/metrics";
 
 interface StrategyGaugeProps {
   nodes: CanvasNode[];
@@ -59,100 +60,8 @@ function projectPnl(nodes: CanvasNode[], days: number) {
 
 /** Aggregate strategy metrics computed from the graph */
 function useStrategyMetrics(nodes: CanvasNode[], edges: Edge[]) {
-  return useMemo(() => {
-    let totalDepositUsd = 0; // collateral + vault deposits — the capital committed
-    let totalVaultDepositUsd = 0; // vault deposits only — the yield-bearing share
-    let totalBorrowUsd = 0;
-    let totalRepayUsd = 0;
-    let weightedEarnApy = 0; // weighted by deposit amount
-    let weightedBorrowApy = 0; // weighted by borrow amount
-    // Portfolio health factor, aggregated across isolated markets:
-    //   HF = Σ(collateral_i × LLTV_i) / Σ(debt_i)
-    // which equals the debt-weighted average of each market's HF. A single
-    // blended number that reacts to every borrow slider — unlike a min, which
-    // sticks on the worst market and ignores the others.
-    let weightedHfNumerator = 0; // Σ(HF_i × debt_i) = Σ(collateral_i × LLTV_i)
-    let vaultCount = 0;
-    let borrowCount = 0;
-
-    for (const node of nodes) {
-      const d = node.data as CanvasNodeData;
-
-      switch (d.type) {
-        case "supplyCollateral": {
-          const amt = parseFloat(d.amount);
-          if (isFinite(amt) && amt > 0) {
-            totalDepositUsd += d.amountUsd || 0;
-          }
-          break;
-        }
-        case "borrow": {
-          if (d.market && d.borrowAmount > 0) {
-            totalBorrowUsd += d.borrowAmountUsd || 0;
-            borrowCount++;
-            const apy = d.market.state?.netBorrowApy ?? 0;
-            weightedBorrowApy += apy * (d.borrowAmountUsd || 0);
-            if (d.healthFactor !== null && d.healthFactor > 0) {
-              weightedHfNumerator += d.healthFactor * (d.borrowAmountUsd || 0);
-            }
-          }
-          break;
-        }
-        case "vaultDeposit": {
-          if (d.vault) {
-            const amt = parseFloat(d.amount);
-            const usd = d.amountUsd || 0;
-            if ((isFinite(amt) && amt > 0) || d.depositAll) {
-              vaultCount++;
-              totalDepositUsd += usd;
-              totalVaultDepositUsd += usd;
-              const apy = d.vault.state?.netApy ?? 0;
-              weightedEarnApy += apy * usd;
-            }
-          }
-          break;
-        }
-        case "repay": {
-          if (d.market) {
-            const amt = parseFloat(d.amount);
-            if (isFinite(amt) && amt > 0) {
-              totalRepayUsd += d.amountUsd || 0;
-            }
-          }
-          break;
-        }
-      }
-    }
-
-    // Earn APY is the rate the yield-bearing legs actually pay, so it must be
-    // weighted by vault deposits only — collateral earns nothing in Morpho Blue
-    // (it sits isolated in the market so it stays seizable at liquidation).
-    const avgEarnApy = totalVaultDepositUsd > 0 ? weightedEarnApy / totalVaultDepositUsd : 0;
-    const avgBorrowApy = totalBorrowUsd > 0 ? weightedBorrowApy / totalBorrowUsd : 0;
-    // Net APY divides the annual net flow (earned − paid, both in USD) by the
-    // whole capital committed, collateral included. Subtracting avgEarnApy and
-    // avgBorrowApy directly would compare two ratios computed on different
-    // bases and could flip the sign of a strategy that is actually profitable.
-    const netApy =
-      totalDepositUsd > 0 ? (weightedEarnApy - weightedBorrowApy) / totalDepositUsd : 0;
-
-    return {
-      totalDepositUsd,
-      // Collateral only (deposits minus the vault leg). The vault is funded by
-      // borrowing against the collateral, so collateral + vault double-counts
-      // the same underlying capital — the real committed funds are the collateral.
-      totalCollateralUsd: totalDepositUsd - totalVaultDepositUsd,
-      totalBorrowUsd,
-      totalRepayUsd,
-      avgEarnApy,
-      avgBorrowApy,
-      netApy,
-      // Debt-weighted portfolio HF across all borrow markets (null if no debt)
-      healthFactor: totalBorrowUsd > 0 ? weightedHfNumerator / totalBorrowUsd : null,
-      vaultCount,
-      borrowCount,
-    };
-  }, [nodes]);
+  void edges;
+  return useMemo(() => computeStrategyMetrics(nodes), [nodes]);
 }
 
 function HfIndicator({ hf, label = "Health" }: { hf: number | null; label?: string }) {

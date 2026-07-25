@@ -15,6 +15,7 @@ import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
 import { formatApy, formatUsd } from "@/lib/utils/format";
 import type { VaultDepositNodeData, CanvasNode } from "@/lib/canvas/types";
 import NodeShell from "./NodeShell";
+import NodeImpact from "./NodeImpact";
 import SearchSelect from "./SearchSelect";
 
 type SortKey = "tvl" | "apy";
@@ -628,6 +629,8 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
             )}
           </>
         )}
+
+        <NodeImpact nodeId={id} />
       </div>
 
       <Handle

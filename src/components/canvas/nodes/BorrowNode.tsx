@@ -15,6 +15,7 @@ import { getNodeChainId } from "@/lib/canvas/bridge";
 import type { BorrowNodeData, CanvasNode } from "@/lib/canvas/types";
 import type { SupportedChainId } from "@/lib/web3/chains";
 import NodeShell from "./NodeShell";
+import NodeImpact from "./NodeImpact";
 import SearchSelect from "./SearchSelect";
 
 /** Market utilization donut, à la Morpho — borrowed / supplied. */
@@ -489,6 +490,8 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
                 );
               })()}
             </div>
+
+            <NodeImpact nodeId={id} />
 
             {/* Liquidity warning */}
             {exceedsLiquidity && (
