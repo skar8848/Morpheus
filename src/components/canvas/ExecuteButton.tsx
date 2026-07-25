@@ -39,6 +39,7 @@ import SimulationPreview from "./SimulationPreview";
 import BundleInspector from "./BundleInspector";
 import { useBundlePreflight } from "@/lib/hooks/useBundlePreflight";
 import { useSmartAccount } from "@/lib/hooks/useSmartAccount";
+import { isInsideSafe, sendSafeBatch } from "@/lib/web3/safeBatch";
 import {
   planCrossChainExecution,
   fetchBridgeTransaction,
@@ -651,16 +652,41 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
       if (swaps.length === 0) {
         // ---- No swaps: single-phase execution (original flow) ----
         const approvals = getRequiredApprovals(execNodes, execEdges, cid);
-        if (approvals.length > 0) {
-          const needed = await filterNeededApprovals(
-            approvals.map((a) => ({ token: a.token, amount: a.amount })),
-            currentAddress,
-            adapter
-          );
-          if (needed.length > 0) {
-            assertChain();
-            await sendApprovals(buildApprovalTxs(needed, adapter, cid));
+        const neededApprovals =
+          approvals.length > 0
+            ? await filterNeededApprovals(
+                approvals.map((a) => ({ token: a.token, amount: a.amount })),
+                currentAddress,
+                adapter
+              )
+            : [];
+
+        // Inside the Safe interface, send approvals + bundle as ONE batch.
+        // One queue entry and one signature round instead of N, and the Safe
+        // wraps them in a multisend so they can't execute out of order.
+        if (isInsideSafe()) {
+          const bundle = buildExecutionBundle(execNodes, execEdges, currentAddress, cid);
+          if (bundle.calls.length === 0) {
+            setError("No executable actions in graph");
+            return;
           }
+          assertChain();
+          setSwapStatus("Sending the batch to your Safe…");
+          const batch = await sendSafeBatch([
+            ...buildApprovalTxs(neededApprovals, adapter, cid).map((t) => ({ to: t.to, data: t.data })),
+            { to: bundle.to, data: bundle.data },
+          ]);
+          if (!batch.ok) throw new Error(batch.error ?? "Safe batch failed");
+          setTxHash(batch.safeTxHash ?? null);
+          setSwapStatus(
+            `Batch of ${neededApprovals.length + 1} transactions queued in your Safe — it executes once signed.`
+          );
+          return;
+        }
+
+        if (neededApprovals.length > 0) {
+          assertChain();
+          await sendApprovals(buildApprovalTxs(neededApprovals, adapter, cid));
         }
 
         if (addressRef.current !== currentAddress) {
@@ -1079,9 +1105,11 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
                 usual "confirmed on-chain" expectation doesn't hold. */}
             {isSmartAccount && (
               <div className="mt-3 rounded-lg border border-brand/20 bg-brand/5 px-3 py-2 text-[10px] text-brand">
-                {isSafeApp ? "Connected as a Safe App" : "Smart contract wallet detected"} — each
-                transaction is added to your Safe queue and executes once it has enough signatures,
-                so it won&apos;t confirm on-chain immediately.
+                {isSafeApp ? "Connected as a Safe App" : "Smart contract wallet detected"} —
+                approvals and the bundle are sent as a{" "}
+                <span className="font-semibold">single batched Safe transaction</span>: one queue
+                entry, one signature round. It executes once signed, so it won&apos;t confirm
+                on-chain immediately.
               </div>
             )}
 
