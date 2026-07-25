@@ -246,6 +246,7 @@ export function useCanvasState() {
             quoteOut: "",
             quoteOutUsd: 0,
             quoteLoading: false,
+            routeTool: undefined,
           };
           break;
         default:

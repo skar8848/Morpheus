@@ -113,6 +113,9 @@ export interface BridgeNodeData {
   quoteLoading: boolean;
   /** Chosen route id (e.g. "cctp-fast"); defaults to the best-ranked one. */
   routeId?: string;
+  /** Aggregator tool key of the chosen route (e.g. "stargateV2Bus"). Stable
+   *  across re-quotes, unlike the numeric route id — used at execution time. */
+  routeTool?: string;
 }
 
 export interface PositionNodeData {

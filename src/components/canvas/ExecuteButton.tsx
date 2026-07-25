@@ -38,6 +38,11 @@ import { wagmiConfig } from "@/lib/web3/config";
 import SimulationPreview from "./SimulationPreview";
 import BundleInspector from "./BundleInspector";
 import { useBundlePreflight } from "@/lib/hooks/useBundlePreflight";
+import {
+  planCrossChainExecution,
+  fetchBridgeTransaction,
+  savePendingBridge,
+} from "@/lib/canvas/crossChainExecutor";
 
 // Feature flag: the pre-execution simulation preview. Hidden temporarily
 // because it sometimes shows a red "Will revert" banner that doesn't match
@@ -471,6 +476,104 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           throw new Error("Bundle transaction reverted on-chain");
         }
       };
+
+      // ─── Cross-chain strategies ────────────────────────────────────────────
+      // A bridge leg can't live inside a Bundler3 multicall, so the graph runs
+      // as ordered phases. LI.FI hands back a ready transaction and delivers on
+      // the destination chain itself, so the bridge is one signature — the
+      // destination-side Morpho actions are then signed separately, on the
+      // other chain, once the funds land.
+      const xchain = planCrossChainExecution(execNodes, execEdges, cid);
+      if (xchain.isCrossChain) {
+        if (xchain.error || !xchain.bridge) {
+          throw new Error(xchain.error ?? "Cross-chain plan could not be built");
+        }
+
+        // Phase 1 — Morpho actions on the source chain, if any.
+        if (xchain.sourceSegment) {
+          setSwapStatus("Executing source-chain actions…");
+          const srcBundle = buildExecutionBundle(
+            xchain.sourceSegment.nodes,
+            xchain.sourceSegment.edges,
+            currentAddress,
+            cid
+          );
+          const srcApprovals = await filterNeededApprovals(
+            getRequiredApprovals(xchain.sourceSegment.nodes, xchain.sourceSegment.edges, cid),
+            currentAddress,
+            adapter
+          );
+          if (srcApprovals.length > 0) await sendApprovals(buildApprovalTxs(srcApprovals, adapter, cid));
+          await sendBundle(srcBundle);
+        }
+
+        // Phase 2 — fresh, signable bridge transaction (quotes expire).
+        setSwapStatus("Fetching bridge route…");
+        const bridgeTx = await fetchBridgeTransaction(xchain.bridge, currentAddress);
+        if (!bridgeTx.ok || !bridgeTx.transaction) {
+          throw new Error(bridgeTx.error ?? "Could not build the bridge transaction");
+        }
+        if (bridgeTx.substituted) {
+          console.warn("[ExecuteButton] selected bridge route unavailable, using", bridgeTx.toolName);
+        }
+
+        // Phase 3 — approve the bridge router for the asset being sent.
+        if (bridgeTx.approvalAddress) {
+          const spender = bridgeTx.approvalAddress as `0x${string}`;
+          const needed = await filterNeededApprovals(
+            [{ token: xchain.bridge.srcToken as `0x${string}`, amount: BigInt(xchain.bridge.amountRaw) }],
+            currentAddress,
+            spender
+          );
+          if (needed.length > 0) {
+            setSwapStatus("Approving the bridge router…");
+            // chainId matters here: USDT needs its allowance reset to 0 first.
+            await sendApprovals(buildApprovalTxs(needed, spender, cid));
+          }
+        }
+
+        // Phase 4 — send the bridge transaction.
+        setSwapStatus(`Bridging ${xchain.bridge.label}…`);
+        assertChain();
+        const bridgeHash = await new Promise<`0x${string}`>((resolve, reject) => {
+          sendTransaction(
+            {
+              to: bridgeTx.transaction!.to,
+              data: bridgeTx.transaction!.data,
+              value: BigInt(bridgeTx.transaction!.value || "0"),
+            },
+            { onSuccess: (h) => resolve(h), onError: (err) => reject(err) }
+          );
+        });
+        setTxHash(bridgeHash);
+        const bridgeReceipt = await waitWithRetry(bridgeHash);
+        if (bridgeReceipt.status === "reverted") {
+          setTxHash(null);
+          throw new Error("Bridge transaction reverted on-chain");
+        }
+
+        // Phase 5 — the destination leg is a separate signature on the other
+        // chain, only possible once the funds actually arrive. Persist it so a
+        // refresh during the bridge doesn't lose the rest of the strategy.
+        if (xchain.destinationSegment) {
+          savePendingBridge({
+            bridgeTxHash: bridgeHash,
+            srcChainId: xchain.bridge.srcChainId,
+            dstChainId: xchain.bridge.dstChainId,
+            label: xchain.bridge.label,
+            startedAt: Date.now(),
+            destination: xchain.destinationSegment,
+          });
+          setSwapStatus(
+            `Bridged. Funds arrive on ${
+              CHAIN_CONFIGS.find((c) => c.chainId === xchain.bridge!.dstChainId)?.label ?? "the destination chain"
+            } shortly — switch network and run the remaining actions.`
+          );
+        } else {
+          setSwapStatus("Bridge submitted — the route provider delivers on the destination chain.");
+        }
+        return;
+      }
 
       // ─── Morpho Blue authorization preflight ───────────────────────────────
       // The bundler executes morpho.borrow on behalf of the user via the

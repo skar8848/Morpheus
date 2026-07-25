@@ -213,7 +213,8 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
       q !== d.quoteOut ||
       qUsd !== d.quoteOutUsd ||
       routesLoading !== d.quoteLoading ||
-      (selected && selected.id !== d.routeId)
+      (selected && selected.id !== d.routeId) ||
+      (selected && selected.tool !== d.routeTool)
     ) {
       updateNodeData(id, {
         amountInUsd,
@@ -221,6 +222,7 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
         quoteOutUsd: qUsd,
         quoteLoading: routesLoading,
         routeId: selected?.id,
+        routeTool: selected?.tool,
       });
     }
   }, [
