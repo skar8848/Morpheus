@@ -12,6 +12,7 @@ import { useChain } from "@/lib/context/ChainContext";
 import { useAllAssets } from "@/lib/hooks/useAllAssets";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
 import { useBridgeRoutes, type RouteQuote } from "@/lib/hooks/useBridgeRoutes";
+import { useCowCrossChainRoute } from "@/lib/hooks/useCowCrossChainRoute";
 import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
 import ChainIcon from "../ChainIcon";
 import TokenIcon from "../TokenIcon";
@@ -180,9 +181,32 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
     wallet: account,
   });
 
+  // CoW cross-chain, quoted client-side (SDK-only, no REST endpoint) and shown
+  // as an alternative rail rather than a replacement for the LI.FI routes.
+  const cowRoute = useCowCrossChainRoute({
+    srcChainId,
+    dstChainId,
+    tokenIn,
+    tokenOut: d.tokenOut ?? null,
+    amountRaw,
+    owner: account,
+    tokenOutPrice,
+  });
+
+  const allRoutes = useMemo(() => {
+    if (!cowRoute) return routes;
+    const merged = [...routes, cowRoute];
+    // Same ranking rule as the server rails: best net received, unusable last.
+    return merged.sort((a, b) => {
+      if (!!a.unavailable !== !!b.unavailable) return a.unavailable ? 1 : -1;
+      const net = (r: typeof a) => r.receivedUsd - (r.gasUsd ?? 0);
+      return net(b) - net(a);
+    });
+  }, [routes, cowRoute]);
+
   const selected = useMemo(
-    () => routes.find((r) => r.id === d.routeId && !r.unavailable) ?? routes.find((r) => !r.unavailable) ?? null,
-    [routes, d.routeId]
+    () => allRoutes.find((r) => r.id === d.routeId && !r.unavailable) ?? allRoutes.find((r) => !r.unavailable) ?? null,
+    [allRoutes, d.routeId]
   );
 
   /** Destination amount in tokenOut units: the rail's own figure when it gives
@@ -246,7 +270,7 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
       nodeType="bridge"
       title="Bridge (LI.FI)"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
-      invalid={routes.length > 0 && !selected}
+      invalid={allRoutes.length > 0 && !selected}
     >
       <div className="space-y-2">
         {/* Route: source (fixed) → destination */}
@@ -341,7 +365,7 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
             {routesLoading && <span className="text-[9px] text-text-tertiary">quoting…</span>}
           </div>
           <div className="nodrag mt-0.5 space-y-1">
-            {routes.length === 0 && !routesLoading && (
+            {allRoutes.length === 0 && !routesLoading && (
               <p className="text-[9px] text-text-tertiary">
                 {!tokenIn
                   ? "Pick the asset to send"
@@ -352,7 +376,7 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
                       : "Enter an amount to quote routes"}
               </p>
             )}
-            {routes.map((r) => {
+            {allRoutes.map((r) => {
               const isSel = selected?.id === r.id;
               const tokenAmt = routeTokenAmount(r);
               const eta =

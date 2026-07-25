@@ -14,7 +14,7 @@ export interface RouteQuote {
   id: string;
   /** Display name, e.g. "CCTP v2 · Fast" or "StargateV2 (Fast mode)". */
   name: string;
-  provider: "cctp" | "lifi" | "stargate";
+  provider: "cctp" | "lifi" | "stargate" | "cow";
   /** Aggregator tool key, e.g. "stargateV2Bus". */
   tool?: string;
   logoURI?: string;
@@ -53,7 +53,7 @@ const GAS_USD_ESTIMATE: Partial<Record<SupportedChainId, number>> = {
 interface ApiRoute {
   id: string;
   name: string;
-  provider: "cctp" | "lifi" | "stargate";
+  provider: "cctp" | "lifi" | "stargate" | "cow";
   tool?: string;
   logoURI?: string;
   dstAmount: string | null;
