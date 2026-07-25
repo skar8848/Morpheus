@@ -3,7 +3,7 @@
 
 import { http, createConfig, fallback } from "wagmi";
 import { mainnet, base, arbitrum } from "wagmi/chains";
-import { injected } from "wagmi/connectors";
+import { injected, safe } from "wagmi/connectors";
 import { hyperevm, monad } from "./chains";
 
 /**
@@ -18,7 +18,15 @@ import { hyperevm, monad } from "./chains";
  */
 export const wagmiConfig = createConfig({
   chains: [mainnet, base, arbitrum, hyperevm, monad],
-  connectors: [injected()],
+  connectors: [
+    injected(),
+    // Safe: auto-connects when Morpheus is opened as a Safe App (inside the
+    // Safe iframe). Harmless elsewhere — it simply never becomes ready.
+    // Note a Safe signs through its own queue, so a "sent" transaction may sit
+    // pending signatures rather than landing on-chain; the execute flow treats
+    // that as queued, not failed.
+    safe({ allowedDomains: [/^app\.safe\.global$/, /^safe\.global$/] }),
+  ],
   transports: {
     [mainnet.id]: fallback([
       http("https://ethereum-rpc.publicnode.com"),

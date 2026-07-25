@@ -38,6 +38,7 @@ import { wagmiConfig } from "@/lib/web3/config";
 import SimulationPreview from "./SimulationPreview";
 import BundleInspector from "./BundleInspector";
 import { useBundlePreflight } from "@/lib/hooks/useBundlePreflight";
+import { useSmartAccount } from "@/lib/hooks/useSmartAccount";
 import {
   planCrossChainExecution,
   fetchBridgeTransaction,
@@ -153,6 +154,9 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
 
   // Run preflight only while the panel is expanded AND we're not currently executing
   const preflight = useBundlePreflight(nodes, edges, expanded && !isExecuting);
+  // A Safe queues transactions instead of mining them — the execute flow needs
+  // to know so it doesn't wait on a hash that will never appear on-chain.
+  const { isSmartAccount, isSafeApp } = useSmartAccount();
 
   const wrongChain = isConnected && walletChainId !== chainId;
   const expectedChainLabel = CHAIN_CONFIGS.find((c) => c.chainId === chainId)?.label ?? `Chain ${chainId}`;
@@ -389,8 +393,16 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         }
       };
 
-      // Retry wrapper for waitForTransactionReceipt (RPC can be flaky)
+      // Retry wrapper for waitForTransactionReceipt (RPC can be flaky).
+      //
+      // A Safe returns a *Safe transaction hash*, not an on-chain one: the
+      // transaction enters the Safe's queue and only lands once the signature
+      // threshold is met. Waiting on that hash would always time out and be
+      // reported as a failure, so we skip the receipt check and report queued.
       const waitWithRetry = async (hash: `0x${string}`, retries = 3) => {
+        if (isSmartAccount) {
+          return { status: "success" as const, transactionHash: hash, queued: true };
+        }
         for (let attempt = 0; attempt < retries; attempt++) {
           try {
             return await waitForTransactionReceipt(wagmiConfig, {
@@ -1060,6 +1072,16 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
             {swapStatus && (
               <div className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-[10px] text-amber-400">
                 {swapStatus}
+              </div>
+            )}
+
+            {/* Smart-account notice — a Safe queues rather than mines, so the
+                usual "confirmed on-chain" expectation doesn't hold. */}
+            {isSmartAccount && (
+              <div className="mt-3 rounded-lg border border-brand/20 bg-brand/5 px-3 py-2 text-[10px] text-brand">
+                {isSafeApp ? "Connected as a Safe App" : "Smart contract wallet detected"} — each
+                transaction is added to your Safe queue and executes once it has enough signatures,
+                so it won&apos;t confirm on-chain immediately.
               </div>
             )}
 
