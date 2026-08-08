@@ -41,8 +41,17 @@ export function useCowCrossChainRoute(params: {
     isSmartAccount,
   });
 
-  const blocked = !availability.available;
-  const blockedReason = availability.reason;
+  // Anything that stops us quoting must produce a *reason*, never a vanished
+  // row — an option that silently disappears is impossible to debug from the UI.
+  let blocked = !availability.available;
+  let blockedReason = availability.reason;
+  if (!blocked && !owner) {
+    blocked = true;
+    blockedReason = "Connect a wallet to quote CoW";
+  } else if (!blocked && amountRaw === "0") {
+    blocked = true;
+    blockedReason = "Enter an amount to quote CoW";
+  }
 
   // Unavailable is a *derived* state, not something to push through setState —
   // the reason is known synchronously from the availability check.
@@ -127,5 +136,22 @@ export function useCowCrossChainRoute(params: {
     tokenOutPrice,
   ]);
 
-  return blockedRoute ?? route;
+  // Quotable but nothing back yet: keep the row on screen as pending rather
+  // than rendering nothing, so the rail never appears to be missing.
+  const pendingRoute: RouteQuote = {
+    id: "cow-crosschain",
+    name: "CoW cross-chain",
+    provider: "cow",
+    receivedUsd: 0,
+    dstAmount: null,
+    feeUsd: 0,
+    feeBps: null,
+    gasUsd: null,
+    etaSeconds: 60,
+    unavailable: "Quoting…",
+  };
+
+  if (blockedRoute) return blockedRoute;
+  if (route) return route;
+  return srcChainId === dstChainId ? null : pendingRoute;
 }
