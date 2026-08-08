@@ -8,7 +8,8 @@ import { morphoQuery } from "../graphql/client";
 import {
   USER_MARKET_POSITIONS_QUERY,
   USER_VAULT_POSITIONS_QUERY,
-  USER_TRANSACTIONS_QUERY,
+  USER_MARKET_TRANSACTIONS_QUERY,
+  USER_VAULT_TRANSACTIONS_QUERY,
 } from "../graphql/queries";
 import type {
   UserMarketPosition,
@@ -33,6 +34,26 @@ interface AddressData {
 
 const TX_PAGE_SIZE = 50;
 const MAX_TRANSACTIONS = 1000;
+
+
+/**
+ * The API split its single `transactions` field into per-surface queries, so
+ * market and vault activity are fetched separately and interleaved here by
+ * timestamp. Ids are synthesised from txHash+logIndex, which the old unified
+ * field used to provide.
+ */
+type RawTx = Record<string, unknown>;
+
+function normalizeTxs(market: RawTx[], vault: RawTx[]): MorphoTransaction[] {
+  const shape = (t: RawTx): RawTx => ({
+    ...t,
+    id: `${String(t.txHash)}-${String(t.logIndex ?? 0)}`,
+    hash: String(t.txHash),
+  });
+  const all: RawTx[] = [...market.map(shape), ...vault.map(shape)];
+  all.sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0));
+  return all as unknown as MorphoTransaction[];
+}
 
 export function useAddressPositions(
   address: string | null,
@@ -79,19 +100,24 @@ export function useAddressPositions(
         userAddress: [address],
         chainId: [chainId],
       }),
-      morphoQuery<TransactionsResponse>(USER_TRANSACTIONS_QUERY, {
+      morphoQuery<{ marketTransactions: { items: RawTx[] } }>(USER_MARKET_TRANSACTIONS_QUERY, {
         userAddress: [address],
         chainId: [chainId],
         first: TX_PAGE_SIZE,
         skip: 0,
       }),
+      morphoQuery<{ vaultV1Transactions: { items: RawTx[] } }>(USER_VAULT_TRANSACTIONS_QUERY, {
+        userAddress: [address],
+        chainId: [chainId],
+        first: TX_PAGE_SIZE,
+      }).catch(() => ({ vaultV1Transactions: { items: [] as RawTx[] } })),
       // V2 vaults are NOT in `vaultPositions` — discover via list + multicall
       fetchUserVaultV2Positions(address as `0x${string}`, chainId).catch((err) => {
         console.warn("[useAddressPositions] V2 fetch failed:", err);
         return [];
       }),
     ])
-      .then(([marketData, vaultData, txData, v2Positions]) => {
+      .then(([marketData, vaultData, txData, vaultTxData, v2Positions]) => {
         if (controller.signal.aborted) return;
 
         const activeMarkets = marketData.marketPositions.items.filter((p) => {
@@ -116,8 +142,11 @@ export function useAddressPositions(
 
         setMarketPositions(activeMarkets);
         setVaultPositions([...activeV1Vaults, ...mergedV2]);
-        setTransactions(txData.transactions.items);
-        setHasMore(txData.transactions.items.length === TX_PAGE_SIZE);
+        const marketTxs = txData.marketTransactions?.items ?? [];
+        setTransactions(normalizeTxs(marketTxs, vaultTxData.vaultV1Transactions?.items ?? []));
+        // Only the market feed paginates (the vault query has no `skip`), so
+        // it alone decides whether there's more history to load.
+        setHasMore(marketTxs.length === TX_PAGE_SIZE);
         skipRef.current = TX_PAGE_SIZE;
         setLoading(false);
       })
@@ -141,7 +170,9 @@ export function useAddressPositions(
     loadingMoreRef.current = true;
     const fetchAddress = address; // capture for stale check
 
-    morphoQuery<TransactionsResponse>(USER_TRANSACTIONS_QUERY, {
+    // Paginating the market feed only — the vault query exposes no `skip`, so
+    // its history is loaded once up front rather than page by page.
+    morphoQuery<{ marketTransactions: { items: RawTx[] } }>(USER_MARKET_TRANSACTIONS_QUERY, {
       userAddress: [address],
       chainId: [chainId],
       first: TX_PAGE_SIZE,
@@ -150,8 +181,12 @@ export function useAddressPositions(
       .then((txData) => {
         // Discard if address changed while fetching
         if (addressRef.current !== fetchAddress) return;
-        const newTxs = txData.transactions.items;
-        setTransactions((prev) => [...prev, ...newTxs]);
+        const newTxs = normalizeTxs(txData.marketTransactions?.items ?? [], []);
+        setTransactions((prev) =>
+          [...prev, ...newTxs].sort(
+            (a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0)
+          )
+        );
         setHasMore(newTxs.length === TX_PAGE_SIZE && skipRef.current + TX_PAGE_SIZE < MAX_TRANSACTIONS);
         skipRef.current += TX_PAGE_SIZE;
       })

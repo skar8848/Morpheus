@@ -283,98 +283,74 @@ export const LOAN_ASSETS_QUERY = `
   }
 `;
 
-export const USER_TRANSACTIONS_QUERY = `
-  query GetUserTransactions($userAddress: [String!]!, $chainId: [Int!]!, $first: Int, $skip: Int) {
-    transactions(
+/**
+ * User activity. The API's single `transactions` root field was removed and
+ * split per surface, so market and vault activity are fetched separately and
+ * merged client-side (see useAddressPositions). Querying the old field now
+ * fails outright with `Cannot query field "transactions"`.
+ */
+export const USER_MARKET_TRANSACTIONS_QUERY = `
+  query GetUserMarketTransactions($userAddress: [String!]!, $chainId: [Int!]!, $first: Int, $skip: Int) {
+    marketTransactions(
       first: $first
       skip: $skip
       orderBy: Timestamp
       orderDirection: Desc
-      where: {
-        userAddress_in: $userAddress
-        chainId_in: $chainId
-      }
+      where: { userAddress_in: $userAddress, chainId_in: $chainId }
     ) {
       items {
-        id
-        hash
+        txHash
         timestamp
         blockNumber
+        logIndex
         type
+        market {
+          uniqueKey: marketId
+          collateralAsset { symbol decimals logoURI }
+          loanAsset { symbol decimals logoURI }
+        }
         data {
           __typename
-          ... on VaultTransactionData {
-            assets
-            assetsUsd
-            vault {
-              name
-              address
-              asset {
-                symbol
-                decimals
-                logoURI
-              }
-            }
-          }
-          ... on MarketTransferTransactionData {
-            assets
-            assetsUsd
-            shares
-            market {
-              uniqueKey: marketId
-              collateralAsset {
-                symbol
-                decimals
-                logoURI
-              }
-              loanAsset {
-                symbol
-                decimals
-                logoURI
-              }
-            }
-          }
-          ... on MarketCollateralTransferTransactionData {
-            assets
-            assetsUsd
-            market {
-              uniqueKey: marketId
-              collateralAsset {
-                symbol
-                decimals
-                logoURI
-              }
-              loanAsset {
-                symbol
-                decimals
-                logoURI
-              }
-            }
-          }
-          ... on MarketLiquidationTransactionData {
+          ... on MarketTransactionTransferData { assets shares }
+          ... on MarketTransactionCollateralTransferData { assets }
+          ... on MarketTransactionLiquidationData {
             repaidAssets
-            repaidAssetsUsd
             seizedAssets
-            seizedAssetsUsd
             badDebtAssets
-            badDebtAssetsUsd
-            liquidator
-            market {
-              uniqueKey: marketId
-              collateralAsset {
-                symbol
-                decimals
-                logoURI
-              }
-              loanAsset {
-                symbol
-                decimals
-                logoURI
-              }
-            }
           }
         }
       }
     }
   }
 `;
+
+export const USER_VAULT_TRANSACTIONS_QUERY = `
+  query GetUserVaultTransactions($userAddress: [String!]!, $chainId: [Int!]!, $first: Int) {
+    vaultV1Transactions(
+      first: $first
+      orderBy: Time
+      orderDirection: Desc
+      where: { userAddress_in: $userAddress, chainId_in: $chainId }
+    ) {
+      items {
+        txHash
+        timestamp
+        blockNumber
+        logIndex
+        type
+        assets
+        vault {
+          name
+          address
+          asset { symbol decimals logoURI }
+        }
+        data {
+          __typename
+          ... on VaultV1DepositData { assets }
+          ... on VaultV1WithdrawData { assets }
+        }
+      }
+    }
+  }
+`;
+
