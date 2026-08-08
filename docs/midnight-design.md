@@ -3,7 +3,7 @@
 
 # Midnight — fixed-rate markets in Morpheus
 
-Status: research complete, implementation not started · 2026-07-25
+Status: research complete, read path verified live, implementation not started · 2026-07-25
 
 Midnight is Morpho's **fixed-rate, fixed-maturity** lending protocol. It is not
 a variant of Blue: it trades zero-coupon *units* through a **maker/taker order
@@ -90,25 +90,56 @@ Plus `EcrecoverRatifier` (validates EIP-712 signed Merkle roots of offers),
 
 ---
 
-## 3. The blocker to solve first
+## 3. The read path — it exists (correcting an earlier note)
 
-**The public Morpho GraphQL API does not expose Midnight.** Verified by
-introspection: zero root fields matching midnight / offer / tick, out of 29.
+An earlier version of this doc said Midnight had no data source. That was wrong:
+I had only introspected the **GraphQL** API. Midnight is served by a separate
+**REST** API, documented under *Mempool & Router*, and it works today.
 
-Everything Morpheus does today reads from that API. So the order book —
-markets, bids, asks, takeable offers — has no data source yet. Before any UI
-work, one of these must be settled:
+Offers themselves live offchain — the mempool contract "simply logs each offer
+as an event (no storage or mapping is performed)", and "different participants
+might see different subsets of offers". Morpho runs a **router** that aggregates
+and validates them, and exposes them publicly.
 
-1. a dedicated Midnight API / subgraph (does one exist publicly?),
-2. direct contract reads for market state + an off-chain offer feed,
-3. an SDK — `midnightBundles` implies one exists, but the developer docs stop
-   at "integration architecture" and never name contract functions, ABIs, npm
-   packages or signing formats.
+Base URL: `https://api.morpho.org` (verified; `blue-api.morpho.org` also answers)
 
-**Nothing should be built until the read path is real.** A fixed-rate node that
-can't show live bids and asks is worse than none.
+| Endpoint | Purpose |
+|---|---|
+| `GET /v0/midnight/books?chain_ids={id}&limit={n}` | markets + aggregated bids/asks per tick (`limit` max **20**) |
+| `GET /v0/midnight/books/{market-id}?depth=50` | depth for one market |
+| `GET /v0/midnight/books/{market-id}/asks/quote?assets={amt}&slippage={%}` | takeable offers: full `Offer` structs + `ratifierData`, ready to submit onchain |
+| `POST /v0/midnight/mempool/validate` | pre-flight that the router will index your offer |
 
----
+The quote endpoint deliberately returns *more* than requested, so a take still
+fills if another taker consumes part of the book first — concurrency handled
+for us.
+
+**Live sample (Base, 2026-07-25):** 5 markets, USDC against cbBTC.
+
+| Maturity | Days | Best price | Implied |
+|---|---|---|---|
+| 2026-08-28 | 20 | 0.998023 | **3.62 % ann.** |
+| 2026-09-25 | 48 | 0.994761 | **4.01 % ann.** |
+
+Market payload carries everything a node needs: `market_id`, `loan_token`,
+`collaterals[] {token, lltv, oracle, liquidation_cursor}`, `maturity`,
+`enter_gate` / `liquidator_gate`, and `bids`/`asks` as `{tick, price, units,
+assets, count}`.
+
+So the read path is **not** a blocker. What's still unpublished is the write
+side: contract ABIs and the exact take/sign signatures. But `.../asks/quote`
+returning "complete `Offer` structs and `ratifierData` ready for onchain
+submission" implies the take payload is handed to us — the remaining unknown is
+the function to submit it to.
+
+### Prior art: Tenor
+
+[Tenor](https://www.tenor.finance/) is built directly on Midnight, live on Base
+since 2026-07-21, and extends it with whitelisted markets, org accounts with
+roles, OTC matching and grace periods. Worth studying as a reference
+implementation of the take flow — and a reminder that Morpheus's angle should be
+*composition* (a fixed-rate leg inside a larger strategy), not competing with a
+dedicated fixed-rate front end.
 
 ## 4. Proposed design (once reads exist)
 
@@ -154,9 +185,9 @@ becomes its own segment.
 
 ## 5. Open questions
 
-1. Is there a public read API/subgraph for Midnight offers? (blocker)
-2. Contract ABIs and the exact `take` / offer-signing signatures — the docs
-   don't publish them; the Base contracts would need to be read directly.
+1. ~~Public read API~~ — **answered**, see §3.
+2. Contract ABIs and the exact `take` / offer-signing signatures — still
+   unpublished; read the Base contracts directly, or observe how Tenor submits.
 3. Where are offers actually distributed in practice — the on-chain mempool, or
    a Morpho-run relay?
 4. Do gates restrict who can enter the markets we'd surface?
