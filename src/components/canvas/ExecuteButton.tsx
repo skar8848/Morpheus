@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useMemo, useState, useCallback, useRef } from "react";
+import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import Image from "next/image";
 import type { Edge } from "@xyflow/react";
 import { useAccount, useSendTransaction, useSwitchChain } from "wagmi";
@@ -158,6 +158,17 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   // A Safe queues transactions instead of mining them — the execute flow needs
   // to know so it doesn't wait on a hash that will never appear on-chain.
   const { isSmartAccount, isSafeApp } = useSmartAccount();
+
+  // Opened from "Open in Safe": the strategy arrives through localStorage, so
+  // land on the prepared batch rather than a collapsed button. Preparing is not
+  // signing — the user still confirms — but the batch is ready on arrival.
+  const autoExpandedRef = useRef(false);
+  useEffect(() => {
+    if (autoExpandedRef.current || !isInsideSafe()) return;
+    if (nodes.length === 0) return;
+    autoExpandedRef.current = true;
+    setExpanded(true);
+  }, [nodes.length]);
 
   const wrongChain = isConnected && walletChainId !== chainId;
   const expectedChainLabel = CHAIN_CONFIGS.find((c) => c.chainId === chainId)?.label ?? `Chain ${chainId}`;

@@ -12,10 +12,12 @@ import { useLoanAssets } from "@/lib/hooks/useLoanAssets";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
 import { formatApy, formatLltv } from "@/lib/utils/format";
 import { getNodeChainId } from "@/lib/canvas/bridge";
+import { MIDNIGHT_CHAIN_ID } from "@/lib/midnight/api";
 import type { BorrowNodeData, CanvasNode } from "@/lib/canvas/types";
 import type { SupportedChainId } from "@/lib/web3/chains";
 import NodeShell from "./NodeShell";
 import NodeImpact from "./NodeImpact";
+import MidnightPanel from "./MidnightPanel";
 import SearchSelect from "./SearchSelect";
 
 /** Market utilization donut, à la Morpho — borrowed / supplied. */
@@ -212,6 +214,11 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
   // Desired-HF input. HF = LLTV% / LTV% (prices cancel), so a target HF maps
   // to LTV% = LLTV% / HF. Kept as a local draft while focused so the reactive
   // HF (derived from ltvPercent) doesn't fight the user's typing.
+  // Floating (Blue) vs fixed (Midnight). Same intent — borrow X against Y —
+  // so it's a mode here, not a separate node the user must know to reach for.
+  const [rateMode, setRateMode] = useState<"floating" | "fixed">("floating");
+  const midnightAvailable = nodeChainId === MIDNIGHT_CHAIN_ID;
+
   const [hfFocused, setHfFocused] = useState(false);
   const [hfDraft, setHfDraft] = useState("");
   useEffect(() => {
@@ -358,6 +365,47 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
                   ${depositUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                 </span>
               </div>
+            )}
+
+            {/* Rate model — fixed rate is Base-only, so say so elsewhere
+                rather than hiding the option without explanation. */}
+            <div className="nodrag flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setRateMode("floating")}
+                className={`flex-1 rounded px-1.5 py-0.5 text-[9px] font-semibold transition-colors ${
+                  rateMode === "floating"
+                    ? "bg-brand/15 text-brand"
+                    : "bg-bg-secondary text-text-tertiary hover:text-text-secondary"
+                }`}
+              >
+                Floating
+              </button>
+              <button
+                type="button"
+                disabled={!midnightAvailable}
+                onClick={() => setRateMode("fixed")}
+                title={midnightAvailable ? "Fixed rate via Midnight" : "Midnight is deployed on Base only"}
+                className={`flex-1 rounded px-1.5 py-0.5 text-[9px] font-semibold transition-colors ${
+                  !midnightAvailable
+                    ? "cursor-not-allowed bg-bg-secondary text-text-tertiary opacity-40"
+                    : rateMode === "fixed"
+                      ? "bg-brand/15 text-brand"
+                      : "bg-bg-secondary text-text-tertiary hover:text-text-secondary"
+                }`}
+              >
+                🕛 Fixed
+              </button>
+            </div>
+
+            {rateMode === "fixed" && midnightAvailable && (
+              <MidnightPanel
+                loanTokenAddress={d.market.loanAsset.address}
+                loanSymbol={d.market.loanAsset.symbol}
+                loanDecimals={d.market.loanAsset.decimals}
+                amount={d.borrowAmount}
+                floatingApy={d.market.state?.netBorrowApy}
+              />
             )}
 
             {/* LTV slider — nodrag prevents node dragging */}
