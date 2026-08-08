@@ -8,11 +8,15 @@ import { useAccount, useReadContracts } from "wagmi";
 import { erc20Abi } from "viem";
 import type { Asset, AssetWithBalance } from "../graphql/types";
 
-export function useTokenBalances(assets: Asset[]): {
+export function useTokenBalances(assets: Asset[], addressOverride?: `0x${string}`): {
   assetsWithBalances: AssetWithBalance[];
   isLoading: boolean;
 } {
-  const { address: account, isConnected } = useAccount();
+  const { address: connected, isConnected: walletConnected } = useAccount();
+  // In Safe mode the strategy is built against the Safe's holdings, not the
+  // signer's — reading the signer's balances there would be plainly wrong.
+  const account = addressOverride ?? connected;
+  const isConnected = addressOverride ? true : walletConnected;
 
   const contracts = useMemo(() => {
     if (!isConnected || !account) return [];

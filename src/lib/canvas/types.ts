@@ -22,6 +22,10 @@ export interface WalletNodeData {
   chain: string;
   chainId: number;
   balances: AssetWithBalance[];
+  /** Build the strategy for a Safe rather than the connected signer. */
+  safeMode?: boolean;
+  /** The Safe holding the funds, when safeMode is on. */
+  safeAddress?: string;
 }
 
 export interface SupplyCollateralNodeData {
