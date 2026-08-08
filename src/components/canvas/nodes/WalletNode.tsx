@@ -13,7 +13,7 @@ import { COLLATERAL_ASSETS } from "@/lib/constants/assets";
 import type { SupportedChainId } from "@/lib/web3/chains";
 import type { WalletNodeData } from "@/lib/canvas/types";
 import { isAddress } from "viem";
-import { buildDeepLinkQuery } from "@/lib/canvas/importStrategy";
+import { saveImportedStrategy } from "@/lib/canvas/importStrategy";
 import { safeAppDeepLink, SAFE_CHAIN_PREFIX } from "@/lib/web3/safeBatch";
 import type { CanvasNode } from "@/lib/canvas/types";
 import NodeShell from "./NodeShell";
@@ -53,12 +53,19 @@ function WalletNodeComponent({ id, data }: NodeProps) {
     if (!safeValid) return;
     const prefix = SAFE_CHAIN_PREFIX[chainId];
     if (!prefix) return;
-    const query = buildDeepLinkQuery({
+
+    // Hand the strategy over through localStorage, NOT the URL. Safe nests our
+    // appUrl inside its own link, and a base64 strategy pushed the request past
+    // the 8 KB header limit — S3 answered RequestHeaderSectionTooLarge. Inside
+    // the Safe iframe Morpheus still runs on this origin, so it reads the very
+    // same localStorage the canvas wrote here.
+    saveImportedStrategy({
       nodes: allNodes as CanvasNode[],
       edges,
       sourceAddress: safeAddress,
     });
-    const appUrl = `${window.location.origin}/${slug}/canvas${query}`;
+
+    const appUrl = `${window.location.origin}/${slug}/canvas`;
     window.open(safeAppDeepLink({ safeAddress, chainPrefix: prefix, appUrl }), "_blank", "noopener");
   };
 
