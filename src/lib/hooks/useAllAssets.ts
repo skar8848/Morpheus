@@ -12,6 +12,9 @@ const ALL_ASSETS_QUERY = `
   query GetAllAssets($chainId: [Int!]!) {
     markets(where: { chainId_in: $chainId }, first: 500) {
       items {
+        state {
+          supplyAssetsUsd
+        }
         collateralAsset {
           symbol
           name
@@ -34,6 +37,7 @@ const ALL_ASSETS_QUERY = `
 interface AllAssetsResponse {
   markets: {
     items: {
+      state: { supplyAssetsUsd: number | null } | null;
       collateralAsset: Asset;
       loanAsset: Asset;
     }[];
@@ -51,14 +55,29 @@ export function useAllAssets(overrideChainId?: number) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // Blank the list immediately on a chain change. Keeping the previous
+    // chain's assets visible while the new query runs offered tokens that don't
+    // exist on the selected network (EURCV showing up under Base, for one).
+    setAssets([]);
     setLoading(true);
+
+    // Responses can land out of order; only the newest chain's may apply.
+    let cancelled = false;
+
     morphoQuery<AllAssetsResponse>(ALL_ASSETS_QUERY, { chainId: [chainId] })
       .then((data) => {
+        if (cancelled) return;
+        // Rank by how much liquidity actually sits behind each asset, so the
+        // list opens on real markets instead of alphabetical trivia.
         const seen = new Map<string, Asset>();
+        const weight = new Map<string, number>();
         for (const item of data.markets.items) {
+          const usd = item.state?.supplyAssetsUsd ?? 0;
           for (const a of [item.collateralAsset, item.loanAsset]) {
-            if (a?.address && !seen.has(a.address.toLowerCase())) {
-              seen.set(a.address.toLowerCase(), {
+            if (!a?.address) continue;
+            const key = a.address.toLowerCase();
+            if (!seen.has(key)) {
+              seen.set(key, {
                 symbol: a.symbol,
                 name: a.name,
                 address: a.address,
@@ -66,16 +85,27 @@ export function useAllAssets(overrideChainId?: number) {
                 logoURI: a.logoURI,
               });
             }
+            weight.set(key, (weight.get(key) ?? 0) + (isFinite(usd) ? usd : 0));
           }
         }
+
         setAssets(
-          Array.from(seen.values()).sort((a, b) =>
-            a.symbol.localeCompare(b.symbol)
-          )
+          Array.from(seen.entries())
+            .sort(([ka, a], [kb, b]) => {
+              const diff = (weight.get(kb) ?? 0) - (weight.get(ka) ?? 0);
+              return diff !== 0 ? diff : a.symbol.localeCompare(b.symbol);
+            })
+            .map(([, a]) => a)
         );
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [chainId]);
 
   return { assets, loading };
