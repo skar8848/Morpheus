@@ -99,13 +99,15 @@ export const SAFE_CHAIN_PREFIX: Record<number, string> = {
 /**
  * Batch file for Safe's Transaction Builder app (format v1.0).
  *
- * There is **no URL parameter** that loads a batch into the Transaction Builder
- * — import is a drag-and-drop of this file. So the flow is: download it here,
- * open the Transaction Builder in the Safe, drop the file in. Two steps, and
- * that's the real limit rather than a shortcut we haven't found.
+ * NOT part of the normal flow — kept only as an escape hatch (handing a batch to
+ * someone else). Reading the Transaction Builder's shipped bundle settles why:
+ * `importBatch` is wired to `importFile` only, its saved batches live in
+ * IndexedDB under apps-portal.safe.global, and its two URLSearchParams uses are
+ * a generic query-string helper. There is no way to preload it from outside.
  *
- * (Morpho publishes `@morpho-labs/gnosis-tx-builder` for the same job; the
- * format is small enough that we emit it directly rather than take the dep.)
+ * The main path doesn't need it anyway: inside the Safe, sendSafeBatch() queues
+ * the whole strategy as one multisend, which is what the Transaction Builder is
+ * for in the first place — except composed for the user instead of by hand.
  */
 export interface SafeBatchFile {
   version: string;

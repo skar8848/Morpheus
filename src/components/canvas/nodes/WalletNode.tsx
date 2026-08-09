@@ -14,16 +14,7 @@ import type { SupportedChainId } from "@/lib/web3/chains";
 import type { WalletNodeData } from "@/lib/canvas/types";
 import { isAddress } from "viem";
 import { saveImportedStrategy } from "@/lib/canvas/importStrategy";
-import {
-  safeAppDeepLink,
-  SAFE_CHAIN_PREFIX,
-  buildSafeBatchFile,
-  downloadSafeBatchFile,
-  transactionBuilderLink,
-} from "@/lib/web3/safeBatch";
-import { buildExecutionBundle, getRequiredApprovals, buildApprovalTxs } from "@/lib/canvas/executor";
-import { GENERAL_ADAPTER1 } from "@/lib/constants/contracts";
-import type { SupportedChainId as ChainIdT } from "@/lib/web3/chains";
+import { safeAppDeepLink, SAFE_CHAIN_PREFIX } from "@/lib/web3/safeBatch";
 import type { CanvasNode } from "@/lib/canvas/types";
 import NodeShell from "./NodeShell";
 
@@ -82,39 +73,6 @@ function WalletNodeComponent({ id, data }: NodeProps) {
     (a) => a.balanceRaw > 0n
   );
 
-  /**
-   * Export the strategy as a Transaction Builder batch file.
-   *
-   * The Transaction Builder has no URL parameter for loading a batch — import
-   * is drag-and-drop — so this downloads the file and opens the app in the
-   * Safe. Two steps, which is the actual limit, not a shortcut we skipped.
-   */
-  const exportBatch = () => {
-    if (!safeValid) return;
-    const cid = chainId as ChainIdT;
-    const adapter = GENERAL_ADAPTER1[cid];
-    if (!adapter) return;
-    try {
-      const nodesTyped = allNodes as CanvasNode[];
-      const bundle = buildExecutionBundle(nodesTyped, edges, safeAddress as `0x${string}`, cid);
-      const approvals = getRequiredApprovals(nodesTyped, edges, cid).map((a) => ({
-        token: a.token,
-        amount: a.amount,
-      }));
-      const txs = [
-        ...buildApprovalTxs(approvals, adapter, cid).map((t) => ({ to: t.to, data: t.data })),
-        { to: bundle.to, data: bundle.data },
-      ];
-      downloadSafeBatchFile(buildSafeBatchFile(txs, cid));
-      const prefix = SAFE_CHAIN_PREFIX[chainId];
-      if (prefix) {
-        window.open(transactionBuilderLink(safeAddress, prefix), "_blank", "noopener");
-      }
-    } catch (err) {
-      console.error("[WalletNode] batch export failed:", err);
-    }
-  };
-
   return (
     <NodeShell nodeType="wallet" title="Wallet" dimmed={!isUsed} loading={isLoading}>
       <div className="space-y-2">
@@ -159,17 +117,9 @@ function WalletNodeComponent({ id, data }: NodeProps) {
               >
                 Open in Safe →
               </button>
-              <button
-                type="button"
-                onClick={exportBatch}
-                disabled={!safeValid || !SAFE_CHAIN_PREFIX[chainId]}
-                className="w-full rounded border border-border bg-bg-card px-2 py-1 text-[10px] font-semibold text-text-secondary transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Batch JSON → Transaction Builder
-              </button>
               <p className="text-[9px] text-text-tertiary">
-                First button opens Morpheus in the Safe. Second downloads a Transaction Builder
-                batch and opens that app — drop the file in (it has no import-by-link).
+                Opens Morpheus inside the Safe with this strategy loaded. Executing there queues
+                the whole batch as a single Safe transaction — no file, no rebuilding.
               </p>
             </div>
           )}
