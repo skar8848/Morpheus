@@ -40,6 +40,7 @@ import BundleInspector from "./BundleInspector";
 import { useBundlePreflight } from "@/lib/hooks/useBundlePreflight";
 import { useSmartAccount } from "@/lib/hooks/useSmartAccount";
 import { isInsideSafe, sendSafeBatch } from "@/lib/web3/safeBatch";
+import { fetchMidnightQuote, encodeTakes, MIDNIGHT_CORE } from "@/lib/midnight/take";
 import {
   planCrossChainExecution,
   fetchBridgeTransaction,
@@ -500,6 +501,58 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           throw new Error("Bundle transaction reverted on-chain");
         }
       };
+
+      // ─── Fixed-rate legs (Midnight) ────────────────────────────────────────
+      // A fixed-rate borrow isn't a Blue call: it lifts an order book. The
+      // router hands back the exact offers, one `take` each, so a fill that
+      // sweeps several price levels becomes several calls — batched together so
+      // they settle as one rather than partially.
+      const fixedLegs = execNodes.filter(
+        (n) => (n.data as unknown as { fixedRate?: unknown }).fixedRate
+      );
+      if (fixedLegs.length > 0) {
+        for (const leg of fixedLegs) {
+          const fx = (leg.data as unknown as { fixedRate: { marketId: string; side: "bids" | "asks"; assetsRaw: string } }).fixedRate;
+          setSwapStatus("Quoting the fixed-rate book…");
+          const quote = await fetchMidnightQuote(fx.marketId, fx.side, BigInt(fx.assetsRaw));
+          const takes = encodeTakes(quote, currentAddress);
+          if (takes.length === 0) throw new Error("No takeable offers on this maturity");
+
+          // The loan token has to be approved to Midnight before taking.
+          const loanToken = quote.takeable_offers[0].offer.market.loan_token as `0x${string}`;
+          const needed = await filterNeededApprovals(
+            [{ token: loanToken, amount: BigInt(fx.assetsRaw) }],
+            currentAddress,
+            MIDNIGHT_CORE
+          );
+          if (needed.length > 0) {
+            await sendApprovals(buildApprovalTxs(needed, MIDNIGHT_CORE, cid));
+          }
+
+          setSwapStatus(`Taking ${takes.length} offer${takes.length > 1 ? "s" : ""} at a fixed rate…`);
+          if (isInsideSafe()) {
+            // One Safe entry for the whole sweep, so it can't half-fill.
+            const batch = await sendSafeBatch(takes.map((t) => ({ to: t.to, data: t.data })));
+            if (!batch.ok) throw new Error(batch.error ?? "Safe batch failed");
+            setTxHash(batch.safeTxHash ?? null);
+          } else {
+            for (const t of takes) {
+              assertChain();
+              const h = await new Promise<`0x${string}`>((resolve, reject) => {
+                sendTransaction(
+                  { to: t.to, data: t.data, value: 0n },
+                  { onSuccess: (x) => resolve(x), onError: (e) => reject(e) }
+                );
+              });
+              setTxHash(h);
+              const rc = await waitWithRetry(h);
+              if (rc.status === "reverted") throw new Error("Fixed-rate take reverted on-chain");
+            }
+          }
+        }
+        setSwapStatus("Fixed-rate leg filled.");
+        return;
+      }
 
       // ─── Cross-chain strategies ────────────────────────────────────────────
       // A bridge leg can't live inside a Bundler3 multicall, so the graph runs

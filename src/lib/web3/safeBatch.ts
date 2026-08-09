@@ -93,3 +93,65 @@ export const SAFE_CHAIN_PREFIX: Record<number, string> = {
   8453: "base",
   42161: "arb1",
 };
+
+// --- Safe Transaction Builder export ---------------------------------------
+
+/**
+ * Batch file for Safe's Transaction Builder app (format v1.0).
+ *
+ * There is **no URL parameter** that loads a batch into the Transaction Builder
+ * — import is a drag-and-drop of this file. So the flow is: download it here,
+ * open the Transaction Builder in the Safe, drop the file in. Two steps, and
+ * that's the real limit rather than a shortcut we haven't found.
+ *
+ * (Morpho publishes `@morpho-labs/gnosis-tx-builder` for the same job; the
+ * format is small enough that we emit it directly rather than take the dep.)
+ */
+export interface SafeBatchFile {
+  version: string;
+  chainId: string;
+  createdAt: number;
+  meta: { name: string; description: string; txBuilderVersion: string };
+  transactions: { to: string; value: string; data: string }[];
+}
+
+export function buildSafeBatchFile(
+  txs: BatchTx[],
+  chainId: number,
+  name = "Morpheus strategy"
+): SafeBatchFile {
+  return {
+    version: "1.0",
+    chainId: String(chainId),
+    createdAt: Date.now(),
+    meta: {
+      name,
+      description: "Built with Morpheus — morpheus-visualizer.vercel.app",
+      txBuilderVersion: "1.16.5",
+    },
+    transactions: txs.map((t) => ({
+      to: t.to,
+      value: t.value ?? "0",
+      data: t.data,
+    })),
+  };
+}
+
+/** Trigger a download of the batch file. */
+export function downloadSafeBatchFile(file: SafeBatchFile, filename = "morpheus-batch.json") {
+  const blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Deep link straight to the Transaction Builder inside the user's Safe. */
+export function transactionBuilderLink(safeAddress: string, chainPrefix: string): string {
+  const safe = `${chainPrefix}:${safeAddress}`;
+  return `https://app.safe.global/apps/open?safe=${encodeURIComponent(
+    safe
+  )}&appUrl=${encodeURIComponent("https://apps-portal.safe.global/tx-builder")}`;
+}

@@ -4,7 +4,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
 import { injected } from "wagmi/connectors";
 import Image from "next/image";
@@ -20,6 +20,7 @@ export default function Navbar() {
   const { connect } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChainAsync } = useSwitchChain();
+  const pathname = usePathname();
   const [chainMenuOpen, setChainMenuOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
 
@@ -98,7 +99,12 @@ export default function Navbar() {
                   key={chain.slug}
                   onClick={async () => {
                     setChainMenuOpen(false);
-                    router.push(`/${chain.slug}/strategy`);
+                    // Swap only the chain segment: switching network should
+                    // reload the data for the page you're on, not navigate you
+                    // away from it.
+                    const segments = (pathname || `/${slug}/canvas`).split("/");
+                    segments[1] = chain.slug;
+                    router.push(segments.join("/"));
                     if (isConnected) {
                       try { await switchChainAsync({ chainId: chain.chainId }); } catch { /* user rejected */ }
                     }

@@ -45,6 +45,15 @@ export interface BorrowNodeData {
   borrowAmountUsd: number;
   healthFactor: number | null;
   depositAmountUsd: number;
+  /** Fixed-rate borrow through Midnight instead of a floating Blue market. */
+  fixedRate?: {
+    marketId: string;
+    /** Book side being lifted — a borrower lifts the bids. */
+    side: "bids" | "asks";
+    /** Loan-token amount to take, raw units. */
+    assetsRaw: string;
+    maturity: number;
+  };
 }
 
 export interface SwapNodeData {
