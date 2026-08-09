@@ -126,11 +126,34 @@ Market payload carries everything a node needs: `market_id`, `loan_token`,
 `enter_gate` / `liquidator_gate`, and `bids`/`asks` as `{tick, price, units,
 assets, count}`.
 
-So the read path is **not** a blocker. What's still unpublished is the write
-side: contract ABIs and the exact take/sign signatures. But `.../asks/quote`
-returning "complete `Offer` structs and `ratifierData` ready for onchain
-submission" implies the take payload is handed to us — the remaining unknown is
-the function to submit it to.
+So the read path is **not** a blocker. **Neither is the write path** — resolved
+since, see §3b.
+
+### 3b. The write path is available too
+
+The docs never name a function, but the contract is **verified on Base**, so the
+ABI is simply readable:
+
+```
+take(offer, ratifierData, units, taker,
+     receiverIfTakerIsSeller, takerCallback, takerCallbackData)
+  -> (uint256, uint256)          selector 0x6a14c9ef
+```
+
+`offer` is a 15-field tuple whose nested `market` maps **one-to-one** onto the
+REST payload (`chainId`, `loanToken`, `collateralParams[]`, `maturity`,
+`rcfThreshold`, `enterGate`, `liquidatorGate`).
+
+And the quote endpoint hands over exactly that: `takeable_offers[]`, each with
+the complete offer struct, its `ratifier_data` (~320 bytes of Merkle proof) and
+the `units` to take. Nothing has to be reconstructed — only snake_case mapped to
+camelCase.
+
+Verified end to end on a live Base market: a real quote (14 takeable offers,
+852 k USDC of depth) encodes to valid calldata, 1540 bytes.
+
+A take sweeping several levels is one `take` per offer, which is what
+`midnightBundles` batches — and what the Safe batching already handles.
 
 ### Prior art: Tenor
 
