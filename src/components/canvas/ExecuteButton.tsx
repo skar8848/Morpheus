@@ -31,12 +31,13 @@ import {
 import { formatApy } from "@/lib/utils/format";
 import type { CanvasNode, CanvasNodeData } from "@/lib/canvas/types";
 import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
-import { GENERAL_ADAPTER1, MORPHO_BLUE, morphoBlueAbi } from "@/lib/constants/contracts";
+import { GENERAL_ADAPTER1, MORPHO_BLUE, BUNDLER3, morphoBlueAbi } from "@/lib/constants/contracts";
 import { erc20Abi } from "viem";
 import { encodeFunctionData } from "viem";
 import { wagmiConfig } from "@/lib/web3/config";
 import SimulationPreview from "./SimulationPreview";
 import BundleInspector from "./BundleInspector";
+import ContractVerification from "./ContractVerification";
 import { useBundlePreflight } from "@/lib/hooks/useBundlePreflight";
 import { useSmartAccount } from "@/lib/hooks/useSmartAccount";
 import { isInsideSafe, sendSafeBatch } from "@/lib/web3/safeBatch";
@@ -170,6 +171,48 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     autoExpandedRef.current = true;
     setExpanded(true);
   }, [nodes.length]);
+
+  /**
+   * Every contract this execution will target, for the verification panel.
+   * Derived from the same maps the executor uses, so the panel can't drift from
+   * what actually gets signed.
+   */
+  const { txDestinations, strategyTokens } = useMemo(() => {
+    const cid = chainId as SupportedChainId;
+    const dests: string[] = [];
+    const adapter = GENERAL_ADAPTER1[cid];
+    const bundler = BUNDLER3[cid];
+    if (bundler) dests.push(bundler);
+    if (adapter) dests.push(adapter);
+    if (strategyNeedsMorphoAuthorization(nodes) && MORPHO_BLUE[cid]) dests.push(MORPHO_BLUE[cid]);
+    if (getSwapDetails(nodes, edges).length > 0) {
+      const relayer = COW_VAULT_RELAYER[cid];
+      if (relayer) dests.push(relayer);
+    }
+
+    const tokens: { address: string; symbol: string }[] = [];
+    const push = (a?: { address?: string; symbol?: string } | null) => {
+      if (a?.address && a.symbol) tokens.push({ address: a.address, symbol: a.symbol });
+    };
+    for (const n of nodes) {
+      const d = n.data as CanvasNodeData;
+      if (d.type === "supplyCollateral") push(d.asset);
+      if (d.type === "borrow" || d.type === "repay") {
+        push(d.market?.loanAsset);
+        push(d.market?.collateralAsset);
+      }
+      if (d.type === "vaultDeposit") push(d.vault?.asset);
+      if (d.type === "swap") {
+        push(d.tokenIn);
+        push(d.tokenOut);
+      }
+      if (d.type === "bridge") {
+        push(d.tokenIn);
+        push(d.tokenOut);
+      }
+    }
+    return { txDestinations: dests, strategyTokens: tokens };
+  }, [nodes, edges, chainId]);
 
   const wrongChain = isConnected && walletChainId !== chainId;
   const expectedChainLabel = CHAIN_CONFIGS.find((c) => c.chainId === chainId)?.label ?? `Chain ${chainId}`;
@@ -1176,6 +1219,12 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
                 on-chain immediately.
               </div>
             )}
+
+            <ContractVerification
+              destinations={txDestinations}
+              strategyTokens={strategyTokens}
+              chainId={chainId}
+            />
 
             {/* Summary bar */}
             <div className="mt-3 flex items-center justify-between rounded-lg border border-border bg-bg-secondary px-3 py-2 text-[10px] text-text-tertiary">
