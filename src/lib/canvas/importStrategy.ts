@@ -131,6 +131,8 @@ export function buildStrategyFromPositions(
           state: {
             borrowApy: pos.market.state.borrowApy,
             netBorrowApy: pos.market.state.netBorrowApy,
+            supplyApy: pos.market.state.supplyApy,
+            netSupplyApy: pos.market.state.netSupplyApy,
             borrowAssets: "0",
             supplyAssets: "0",
             liquidityAssets: "0",
@@ -163,7 +165,7 @@ export function buildStrategyFromPositions(
     borrowRow++;
   }
 
-  // 3. Supply-only market positions: Wallet → Lend. These are bare supply
+  // 3. Supply-only market positions: Borrow → Lend (or Wallet → Lend). These are bare supply
   // positions in an isolated market — they used to be forced into a Supply
   // Collateral node, which meant "supplying the LOAN token as collateral".
   for (const pos of supplyOnlyPositions) {
@@ -204,6 +206,8 @@ export function buildStrategyFromPositions(
           state: {
             borrowApy: pos.market.state.borrowApy,
             netBorrowApy: pos.market.state.netBorrowApy,
+            supplyApy: pos.market.state.supplyApy,
+            netSupplyApy: pos.market.state.netSupplyApy,
             borrowAssets: "0",
             supplyAssets: "0",
             liquidityAssets: "0",
@@ -216,13 +220,29 @@ export function buildStrategyFromPositions(
       } as CanvasNodeData,
     });
 
-    edges.push({
-      id: `${walletId}-${lendId}`,
-      source: walletId,
-      target: lendId,
-      type: "animatedEdge",
-      animated: true,
-    });
+    // Where did the lent funds come from? Same rule as the vault deposits below:
+    // borrows of the same asset feed it (carry trade: borrow EURCV, lend EURCV),
+    // otherwise it is a direct earn from the wallet.
+    const sources = borrowNodesByLoanAsset.get(loanAsset.address.toLowerCase()) ?? [];
+    if (sources.length > 0) {
+      for (const sourceId of sources) {
+        edges.push({
+          id: `${sourceId}-${lendId}`,
+          source: sourceId,
+          target: lendId,
+          type: "animatedEdge",
+          animated: true,
+        });
+      }
+    } else {
+      edges.push({
+        id: `${walletId}-${lendId}`,
+        source: walletId,
+        target: lendId,
+        type: "animatedEdge",
+        animated: true,
+      });
+    }
 
     borrowRow++;
   }

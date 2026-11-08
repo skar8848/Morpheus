@@ -10,7 +10,7 @@ import { useChain } from "@/lib/context/ChainContext";
 import { useBorrowMarkets } from "@/lib/hooks/useBorrowMarkets";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
 import { useTokenBalances } from "@/lib/hooks/useTokenBalances";
-import { COLLATERAL_ASSETS } from "@/lib/constants/assets";
+import { useCollateralAssets } from "@/lib/hooks/useCollateralAssets";
 import { formatApy, formatLltv, formatUsd } from "@/lib/utils/format";
 import { getNodeChainId } from "@/lib/canvas/bridge";
 import { collectUpstream } from "@/lib/canvas/upstream";
@@ -73,10 +73,8 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
     () => getNodeChainId(id, nodes as CanvasNode[], edges, chainId as SupportedChainId),
     [id, nodes, edges, chainId]
   );
-  const collateralOptionsAssets = useMemo(
-    () => COLLATERAL_ASSETS[nodeChainId as SupportedChainId] ?? [],
-    [nodeChainId]
-  );
+  // Presets + every collateral token Morpho lists on this chain.
+  const { assets: collateralOptionsAssets } = useCollateralAssets(nodeChainId);
 
   // ── Upstream: what is being wired in as collateral ──────────────────────────
   const { inputs, suggestedAsset } = useMemo(

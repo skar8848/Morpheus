@@ -227,6 +227,8 @@ export const USER_MARKET_POSITIONS_QUERY = `
           state {
             borrowApy
             netBorrowApy
+            supplyApy
+            netSupplyApy
           }
         }
         state {

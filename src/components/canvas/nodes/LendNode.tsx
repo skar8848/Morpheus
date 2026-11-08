@@ -13,9 +13,9 @@ import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
 import { useTokenBalances } from "@/lib/hooks/useTokenBalances";
 import { formatApy, formatLltv, formatUsd } from "@/lib/utils/format";
 import { getNodeChainId } from "@/lib/canvas/bridge";
-import { collectUpstream } from "@/lib/canvas/upstream";
+import { collectUpstream, findLinkableProducers } from "@/lib/canvas/upstream";
 import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
-import type { LendNodeData, CanvasNode } from "@/lib/canvas/types";
+import { VALID_CONNECTIONS, type LendNodeData, type CanvasNode } from "@/lib/canvas/types";
 import type { Asset } from "@/lib/graphql/types";
 import NodeShell from "./NodeShell";
 import NodeImpact from "./NodeImpact";
@@ -61,7 +61,7 @@ function UtilizationRing({ pct }: { pct: number }) {
  * than hiding them behind a name.
  */
 function LendNodeComponent({ id, data }: NodeProps) {
-  const { updateNodeData, deleteElements } = useReactFlow();
+  const { updateNodeData, deleteElements, setEdges } = useReactFlow();
   const { chainId: homeChainId } = useChain();
   const d = data as unknown as LendNodeData;
   const edges = useEdges();
@@ -91,6 +91,26 @@ function LendNodeComponent({ id, data }: NodeProps) {
   const loanAddr = loanAsset?.address?.toLowerCase() ?? null;
 
   const { assets: allAssets, loading: assetsLoading } = useAllAssets(nodeChainId);
+
+  // A producer of this very asset that feeds nothing: offer to wire it in, rather
+  // than silently lending from the wallet balance.
+  const linkable = useMemo(
+    () =>
+      inputs.some((i) => i.kind !== "wallet")
+        ? []
+        : findLinkableProducers(id, "lend", loanAsset, allNodes as CanvasNode[], edges, VALID_CONNECTIONS),
+    [id, inputs, loanAsset, allNodes, edges]
+  );
+  const linkProducer = (sourceId: string) =>
+    setEdges((eds) => [
+      // The producer becomes THE source: drop the wallet fallback.
+      ...eds.filter((e) => {
+        if (e.target !== id) return true;
+        const src = (allNodes as CanvasNode[]).find((n) => n.id === e.source);
+        return (src?.data as { type?: string } | undefined)?.type !== "wallet";
+      }),
+      { id: `${sourceId}-${id}`, source: sourceId, target: id, type: "animatedEdge", animated: true },
+    ]);
 
   // Follow the upstream asset when it changes
   const prevSuggestedRef = useRef<string | null>(null);
@@ -270,6 +290,26 @@ function LendNodeComponent({ id, data }: NodeProps) {
             <span className="rounded bg-brand/15 px-1 py-0.5 text-[8px] font-semibold text-brand">via bridge</span>
           )}
         </div>
+
+        {linkable.map((p) => (
+          <div
+            key={p.nodeId}
+            className="nodrag flex items-center justify-between gap-2 rounded-lg border border-brand/30 bg-brand/5 px-2 py-1.5"
+          >
+            <span className="text-[10px] text-text-secondary">
+              {p.label}
+              {p.amount > 0 ? ` (${p.amount.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${p.asset?.symbol})` : ""}{" "}
+              is not connected — this Lend draws from your wallet.
+            </span>
+            <button
+              type="button"
+              onClick={() => linkProducer(p.nodeId)}
+              className="shrink-0 rounded bg-brand px-1.5 py-0.5 text-[9px] font-semibold text-white hover:bg-brand-hover"
+            >
+              Connect
+            </button>
+          </div>
+        ))}
 
         {upstreamMismatch && (
           <div className="rounded-lg border border-yellow-400/20 bg-yellow-400/5 px-2 py-1.5 text-[10px] text-yellow-400">

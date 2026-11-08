@@ -148,3 +148,40 @@ export function collectUpstream(nodeId: string, nodes: CanvasNode[], edges: Edge
 
   return { inputs, suggestedAsset, swapNodeId };
 }
+
+/**
+ * Producers on the canvas that hand out `asset` but feed nothing yet — the ones a
+ * consumer was most likely meant to be wired to. Typical case: a borrow draws
+ * EURCV, and a lend of EURCV sits next to it with no edge, so the lend falls back
+ * to the wallet balance instead of the borrowed funds.
+ *
+ * "Feeds nothing" is the signal: a borrow already sent to a swap is spoken for.
+ * `validTargets` is the consumer's node type, checked against VALID_CONNECTIONS.
+ */
+export function findLinkableProducers(
+  nodeId: string,
+  consumerType: string,
+  asset: Asset | null,
+  nodes: CanvasNode[],
+  edges: Edge[],
+  validConnections: Record<string, string[]>
+): UpstreamInput[] {
+  if (!asset) return [];
+  const target = asset.address.toLowerCase();
+  const found: UpstreamInput[] = [];
+
+  for (const candidate of nodes) {
+    if (candidate.id === nodeId) continue;
+    const type = (candidate.data as { type?: string }).type;
+    if (!type || type === "wallet" || type === "position") continue;
+    if (!validConnections[type]?.includes(consumerType)) continue;
+    if (edges.some((e) => e.source === candidate.id)) continue; // already feeds something
+    // Reuse the per-source logic by asking "what would this node deliver here?"
+    const { inputs } = collectUpstream(nodeId, nodes, [
+      { id: `probe-${candidate.id}`, source: candidate.id, target: nodeId },
+    ]);
+    const delivered = inputs[0];
+    if (delivered?.asset?.address.toLowerCase() === target) found.push(delivered);
+  }
+  return found;
+}

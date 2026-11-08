@@ -133,6 +133,9 @@ export interface UserMarketPosition {
     state: {
       borrowApy: number;
       netBorrowApy: number;
+      /** What a supplier earns here. A lend imported without it earned 0% in the metrics. */
+      supplyApy?: number;
+      netSupplyApy?: number;
     };
   };
   state: {

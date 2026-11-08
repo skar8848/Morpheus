@@ -9,8 +9,7 @@ import Image from "next/image";
 import { useAccount } from "wagmi";
 import { useChain } from "@/lib/context/ChainContext";
 import { useTokenBalances } from "@/lib/hooks/useTokenBalances";
-import { COLLATERAL_ASSETS } from "@/lib/constants/assets";
-import type { SupportedChainId } from "@/lib/web3/chains";
+import { useCollateralAssets } from "@/lib/hooks/useCollateralAssets";
 import type { WalletNodeData } from "@/lib/canvas/types";
 import { isAddress } from "viem";
 import { saveImportedStrategy } from "@/lib/canvas/importStrategy";
@@ -25,7 +24,9 @@ function WalletNodeComponent({ id, data }: NodeProps) {
   const allNodes = useNodes();
   const isUsed = useMemo(() => edges.some((e) => e.source === id), [edges, id]);
   const { slug, chainId } = useChain();
-  const assets = COLLATERAL_ASSETS[chainId as SupportedChainId] ?? [];
+  // Presets first, then every token Morpho lists on this chain — a wallet holding
+  // sUSDS or EURCV should show it even though it is not a preset.
+  const { walletAssets: assets } = useCollateralAssets(chainId);
 
   const d = data as unknown as WalletNodeData;
   const safeMode = !!d.safeMode;
