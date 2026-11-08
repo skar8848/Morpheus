@@ -4,7 +4,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { morphoQuery } from "../graphql/client";
+import { morphoQueryAll } from "../graphql/client";
 import { VAULTS_QUERY } from "../graphql/queries";
 import type { Vault, VaultsResponse } from "../graphql/types";
 import { useChain } from "../context/ChainContext";
@@ -35,10 +35,11 @@ export function useVaults(assetAddresses: string[], overrideChainId?: number) {
     setLoading(true);
     setError(null);
 
-    morphoQuery<VaultsResponse>(VAULTS_QUERY, {
-      assetAddresses,
-      chainId: [chainId],
-    })
+    morphoQueryAll<VaultsResponse>(
+      VAULTS_QUERY,
+      { assetAddresses, chainId: [chainId] },
+      "vaults"
+    )
       .then((data) => {
         if (!controller.signal.aborted) {
           const sorted = data.vaults.items

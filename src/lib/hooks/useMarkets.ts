@@ -4,7 +4,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { morphoQuery } from "../graphql/client";
+import { morphoQueryAll } from "../graphql/client";
 import { MARKETS_QUERY } from "../graphql/queries";
 import type { Market, MarketsResponse } from "../graphql/types";
 import { useChain } from "../context/ChainContext";
@@ -35,11 +35,15 @@ export function useMarkets(collateralAddresses: string[], loanAddresses: string[
     setLoading(true);
     setError(null);
 
-    morphoQuery<MarketsResponse>(MARKETS_QUERY, {
-      collateralAssets: collateralAddresses,
-      loanAssets: loanAddresses,
-      chainId: [chainId],
-    })
+    morphoQueryAll<MarketsResponse>(
+      MARKETS_QUERY,
+      {
+        collateralAssets: collateralAddresses,
+        loanAssets: loanAddresses,
+        chainId: [chainId],
+      },
+      "markets"
+    )
       .then((data) => {
         if (!controller.signal.aborted) {
           setMarkets(data.markets.items);

@@ -4,7 +4,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { morphoQuery } from "../graphql/client";
+import { morphoQueryAll } from "../graphql/client";
 import type { Market, MarketsResponse } from "../graphql/types";
 import { useChain } from "../context/ChainContext";
 
@@ -21,7 +21,7 @@ import { useChain } from "../context/ChainContext";
  * include fake-oracle ones that look huge and are not safe to borrow from.
  */
 function buildQuery(hasCollateral: boolean, hasLoan: boolean): string {
-  const decls = ["$chainId: [Int!]!"];
+  const decls = ["$chainId: [Int!]!", "$first: Int", "$skip: Int"];
   const filters = ["chainId_in: $chainId", "listed: true"];
   if (hasCollateral) {
     decls.push("$collateralAssets: [String!]!");
@@ -34,7 +34,8 @@ function buildQuery(hasCollateral: boolean, hasLoan: boolean): string {
   return `
     query GetBorrowMarkets(${decls.join(", ")}) {
       markets(
-        first: 100
+        first: $first
+        skip: $skip
         orderBy: SupplyAssetsUsd
         orderDirection: Desc
         where: { ${filters.join(" ")} }
@@ -58,6 +59,7 @@ function buildQuery(hasCollateral: boolean, hasLoan: boolean): string {
             rewards { asset { symbol address } supplyApr borrowApr }
           }
         }
+        pageInfo { countTotal }
       }
     }
   `;
@@ -99,9 +101,10 @@ export function useBorrowMarkets(
     if (collateralAddresses.length > 0) variables.collateralAssets = collateralAddresses;
     if (loanAddresses.length > 0) variables.loanAssets = loanAddresses;
 
-    morphoQuery<MarketsResponse>(
+    morphoQueryAll<MarketsResponse>(
       buildQuery(collateralAddresses.length > 0, loanAddresses.length > 0),
-      variables
+      variables,
+      "markets"
     )
       .then((data) => {
         if (controller.signal.aborted) return;

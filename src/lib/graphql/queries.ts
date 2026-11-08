@@ -2,8 +2,12 @@
 // Copyright (c) 2025-2026 Alban Derouin. All rights reserved.
 
 export const MARKETS_QUERY = `
-  query GetMarkets($collateralAssets: [String!]!, $loanAssets: [String!]!, $chainId: [Int!]!) {
+  query GetMarkets($collateralAssets: [String!]!, $loanAssets: [String!]!, $chainId: [Int!]!, $first: Int, $skip: Int) {
     markets(
+      first: $first
+      skip: $skip
+      orderBy: SupplyAssetsUsd
+      orderDirection: Desc
       where: {
         collateralAssetAddress_in: $collateralAssets
         loanAssetAddress_in: $loanAssets
@@ -46,6 +50,7 @@ export const MARKETS_QUERY = `
           }
         }
       }
+  pageInfo { countTotal }
     }
   }
 `;
@@ -60,9 +65,10 @@ export const MARKETS_QUERY = `
  * sorted by size, so without this filter the top of the list is a trap.
  */
 export const LEND_MARKETS_QUERY = `
-  query GetLendMarkets($loanAssets: [String!]!, $chainId: [Int!]!) {
+  query GetLendMarkets($loanAssets: [String!]!, $chainId: [Int!]!, $first: Int, $skip: Int) {
     markets(
-      first: 100
+      first: $first
+      skip: $skip
       orderBy: SupplyAssetsUsd
       orderDirection: Desc
       where: {
@@ -112,6 +118,7 @@ export const LEND_MARKETS_QUERY = `
           }
         }
       }
+  pageInfo { countTotal }
     }
   }
 `;
@@ -141,8 +148,12 @@ export const MARKETS_BY_KEY_QUERY = `
 `;
 
 export const VAULTS_QUERY = `
-  query GetVaults($assetAddresses: [String!]!, $chainId: [Int!]!) {
+  query GetVaults($assetAddresses: [String!]!, $chainId: [Int!]!, $first: Int, $skip: Int) {
     vaults(
+      first: $first
+      skip: $skip
+      orderBy: TotalAssetsUsd
+      orderDirection: Desc
       where: {
         assetAddress_in: $assetAddresses
         chainId_in: $chainId
@@ -179,6 +190,7 @@ export const VAULTS_QUERY = `
           }
         }
       }
+  pageInfo { countTotal }
     }
   }
 `;
@@ -352,8 +364,12 @@ export const VAULT_V2_LIST_QUERY = `
 `;
 
 export const LOAN_ASSETS_QUERY = `
-  query GetLoanAssets($collateralAssets: [String!]!, $chainId: [Int!]!) {
+  query GetLoanAssets($collateralAssets: [String!]!, $chainId: [Int!]!, $first: Int, $skip: Int) {
     markets(
+      first: $first
+      skip: $skip
+      orderBy: SupplyAssetsUsd
+      orderDirection: Desc
       where: {
         collateralAssetAddress_in: $collateralAssets
         chainId_in: $chainId
@@ -369,6 +385,7 @@ export const LOAN_ASSETS_QUERY = `
           price { usd }
         }
       }
+  pageInfo { countTotal }
     }
   }
 `;

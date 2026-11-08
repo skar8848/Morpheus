@@ -4,7 +4,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { morphoQuery } from "../graphql/client";
+import { morphoQueryAll } from "../graphql/client";
 import { LOAN_ASSETS_QUERY } from "../graphql/queries";
 import type { Asset, LoanAssetsResponse } from "../graphql/types";
 import { useChain } from "../context/ChainContext";
@@ -35,10 +35,11 @@ export function useLoanAssets(collateralAddresses: string[], overrideChainId?: n
     setLoading(true);
     setError(null);
 
-    morphoQuery<LoanAssetsResponse>(LOAN_ASSETS_QUERY, {
-      collateralAssets: collateralAddresses,
-      chainId: [chainId],
-    })
+    morphoQueryAll<LoanAssetsResponse>(
+      LOAN_ASSETS_QUERY,
+      { collateralAssets: collateralAddresses, chainId: [chainId] },
+      "markets"
+    )
       .then((data) => {
         if (!controller.signal.aborted) {
           // Deduplicate by address

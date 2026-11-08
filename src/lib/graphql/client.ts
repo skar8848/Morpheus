@@ -61,3 +61,46 @@ export async function morphoQuery<T>(
   normalizePrices(json.data);
   return json.data as T;
 }
+
+interface Page {
+  items: unknown[];
+  pageInfo?: { countTotal?: number | null } | null;
+}
+
+/**
+ * Fetch EVERY item of a paginated root field.
+ *
+ * The Morpho API silently caps a list at 100 items when `first` is omitted, and
+ * mainnet alone has 362 listed markets (1860 in total), so a plain query returns
+ * a truncated list with no error. The query must declare `$first: Int, $skip: Int`,
+ * pass them to `field(first: $first skip: $skip ...)`, ask for `pageInfo { countTotal }`
+ * and use a deterministic `orderBy`, otherwise pages can overlap or skip rows.
+ *
+ * The first page tells us the total; the remaining pages are fetched in parallel.
+ * The result keeps the usual `{ [field]: { items } }` shape, so callers stay unchanged.
+ */
+export async function morphoQueryAll<T extends object>(
+  query: string,
+  variables: Record<string, unknown>,
+  field: keyof T & string,
+  pageSize = 200,
+  maxPages = 25
+): Promise<T> {
+  const first = await morphoQuery<T>(query, { ...variables, first: pageSize, skip: 0 });
+  const head = (first as unknown as Record<string, Page>)[field];
+  const total = head.pageInfo?.countTotal ?? head.items.length;
+  const pages = Math.min(Math.ceil(total / pageSize), maxPages);
+  if (pages <= 1) return first;
+
+  const rest = await Promise.all(
+    Array.from({ length: pages - 1 }, (_, i) =>
+      morphoQuery<Record<string, Page>>(query, {
+        ...variables,
+        first: pageSize,
+        skip: (i + 1) * pageSize,
+      })
+    )
+  );
+  const items = [head.items, ...rest.map((r) => r[field].items)].flat();
+  return { ...first, [field]: { ...head, items } };
+}

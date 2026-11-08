@@ -4,7 +4,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { morphoQuery } from "../graphql/client";
+import { morphoQueryAll, morphoQuery } from "../graphql/client";
 import { LEND_MARKETS_QUERY, MARKETS_BY_KEY_QUERY } from "../graphql/queries";
 import type { Market, MarketsResponse } from "../graphql/types";
 import { useChain } from "../context/ChainContext";
@@ -39,10 +39,11 @@ export function useLendMarkets(loanAddresses: string[], overrideChainId?: number
     setLoading(true);
     setError(null);
 
-    morphoQuery<MarketsResponse>(LEND_MARKETS_QUERY, {
-      loanAssets: loanAddresses,
-      chainId: [chainId],
-    })
+    morphoQueryAll<MarketsResponse>(
+      LEND_MARKETS_QUERY,
+      { loanAssets: loanAddresses, chainId: [chainId] },
+      "markets"
+    )
       .then((data) => {
         if (controller.signal.aborted) return;
         // A market with no collateral asset has no oracle to speak of — skip it.

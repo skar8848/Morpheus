@@ -4,13 +4,19 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { morphoQuery } from "../graphql/client";
+import { morphoQueryAll } from "../graphql/client";
 import type { Asset } from "../graphql/types";
 import { useChain } from "../context/ChainContext";
 
 const ALL_ASSETS_QUERY = `
-  query GetAllAssets($chainId: [Int!]!) {
-    markets(where: { chainId_in: $chainId }, first: 500) {
+  query GetAllAssets($chainId: [Int!]!, $first: Int, $skip: Int) {
+    markets(
+      where: { chainId_in: $chainId }
+      first: $first
+      skip: $skip
+      orderBy: SupplyAssetsUsd
+      orderDirection: Desc
+    ) {
       items {
         state {
           supplyAssetsUsd
@@ -30,6 +36,7 @@ const ALL_ASSETS_QUERY = `
           logoURI
         }
       }
+      pageInfo { countTotal }
     }
   }
 `;
@@ -64,7 +71,7 @@ export function useAllAssets(overrideChainId?: number) {
     // Responses can land out of order; only the newest chain's may apply.
     let cancelled = false;
 
-    morphoQuery<AllAssetsResponse>(ALL_ASSETS_QUERY, { chainId: [chainId] })
+    morphoQueryAll<AllAssetsResponse>(ALL_ASSETS_QUERY, { chainId: [chainId] }, "markets")
       .then((data) => {
         if (cancelled) return;
         // Rank by how much liquidity actually sits behind each asset, so the
