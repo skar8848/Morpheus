@@ -57,11 +57,11 @@ export interface PreflightResult {
   /** Whether the graph contains a CowSwap step (multi-phase) */
   hasSwap: boolean;
 
-  /** Sum of supply collateral USD values */
+  /** Sum of collateral posted by borrow nodes, USD */
   totalCollateralUsd: number;
   /** Sum of borrow USD values */
   totalBorrowUsd: number;
-  /** Sum of vault deposit USD values */
+  /** Sum of vault deposit and lend USD values */
   totalDepositUsd: number;
 
   /** Worst (lowest) projected HF across all borrow nodes; null if no borrow */
@@ -125,18 +125,20 @@ export async function runPreflight(
   for (const node of nodes) {
     const d = node.data as Record<string, unknown> & { type?: string };
     switch (d.type) {
-      case "supplyCollateral": {
-        const usd = typeof d.amountUsd === "number" ? d.amountUsd : 0;
-        if (isFinite(usd) && usd > 0) result.totalCollateralUsd += usd;
-        break;
-      }
       case "borrow": {
+        const collateralUsd = typeof d.collateralAmountUsd === "number" ? d.collateralAmountUsd : 0;
+        if (isFinite(collateralUsd) && collateralUsd > 0) result.totalCollateralUsd += collateralUsd;
         const usd = typeof d.borrowAmountUsd === "number" ? d.borrowAmountUsd : 0;
         if (isFinite(usd) && usd > 0) result.totalBorrowUsd += usd;
         const hf = typeof d.healthFactor === "number" ? d.healthFactor : null;
         if (hf !== null && isFinite(hf)) {
           if (minHF === null || hf < minHF) minHF = hf;
         }
+        break;
+      }
+      case "lend": {
+        const usd = typeof d.amountUsd === "number" ? d.amountUsd : 0;
+        if (isFinite(usd) && usd > 0) result.totalDepositUsd += usd;
         break;
       }
       case "vaultDeposit": {
@@ -225,7 +227,7 @@ export async function runPreflight(
     result.needsMorphoAuthorization = !isAuthorized;
     if (!isAuthorized) {
       result.warnings.push(
-        "First-time borrow on this chain — a one-time Morpho authorization tx will be sent before the bundle (auto-handled at Execute)"
+        "This strategy borrows or withdraws on your behalf — a one-time Morpho authorization tx will be sent before the bundle (auto-handled at Execute)"
       );
     }
   }

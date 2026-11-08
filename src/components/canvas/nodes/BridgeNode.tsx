@@ -70,9 +70,10 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
           manualSource: false,
         };
       }
-      case "supplyCollateral": {
+      case "lendWithdraw": {
+        const p = sd.position as { market?: { loanAsset: Asset } } | null;
         return {
-          upstreamAsset: (sd.asset as Asset) ?? null,
+          upstreamAsset: p?.market?.loanAsset ?? null,
           upstreamAmount: parseFloat((sd.amount as string) || "0"),
           manualSource: false,
         };

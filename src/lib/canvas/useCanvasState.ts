@@ -19,7 +19,7 @@ import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useChain } from "@/lib/context/ChainContext";
 import { buildInitialLayout } from "./layout";
 import { isValidConnection } from "./validation";
-import { VALID_CONNECTIONS, type CanvasNode, type CanvasNodeData } from "./types";
+import { KNOWN_NODE_TYPES, VALID_CONNECTIONS, type CanvasNode, type CanvasNodeData } from "./types";
 import type { SupportedChainId } from "@/lib/web3/chains";
 import { consumeImportedStrategy, parseDeepLink } from "./importStrategy";
 import { stripDustNodes } from "./dust";
@@ -29,6 +29,27 @@ const MAX_HISTORY = 50;
 interface SavedGraph {
   nodes: CanvasNode[];
   edges: Edge[];
+}
+
+/**
+ * Drop nodes the canvas can no longer render, and the edges that touched them.
+ *
+ * A draft saved by an older build can hold node kinds that have since been
+ * removed (the standalone Supply Collateral node, folded into Borrow). React Flow
+ * renders an unknown type as a blank box with no handles, which looks like a bug
+ * and can never be connected or executed — better to leave it out.
+ */
+function dropUnknownNodes(
+  nodes: CanvasNode[],
+  edges: Edge[]
+): { nodes: CanvasNode[]; edges: Edge[] } {
+  const kept = nodes.filter((n) => typeof n.type === "string" && KNOWN_NODE_TYPES.has(n.type));
+  if (kept.length === nodes.length) return { nodes, edges };
+  const ids = new Set(kept.map((n) => n.id));
+  return {
+    nodes: kept,
+    edges: edges.filter((e) => ids.has(e.source) && ids.has(e.target)),
+  };
 }
 
 export function useCanvasState() {
@@ -138,10 +159,13 @@ export function useCanvasState() {
       if (saved) {
         const parsed = JSON.parse(saved) as SavedGraph;
         if (Array.isArray(parsed.nodes) && parsed.nodes.length > 0) {
-          const clean = stripDustNodes(parsed.nodes, parsed.edges || []);
-          setNodes(clean.nodes);
-          setEdges(clean.edges);
-          return;
+          const known = dropUnknownNodes(parsed.nodes, parsed.edges || []);
+          const clean = stripDustNodes(known.nodes, known.edges);
+          if (clean.nodes.length > 0) {
+            setNodes(clean.nodes);
+            setEdges(clean.edges);
+            return;
+          }
         }
       }
     } catch { /* ignore corrupt data */ }
@@ -200,19 +224,24 @@ export function useCanvasState() {
       let data: CanvasNodeData;
 
       switch (type) {
-        case "supplyCollateral":
-          data = { type: "supplyCollateral", asset: null, amount: "", amountUsd: 0 };
-          break;
         case "borrow":
           data = {
             type: "borrow",
+            collateralAsset: null,
+            collateralAmount: "",
+            collateralAmountUsd: 0,
             market: null,
             ltvPercent: 50,
             borrowAmount: 0,
             borrowAmountUsd: 0,
             healthFactor: null,
-            depositAmountUsd: 0,
           };
+          break;
+        case "lend":
+          data = { type: "lend", loanAsset: null, market: null, amount: "", amountUsd: 0 };
+          break;
+        case "lendWithdraw":
+          data = { type: "lendWithdraw", position: null, amount: "" };
           break;
         case "swap":
           data = {
@@ -254,8 +283,9 @@ export function useCanvasState() {
       }
 
       const nodeTypeMap: Record<string, string> = {
-        supplyCollateral: "supplyCollateralNode",
         borrow: "borrowNode",
+        lend: "lendNode",
+        lendWithdraw: "lendWithdrawNode",
         swap: "swapNode",
         vaultDeposit: "vaultDepositNode",
         vaultWithdraw: "vaultWithdrawNode",

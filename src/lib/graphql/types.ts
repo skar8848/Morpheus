@@ -51,6 +51,13 @@ export interface Market {
     liquidityAssets: string;
     price: string | null;
     rewards: MarketReward[];
+    /** Supply-side fields — only fetched by the lend queries. */
+    supplyApy?: number;
+    netSupplyApy?: number;
+    /** borrowed / supplied, 0..1 */
+    utilization?: number;
+    supplyAssetsUsd?: number | null;
+    liquidityAssetsUsd?: number | null;
   };
 }
 

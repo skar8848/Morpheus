@@ -19,16 +19,16 @@ Morpheus is a Next.js + React Flow application that lets a user (or an agent) co
 
 ## Mental Model
 
-A **canvas** is a directed graph of **nodes** connected by **edges**. Each node represents one DeFi action (supply collateral, borrow, swap, deposit into vault, etc.). Edges express data flow: the output of one node becomes the input of the next (e.g., the asset borrowed flows into a swap node, whose output flows into a vault deposit node).
+A **canvas** is a directed graph of **nodes** connected by **edges**. Each node represents one DeFi action (borrow against collateral, lend into an isolated market, swap, deposit into vault, etc.). Edges express data flow: the output of one node becomes the input of the next (e.g., the asset borrowed flows into a swap node, whose output flows into a vault deposit node).
 
 ```
-WalletNode  ──asset──▶  SupplyCollateralNode  ──collateral──▶  BorrowNode
-                                                                    │
-                                                                    ▼ borrowed asset
-                                                              SwapNode (CowSwap)
-                                                                    │
-                                                                    ▼ swapped asset
-                                                              VaultDepositNode
+WalletNode  ──collateral──▶  BorrowNode (posts collateral + draws the loan)
+                                  │
+                                  ▼ borrowed asset
+                            SwapNode (CowSwap)
+                                  │
+                                  ▼ swapped asset
+                            VaultDepositNode  (or LendNode for one isolated market)
 ```
 
 When the user clicks **Execute**, the executor walks the graph in topological order and emits the corresponding Morpho protocol calls as a single multicall.
@@ -37,14 +37,15 @@ When the user clicks **Execute**, the executor walks the graph in topological or
 
 | Type | Purpose | Inputs | Outputs |
 |------|---------|--------|---------|
-| `wallet` | User's connected EOA, balances, chain | — | `vaultDeposit`, `supplyCollateral`, `swap`, `repay` |
-| `supplyCollateral` | Supply an ERC-20 as collateral to a **Morpho Blue market**. Use ONLY when there's a downstream `borrow` — never as a transfer bridge | `wallet`, `swap`, `vaultWithdraw`, `position` | `borrow`, `vaultDeposit` |
-| `borrow` | Borrow loan asset from a Morpho Blue market with LTV target + health-factor preview | `supplyCollateral` | `swap`, `vaultDeposit` |
-| `swap` | CowSwap intent-based swap (Ethereum mainnet only — Base not supported by CoW) | `wallet`, `borrow`, `vaultWithdraw` | `vaultDeposit`, `supplyCollateral`, `wallet`, `repay` |
-| `vaultDeposit` | Deposit into a Morpho Vault (v1 MetaMorpho or v2). Can be fed directly by `wallet` for pure earn flows. Supports multi-source allocation percentages | `wallet`, `supplyCollateral`, `borrow`, `swap`, `vaultWithdraw` | — |
-| `vaultWithdraw` | Withdraw shares from an existing vault position (uses `redeem()`, not `withdraw()`, to avoid dust) | `position` | `swap`, `vaultDeposit`, `supplyCollateral`, `repay` |
+| `wallet` | User's connected EOA, balances, chain | — | `vaultDeposit`, `borrow`, `lend`, `swap`, `repay` |
+| `borrow` | Post collateral on a **Morpho Blue market** and borrow the loan asset against it, with LTV target + health-factor preview. One node holds both legs (`collateralAsset`/`collateralAmount` and `market`/`ltvPercent`) — on-chain they are `supplyCollateral` then `borrow` | `wallet`, `swap`, `vaultWithdraw`, `lendWithdraw`, `repay`, `bridge`, `borrow`, `position` | `swap`, `vaultDeposit`, `lend`, `bridge`, `borrow` |
+| `lend` | Supply the loan asset into **one isolated Morpho Blue market** (no collateral, no debt). The lender is exposed only to that market's collateral. Only `listed` markets are offered | `wallet`, `borrow`, `swap`, `vaultWithdraw`, `lendWithdraw`, `repay`, `bridge` | — |
+| `lendWithdraw` | Take supply back out of an isolated market. A full exit burns every supply share (no dust); the amount is capped by the market's live liquidity | `position` | `swap`, `vaultDeposit`, `borrow`, `lend`, `repay`, `bridge` |
+| `swap` | CowSwap intent-based swap (Ethereum mainnet only — Base not supported by CoW) | `wallet`, `borrow`, `vaultWithdraw`, `lendWithdraw` | `vaultDeposit`, `borrow`, `lend`, `wallet`, `repay` |
+| `vaultDeposit` | Deposit into a Morpho Vault (v1 MetaMorpho or v2). Can be fed directly by `wallet` for pure earn flows. Supports multi-source allocation percentages | `wallet`, `borrow`, `swap`, `vaultWithdraw`, `lendWithdraw` | — |
+| `vaultWithdraw` | Withdraw shares from an existing vault position (uses `redeem()`, not `withdraw()`, to avoid dust) | `position` | `swap`, `vaultDeposit`, `borrow`, `lend`, `repay` |
 | `repay` | Repay borrow on a Morpho Blue market | `wallet`, `swap`, `vaultWithdraw` | — |
-| `position` | Read-only existing on-chain position imported from `useAddressPositions` | — | `vaultWithdraw`, `supplyCollateral`, `swap` |
+| `position` | Read-only existing on-chain position imported from `useAddressPositions` | — | `vaultWithdraw`, `lendWithdraw`, `borrow`, `swap`, `bridge` |
 
 The full validation map lives in `src/lib/canvas/types.ts` (`VALID_CONNECTIONS`). Always check it before constructing connections — invalid edges are rejected at runtime.
 
@@ -63,19 +64,13 @@ The portable, agent-friendly representation of a canvas. This is what `morpheus_
       "position": { "x": 50, "y": 300 } // optional — auto-laid out if missing
     },
     {
-      "id": "supply-1",
-      "type": "supplyCollateral",
-      "data": {
-        "assetSymbol": "wstETH",        // human-readable; resolved to address at runtime
-        "amount": "10"                  // human units, NOT raw — Morpheus parses with the asset's decimals
-      }
-    },
-    {
       "id": "borrow-1",
-      "type": "borrow",
+      "type": "borrow",                 // posts the collateral AND draws the loan
       "data": {
-        "marketId": "0x...",            // Morpho Blue market unique key
-        "ltvPercent": 60                // target LTV in percent (0..LLTV)
+        "collateralAssetSymbol": "wstETH", // human-readable; resolved to address at runtime
+        "collateralAmount": "10",          // human units, NOT raw — Morpheus parses with the asset's decimals
+        "marketId": "0x...",               // Morpho Blue market unique key (its collateral must match the asset above)
+        "ltvPercent": 60                   // target LTV in percent (0..LLTV)
       }
     },
     {
@@ -98,10 +93,9 @@ The portable, agent-friendly representation of a canvas. This is what `morpheus_
     }
   ],
   "edges": [
-    { "id": "e1", "source": "wallet-1",  "target": "supply-1" },
-    { "id": "e2", "source": "supply-1",  "target": "borrow-1" },
-    { "id": "e3", "source": "borrow-1",  "target": "swap-1"   },
-    { "id": "e4", "source": "swap-1",    "target": "vault-1"  }
+    { "id": "e1", "source": "wallet-1",  "target": "borrow-1" },
+    { "id": "e2", "source": "borrow-1",  "target": "swap-1"   },
+    { "id": "e3", "source": "swap-1",    "target": "vault-1"  }
   ]
 }
 ```
@@ -135,9 +129,9 @@ Where the JSON is an array of action descriptors:
 
 ```jsonc
 [
-  { "kind": "supplyCollateral", "marketId": "0x...", "amount": "10" },
-  { "kind": "borrow",            "marketId": "0x...", "ltvPercent": 60 },
-  { "kind": "vaultDeposit",      "vaultAddress": "0x...", "amount": "max" }
+  { "kind": "borrow",       "marketId": "0x...", "collateralAmount": "10", "ltvPercent": 60 },
+  { "kind": "lend",         "marketId": "0x...", "amount": "5000" },
+  { "kind": "vaultDeposit", "vaultAddress": "0x...", "amount": "max" }
 ]
 ```
 
@@ -161,7 +155,7 @@ Validates a canvas and returns a deep-link URL the user can open.
 }
 ```
 
-The `nodes` and `edges` shapes match the internal `ImportedStrategy` format documented in `src/lib/canvas/importStrategy.ts`. Node `type` must be one of: `walletNode`, `supplyCollateralNode`, `borrowNode`, `swapNode`, `vaultDepositNode`, `vaultWithdrawNode`, `repayNode`, `positionNode`. The inner `data.type` is the data discriminant: `wallet`, `supplyCollateral`, `borrow`, `swap`, `vaultDeposit`, `vaultWithdraw`, `repay`, `position`.
+The `nodes` and `edges` shapes match the internal `ImportedStrategy` format documented in `src/lib/canvas/importStrategy.ts`. Node `type` must be one of: `walletNode`, `borrowNode`, `lendNode`, `lendWithdrawNode`, `swapNode`, `vaultDepositNode`, `vaultWithdrawNode`, `repayNode`, `positionNode`. The inner `data.type` is the data discriminant: `wallet`, `borrow`, `lend`, `lendWithdraw`, `swap`, `vaultDeposit`, `vaultWithdraw`, `repay`, `position`.
 
 **Response** (200):
 ```jsonc
@@ -179,7 +173,7 @@ The `nodes` and `edges` shapes match the internal `ImportedStrategy` format docu
 ```jsonc
 {
   "ok": false,
-  "errors": ["nodes[2].data.type: must be one of wallet, supplyCollateral, ..."]
+  "errors": ["nodes[2].data.type: must be one of wallet, borrow, lend, ..."]
 }
 ```
 

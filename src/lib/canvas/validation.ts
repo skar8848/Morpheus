@@ -71,31 +71,17 @@ export function getConnectionHint(
 
   if (!sourceType || !targetType) return null;
 
-  if (sourceType === "swap" && targetType === "borrow") {
+  if (sourceType === "borrow" && targetType === "repay") {
     return {
-      message: "You need to supply collateral first",
-      highlightType: "supplyCollateral",
-    };
-  }
-
-  if (sourceType === "wallet" && targetType === "borrow") {
-    return {
-      message: "You need to supply collateral first",
-      highlightType: "supplyCollateral",
-    };
-  }
-
-  if (sourceType === "borrow" && targetType === "borrow") {
-    return {
-      message: "Connect borrow output to a swap or vault deposit",
+      message: "Repay from your wallet — fund it with a swap or withdraw, not a borrow",
       highlightType: "swap",
     };
   }
 
-  if (sourceType === "wallet" && targetType === "vaultDeposit") {
+  if (sourceType === "lend") {
     return {
-      message: "Supply collateral first, then borrow to deposit into a vault",
-      highlightType: "supplyCollateral",
+      message: "A lend position holds a claim on the market — use Lend Withdraw to take it back out",
+      highlightType: "lendWithdraw",
     };
   }
 
@@ -182,22 +168,11 @@ export function validateGraph(
     }
 
     switch (data.type) {
-      case "supplyCollateral": {
-        const d = node.data as { asset?: { address?: string; decimals?: number }; amount?: string };
-        if (!d.asset) {
-          errors.push(`Supply node: no asset selected`);
-        } else {
-          if (!isValidAddr(d.asset.address))
-            errors.push(`Supply node: invalid asset address`);
-          if (!isValidDecimals(d.asset.decimals))
-            errors.push(`Supply node: invalid decimals`);
-        }
-        const amt = safeParseAmount(d.amount);
-        if (amt <= 0) errors.push(`Supply node: no amount set`);
-        break;
-      }
       case "borrow": {
         const d = node.data as {
+          collateralAsset?: { address?: string; decimals?: number };
+          collateralAmount?: string;
+          collateralAll?: boolean;
           market?: {
             loanAsset?: { address?: string; decimals?: number };
             collateralAsset?: { address?: string };
@@ -225,8 +200,92 @@ export function validateGraph(
           if (!isFinite(lltv) || lltv <= 0 || lltv > 1)
             errors.push(`Borrow node: invalid LLTV value`);
         }
+        // The collateral is posted by this node, so it has to be well-formed and
+        // be the market's own collateral token (anything else reverts on-chain).
+        if (!d.collateralAsset) {
+          errors.push(`Borrow node: no collateral asset`);
+        } else {
+          if (!isValidAddr(d.collateralAsset.address))
+            errors.push(`Borrow node: invalid collateral address`);
+          if (!isValidDecimals(d.collateralAsset.decimals))
+            errors.push(`Borrow node: invalid collateral decimals`);
+          if (
+            d.market?.collateralAsset?.address &&
+            d.collateralAsset.address &&
+            d.market.collateralAsset.address.toLowerCase() !== d.collateralAsset.address.toLowerCase()
+          )
+            errors.push(`Borrow node: collateral does not match the market`);
+        }
+        // With collateralAll the amount is whatever the upstream swap delivers.
+        if (!d.collateralAll && safeParseAmount(d.collateralAmount) <= 0)
+          errors.push(`Borrow node: no collateral amount`);
         if (!d.borrowAmount || !isFinite(d.borrowAmount) || d.borrowAmount <= 0)
           errors.push(`Borrow node: no borrow amount`);
+        break;
+      }
+      case "lend": {
+        const d = node.data as {
+          market?: {
+            loanAsset?: { address?: string; decimals?: number };
+            collateralAsset?: { address?: string };
+            oracle?: { address?: string };
+            irmAddress?: string;
+            lltv?: string;
+          };
+          amount?: string;
+          depositAll?: boolean;
+        };
+        if (!d.market) {
+          errors.push(`Lend node: no market selected`);
+        } else {
+          if (!isValidAddr(d.market.loanAsset?.address))
+            errors.push(`Lend node: invalid loan asset address`);
+          if (!isValidAddr(d.market.collateralAsset?.address))
+            errors.push(`Lend node: invalid collateral asset address`);
+          if (!isValidAddr(d.market.oracle?.address))
+            errors.push(`Lend node: invalid oracle address`);
+          if (!isValidAddr(d.market.irmAddress))
+            errors.push(`Lend node: invalid IRM address`);
+          if (!isValidDecimals(d.market.loanAsset?.decimals))
+            errors.push(`Lend node: invalid loan decimals`);
+          const lltv = Number(d.market.lltv ?? "0") / 1e18;
+          if (!isFinite(lltv) || lltv <= 0 || lltv > 1)
+            errors.push(`Lend node: invalid LLTV value`);
+        }
+        if (!d.depositAll && safeParseAmount(d.amount) <= 0)
+          errors.push(`Lend node: no amount`);
+        break;
+      }
+      case "lendWithdraw": {
+        const d = node.data as {
+          position?: {
+            market?: {
+              loanAsset?: { address?: string; decimals?: number };
+              collateralAsset?: { address?: string };
+              oracle?: { address?: string };
+              irmAddress?: string;
+              lltv?: string;
+            };
+          };
+          amount?: string;
+        };
+        const m = d.position?.market;
+        if (!m) {
+          errors.push(`Lend withdraw node: no position selected`);
+        } else {
+          if (!isValidAddr(m.loanAsset?.address))
+            errors.push(`Lend withdraw node: invalid loan asset address`);
+          if (!isValidAddr(m.collateralAsset?.address))
+            errors.push(`Lend withdraw node: invalid collateral asset address`);
+          if (!isValidAddr(m.oracle?.address))
+            errors.push(`Lend withdraw node: invalid oracle address`);
+          if (!isValidAddr(m.irmAddress))
+            errors.push(`Lend withdraw node: invalid IRM address`);
+          if (!isValidDecimals(m.loanAsset?.decimals))
+            errors.push(`Lend withdraw node: invalid decimals`);
+        }
+        if (safeParseAmount(d.amount) <= 0)
+          errors.push(`Lend withdraw node: no amount`);
         break;
       }
       case "swap": {
@@ -323,7 +382,14 @@ export function validateGraph(
   // Check for disconnected non-wallet/position nodes
   for (const node of nodes) {
     const data = node.data as { type?: string };
-    if (data.type === "wallet" || data.type === "position" || data.type === "vaultWithdraw" || data.type === "repay") continue;
+    if (
+      data.type === "wallet" ||
+      data.type === "position" ||
+      data.type === "vaultWithdraw" ||
+      data.type === "lendWithdraw" ||
+      data.type === "repay"
+    )
+      continue;
 
     const hasIncoming = edges.some((e) => e.target === node.id);
     if (!hasIncoming) {

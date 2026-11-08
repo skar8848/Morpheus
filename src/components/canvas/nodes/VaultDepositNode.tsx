@@ -173,14 +173,17 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
         }
       }
 
-      if (sd.type === "supplyCollateral") {
-        const asset = sd.asset as { address: string; symbol?: string } | null;
+      if (sd.type === "lendWithdraw") {
+        const position = sd.position as {
+          market?: { loanAsset?: { address: string; symbol?: string }; collateralAsset?: { symbol?: string } };
+        } | null;
+        const asset = position?.market?.loanAsset;
         const amt = parseFloat((sd.amount as string) || "0");
         if (asset?.address) {
           loanAddr = asset.address;
           sources.push({
             nodeId: sourceNode.id,
-            label: `Supply ${asset.symbol ?? "?"}`,
+            label: `Withdraw ${position?.market?.collateralAsset?.symbol ?? "?"}/${asset.symbol ?? "?"}`,
             borrowAmount: amt,
             loanAddress: asset.address,
           });

@@ -3,15 +3,17 @@
 
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position, useReactFlow, useEdges, useNodes, type NodeProps } from "@xyflow/react";
 import Image from "next/image";
 import { useChain } from "@/lib/context/ChainContext";
-import { useMarkets } from "@/lib/hooks/useMarkets";
-import { useLoanAssets } from "@/lib/hooks/useLoanAssets";
+import { useBorrowMarkets } from "@/lib/hooks/useBorrowMarkets";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
-import { formatApy, formatLltv } from "@/lib/utils/format";
+import { useTokenBalances } from "@/lib/hooks/useTokenBalances";
+import { COLLATERAL_ASSETS } from "@/lib/constants/assets";
+import { formatApy, formatLltv, formatUsd } from "@/lib/utils/format";
 import { getNodeChainId } from "@/lib/canvas/bridge";
+import { collectUpstream } from "@/lib/canvas/upstream";
 import { MIDNIGHT_CHAIN_ID } from "@/lib/midnight/api";
 import type { BorrowNodeData, CanvasNode } from "@/lib/canvas/types";
 import type { SupportedChainId } from "@/lib/web3/chains";
@@ -49,6 +51,15 @@ function UtilizationRing({ pct }: { pct: number }) {
   );
 }
 
+/**
+ * Borrow against collateral on one isolated market.
+ *
+ * One node owns the whole leg — the collateral it posts and the loan it draws —
+ * because on Morpho Blue they are one position: collateral with no borrow sits
+ * idle, a borrow with no collateral reverts. The collateral asset is chosen (or
+ * inherited from whatever is wired in) first, because it is what narrows the
+ * list of markets that can exist for this node.
+ */
 function BorrowNodeComponent({ id, data }: NodeProps) {
   const { updateNodeData, deleteElements } = useReactFlow();
   const { chainId } = useChain();
@@ -56,70 +67,50 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
   const edges = useEdges();
   const nodes = useNodes();
 
-  // Find ALL collateral inputs — sum amounts from multiple SupplyCollateral nodes
-  const { connectedCollateralAddress, connectedAmount, collateralSources } = useMemo(() => {
-    const incomingEdges = edges.filter((e) => e.target === id);
-    if (incomingEdges.length === 0)
-      return { connectedCollateralAddress: null, connectedAmount: 0, collateralSources: [] };
+  // Effective chain: home chain, or the bridge's destination chain if this
+  // borrow sits downstream of a bridge — so we propose markets on that chain.
+  const nodeChainId = useMemo(
+    () => getNodeChainId(id, nodes as CanvasNode[], edges, chainId as SupportedChainId),
+    [id, nodes, edges, chainId]
+  );
+  const collateralOptionsAssets = useMemo(
+    () => COLLATERAL_ASSETS[nodeChainId as SupportedChainId] ?? [],
+    [nodeChainId]
+  );
 
-    type Source = { nodeId: string; label: string; amount: number };
-    const sources: Source[] = [];
-    let collateralAddr: string | null = null;
+  // ── Upstream: what is being wired in as collateral ──────────────────────────
+  const { inputs, suggestedAsset } = useMemo(
+    () => collectUpstream(id, nodes as CanvasNode[], edges),
+    [id, nodes, edges]
+  );
+  const hasWalletInput = inputs.some((i) => i.kind === "wallet");
 
-    for (const edge of incomingEdges) {
-      const sourceNode = nodes.find((n) => n.id === edge.source);
-      if (!sourceNode) continue;
-      const sd = sourceNode.data as {
-        type?: string;
-        asset?: { address: string; symbol: string } | null;
-        amount?: string;
-      };
-      if (sd.type === "supplyCollateral" && sd.asset) {
-        collateralAddr = sd.asset.address;
-        sources.push({
-          nodeId: sourceNode.id,
-          label: `Supply ${sd.asset.symbol}`,
-          amount: parseFloat(sd.amount || "0"),
-        });
-      }
-    }
-
-    const total = sources.reduce((sum, s) => sum + s.amount, 0);
-    return { connectedCollateralAddress: collateralAddr, connectedAmount: total, collateralSources: sources };
-  }, [edges, nodes, id]);
-
-  // Fetch real prices for collateral + loan assets
-  const priceAddresses = useMemo(() => {
-    const addrs: string[] = [];
-    if (connectedCollateralAddress) addrs.push(connectedCollateralAddress);
-    if (d.market?.loanAsset?.address) addrs.push(d.market.loanAsset.address);
-    return addrs;
-  }, [connectedCollateralAddress, d.market?.loanAsset?.address]);
-  const { prices } = useAssetPrices(priceAddresses);
-  const collateralPrice = connectedCollateralAddress
-    ? prices[connectedCollateralAddress.toLowerCase()] ?? 0
-    : 0;
-  const connectedAmountUsd = connectedAmount * collateralPrice;
-
-  // Loan asset price — needed to convert USD borrow amount to token amount
-  const loanAssetPrice = d.market?.loanAsset?.address
-    ? prices[d.market.loanAsset.address.toLowerCase()] ?? 0
-    : 0;
-
-  // Auto-sync collateral USD from connected supply node
+  // Follow the upstream asset when it changes
+  const prevSuggestedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (connectedAmountUsd > 0 && connectedAmountUsd !== d.depositAmountUsd) {
-      updateNodeData(id, { depositAmountUsd: connectedAmountUsd });
+    if (!suggestedAsset) {
+      prevSuggestedRef.current = null;
+      return;
     }
-  }, [connectedAmountUsd]);
+    const addr = suggestedAsset.address.toLowerCase();
+    if (addr === prevSuggestedRef.current) return;
+    prevSuggestedRef.current = addr;
+    const match = collateralOptionsAssets.find((a) => a.address.toLowerCase() === addr);
+    updateNodeData(id, { collateralAsset: match ?? suggestedAsset });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestedAsset]);
 
-  // Reset borrow selections when collateral asset changes
-  const prevCollateralRef = useRef(connectedCollateralAddress);
+  const collateralAsset = d.collateralAsset ?? null;
+  const collateralAddr = collateralAsset?.address?.toLowerCase() ?? null;
+
+  // A market only exists for one collateral token. If the collateral asset moves
+  // (picked by hand or inherited from upstream), a previously chosen market no
+  // longer fits — drop it and everything derived from it.
   useEffect(() => {
-    if (
-      prevCollateralRef.current !== null &&
-      connectedCollateralAddress !== prevCollateralRef.current
-    ) {
+    const marketCollateral = d.market?.collateralAsset?.address?.toLowerCase();
+    const orphaned = !!d.market && !collateralAddr; // collateral filter cleared
+    const mismatched = !!d.market && !!marketCollateral && !!collateralAddr && marketCollateral !== collateralAddr;
+    if (orphaned || mismatched) {
       updateNodeData(id, {
         loanAssetAddress: undefined,
         market: null,
@@ -129,35 +120,169 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
         ltvPercent: 50,
       });
     }
-    prevCollateralRef.current = connectedCollateralAddress;
-  }, [connectedCollateralAddress]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collateralAddr]);
 
-  // Effective chain: home chain, or the bridge's destination chain if this
-  // borrow sits downstream of a bridge — so we propose markets on that chain.
-  const nodeChainId = useMemo(
-    () => getNodeChainId(id, nodes as CanvasNode[], edges, chainId as SupportedChainId),
-    [id, nodes, edges, chainId]
+  // ── Prices + wallet balance ─────────────────────────────────────────────────
+  const priceAddresses = useMemo(() => {
+    const addrs: string[] = [];
+    if (collateralAsset?.address) addrs.push(collateralAsset.address);
+    if (d.market?.loanAsset?.address) addrs.push(d.market.loanAsset.address);
+    return addrs;
+  }, [collateralAsset?.address, d.market?.loanAsset?.address]);
+  const { prices, loading: pricesLoading } = useAssetPrices(priceAddresses);
+  const collateralPrice = collateralAsset
+    ? prices[collateralAsset.address.toLowerCase()] ?? 0
+    : 0;
+  // Loan asset price — needed to convert USD borrow amount to token amount
+  const loanAssetPrice = d.market?.loanAsset?.address
+    ? prices[d.market.loanAsset.address.toLowerCase()] ?? 0
+    : 0;
+
+  const selectedAssets = useMemo(() => (collateralAsset ? [collateralAsset] : []), [collateralAsset]);
+  const { assetsWithBalances, isLoading: balanceLoading } = useTokenBalances(selectedAssets);
+  const walletBalance = parseFloat(assetsWithBalances[0]?.balance ?? "0");
+
+  // What is available to post: the sum of every wired source (a wallet counts as
+  // its balance of the chosen asset), or the wallet balance when nothing is wired.
+  const inputsWithBalances = inputs.map((i) =>
+    i.kind === "wallet" ? { ...i, amount: walletBalance } : i
   );
+  const totalFromUpstream = inputsWithBalances.reduce((sum, i) => sum + i.amount, 0);
+  const totalAvailable = inputs.length === 0 ? walletBalance : totalFromUpstream;
 
-  // Fetch loan assets for this collateral
+  const currentAmount = parseFloat(d.collateralAmount || "0");
+  const exceedsBalance =
+    !d.collateralAll &&
+    currentAmount > 0 &&
+    (totalAvailable > 0 ? currentAmount > totalAvailable : hasWalletInput);
+
+  // The wired asset must be the one being posted
+  const upstreamMismatch =
+    !!suggestedAsset &&
+    !!collateralAsset &&
+    suggestedAsset.address.toLowerCase() !== collateralAsset.address.toLowerCase();
+
+  // The wired asset has no collateral markets on this chain
+  const upstreamNotSupported = useMemo(() => {
+    if (!suggestedAsset) return null;
+    const match = collateralOptionsAssets.find(
+      (a) => a.address.toLowerCase() === suggestedAsset.address.toLowerCase()
+    );
+    return match ? null : suggestedAsset;
+  }, [suggestedAsset, collateralOptionsAssets]);
+
+  // When ONE producer feeds this node (a swap, a withdrawal, another borrow…),
+  // the natural intent is "post everything it delivers" — and for a swap that is
+  // the only sound choice, since its fill is unknown until it executes. So follow
+  // the feed by default. A wallet is not a producer: its balance is a ceiling the
+  // user picks from, not an amount to take whole.
+  const soleProducer = inputs.length === 1 && inputs[0].kind !== "wallet" ? inputs[0] : null;
+  const soleProducerId = soleProducer?.nodeId ?? null;
+  const prevProducerRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (soleProducerId && soleProducerId !== prevProducerRef.current) {
+      prevProducerRef.current = soleProducerId;
+      if (d.collateralAll === undefined) updateNodeData(id, { collateralAll: true });
+    }
+    if (!soleProducerId) {
+      prevProducerRef.current = null;
+      if (d.collateralAll) updateNodeData(id, { collateralAll: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soleProducerId]);
+
+  // While following the feed, the amount tracks it live, so the LTV maths below
+  // runs on the best estimate available (the quote, for a swap).
+  useEffect(() => {
+    if (!d.collateralAll || !(totalAvailable > 0)) return;
+    const next = totalAvailable.toFixed(6);
+    if (next !== d.collateralAmount) updateNodeData(id, { collateralAmount: next });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d.collateralAll, totalAvailable]);
+
+  // Keep the USD value in step with amount × price (price arrives after the amount)
+  const collateralUsd = currentAmount * collateralPrice;
+  useEffect(() => {
+    if (Math.abs(collateralUsd - (d.collateralAmountUsd ?? 0)) > 1e-9) {
+      updateNodeData(id, { collateralAmountUsd: collateralUsd });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collateralUsd]);
+
+  const setAmount = (amount: string) =>
+    updateNodeData(id, {
+      collateralAmount: amount,
+      collateralAmountUsd: parseFloat(amount || "0") * collateralPrice,
+      // Typing an amount is an explicit choice — stop following the swap fill.
+      collateralAll: false,
+    });
+
+  // Persist states for edge rendering + the Execute button
+  const prevExceedsRef = useRef(false);
+  const prevIncompleteRef = useRef(false);
+  useEffect(() => {
+    if (exceedsBalance !== prevExceedsRef.current) {
+      prevExceedsRef.current = exceedsBalance;
+      updateNodeData(id, { exceedsBalance });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exceedsBalance]);
+  useEffect(() => {
+    const incomplete = !!upstreamNotSupported || upstreamMismatch;
+    if (incomplete !== prevIncompleteRef.current) {
+      prevIncompleteRef.current = incomplete;
+      updateNodeData(id, { incomplete });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [upstreamNotSupported, upstreamMismatch]);
+
+  // ── Market selection ────────────────────────────────────────────────────────
+  // Two ways in. Filter by what you post (collateral) and what you want to
+  // borrow, then pick from the markets that match — or search the markets
+  // directly when you already know which one you want, which then fills in
+  // the collateral and the loan asset for you. Both filters are optional.
   const collateralAddresses = useMemo(
-    () => (connectedCollateralAddress ? [connectedCollateralAddress] : []),
-    [connectedCollateralAddress]
+    () => (collateralAsset?.address ? [collateralAsset.address] : []),
+    [collateralAsset?.address]
   );
-  const { loanAssets, loading: loanAssetsLoading } = useLoanAssets(collateralAddresses, nodeChainId);
 
-  const selectedLoanAddress = (d as unknown as { loanAssetAddress?: string }).loanAssetAddress;
-
-  // Fetch markets filtered by collateral + loan asset
+  // An imported node arrives with a market but no remembered loan-asset pick.
+  const selectedLoanAddress = d.loanAssetAddress ?? d.market?.loanAsset?.address;
   const loanAddresses = useMemo(
     () => (selectedLoanAddress ? [selectedLoanAddress] : []),
     [selectedLoanAddress]
   );
-  const { markets, loading: marketsLoading } = useMarkets(collateralAddresses, loanAddresses, nodeChainId);
 
-  // Compute borrow amount + HF reactively from LTV
+  // Markets for the collateral filter alone: they define which loan assets exist.
+  const { markets: collateralMarkets, loading: collateralMarketsLoading } = useBorrowMarkets(
+    collateralAddresses,
+    [],
+    nodeChainId
+  );
+  // Narrowed by the loan asset too — only fetched once one is chosen.
+  const { markets: loanFilteredMarkets, loading: loanMarketsLoading } = useBorrowMarkets(
+    collateralAddresses,
+    loanAddresses,
+    nodeChainId,
+    loanAddresses.length > 0
+  );
+  const markets = loanAddresses.length > 0 ? loanFilteredMarkets : collateralMarkets;
+  const marketsLoading = collateralMarketsLoading || loanMarketsLoading;
+  const loanAssetsLoading = collateralMarketsLoading;
+
+  const loanAssets = useMemo(() => {
+    const seen = new Map<string, { address: string; symbol: string; logoURI: string }>();
+    for (const m of collateralMarkets) {
+      const key = m.loanAsset.address.toLowerCase();
+      if (!seen.has(key)) seen.set(key, m.loanAsset);
+    }
+    return Array.from(seen.values());
+  }, [collateralMarkets]);
+
+  // ── LTV → borrow amount + HF, reactively ────────────────────────────────────
   // borrowAmountUsd = USD value, borrowAmount = token amount (for executor)
-  const depositUsd = d.depositAmountUsd || connectedAmountUsd;
+  const depositUsd = d.collateralAmountUsd || collateralUsd;
   useEffect(() => {
     if (!d.market || depositUsd <= 0) {
       if (d.borrowAmount !== 0) {
@@ -180,6 +305,7 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
       borrowAmountUsd: borrowUsd,
       healthFactor: hf,
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.market?.uniqueKey, d.ltvPercent, depositUsd, loanAssetPrice]);
 
   // Market liquidity check — use LIVE data from useMarkets, not the stale d.market snapshot
@@ -196,12 +322,13 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
   const exceedsLiquidity = availableLiquidity !== null && d.borrowAmount > 0 && d.borrowAmount > availableLiquidity;
 
   // Persist to node data so edges + ExecuteButton can read it
-  const prevExceedsRef = useRef(false);
+  const prevLiquidityRef = useRef(false);
   useEffect(() => {
-    if (exceedsLiquidity !== prevExceedsRef.current) {
-      prevExceedsRef.current = exceedsLiquidity;
+    if (exceedsLiquidity !== prevLiquidityRef.current) {
+      prevLiquidityRef.current = exceedsLiquidity;
       updateNodeData(id, { exceedsLiquidity });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exceedsLiquidity]);
 
   const hfColor = (hf: number | null) => {
@@ -211,14 +338,14 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
     return "text-error";
   };
 
-  // Desired-HF input. HF = LLTV% / LTV% (prices cancel), so a target HF maps
-  // to LTV% = LLTV% / HF. Kept as a local draft while focused so the reactive
-  // HF (derived from ltvPercent) doesn't fight the user's typing.
   // Floating (Blue) vs fixed (Midnight). Same intent — borrow X against Y —
   // so it's a mode here, not a separate node the user must know to reach for.
   const [rateMode, setRateMode] = useState<"floating" | "fixed">("floating");
   const midnightAvailable = nodeChainId === MIDNIGHT_CHAIN_ID;
 
+  // Desired-HF input. HF = LLTV% / LTV% (prices cancel), so a target HF maps
+  // to LTV% = LLTV% / HF. Kept as a local draft while focused so the reactive
+  // HF (derived from ltvPercent) doesn't fight the user's typing.
   const [hfFocused, setHfFocused] = useState(false);
   const [hfDraft, setHfDraft] = useState("");
   useEffect(() => {
@@ -232,70 +359,234 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
     updateNodeData(id, { ltvPercent: Math.max(0, Math.min(Math.floor(lltvPct), ltv)) });
   };
 
-  // SearchSelect options
+  // SearchSelect options. "Any" clears a filter — the filters are optional.
+  const ANY = "__any__";
+  const collateralOptions = useMemo(
+    () => [
+      { value: ANY, label: "Any collateral" },
+      ...collateralOptionsAssets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
+    ],
+    [collateralOptionsAssets]
+  );
   const loanOptions = useMemo(
-    () => loanAssets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
+    () => [
+      { value: ANY, label: "Any asset" },
+      ...loanAssets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
+    ],
     [loanAssets]
   );
   const marketOptions = useMemo(
     () =>
       markets.map((m) => ({
         value: m.uniqueKey,
-        label: `${m.collateralAsset.symbol}/${m.loanAsset.symbol} — LLTV ${formatLltv(m.lltv)} — ${formatApy(Math.abs(m.state.netBorrowApy))}`,
+        label: `${m.collateralAsset.symbol}/${m.loanAsset.symbol} — LLTV ${formatLltv(m.lltv)} — ${formatApy(
+          Math.abs(m.state.netBorrowApy)
+        )} — ${formatUsd(m.state.liquidityAssetsUsd ?? 0)} liq.`,
         icon: m.loanAsset.logoURI,
       })),
     [markets]
   );
+
+  /** Pick a market directly: it dictates the collateral and the loan asset. */
+  const selectMarket = (key: string) => {
+    const market = markets.find((m) => m.uniqueKey === key) ?? null;
+    if (!market) return;
+    const c = market.collateralAsset;
+    updateNodeData(id, {
+      market,
+      collateralAsset: {
+        symbol: c.symbol,
+        name: c.symbol,
+        address: c.address,
+        decimals: c.decimals,
+        logoURI: c.logoURI,
+      },
+      loanAssetAddress: market.loanAsset.address,
+    });
+  };
 
   return (
     <NodeShell
       nodeType="borrow"
       title="Borrow"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
-      invalid={exceedsLiquidity}
-      loading={loanAssetsLoading || marketsLoading}
+      invalid={exceedsLiquidity || exceedsBalance}
+      loading={loanAssetsLoading || marketsLoading || pricesLoading || balanceLoading}
     >
       <div className="space-y-2">
-        {/* No connection hint */}
-        {!connectedCollateralAddress && (
-          <div className="rounded-lg border border-border bg-bg-secondary px-2 py-1.5 text-[10px] text-text-tertiary">
-            Connect a Supply Collateral node to see available markets
+        {/* ── Collateral ─────────────────────────────────────────────────── */}
+        {upstreamNotSupported && (
+          <div className="rounded-lg border border-yellow-400/20 bg-yellow-400/5 px-2 py-1.5 text-[10px] text-yellow-400">
+            {upstreamNotSupported.symbol} has no collateral markets on this chain
+          </div>
+        )}
+        {upstreamMismatch && !upstreamNotSupported && (
+          <div className="rounded-lg border border-yellow-400/20 bg-yellow-400/5 px-2 py-1.5 text-[10px] text-yellow-400">
+            Wired in: {suggestedAsset!.symbol} — but collateral is {collateralAsset!.symbol}
           </div>
         )}
 
-        {/* Step 1: Pick loan asset */}
-        {connectedCollateralAddress && (
-          <div>
-            <label className="text-[10px] text-text-tertiary">Borrow Asset</label>
-            {loanAssetsLoading ? (
-              <div className="mt-0.5 h-7 animate-pulse rounded-lg bg-bg-secondary" />
+        {/* ── Find a market: filter by collateral / borrow asset, or search it directly ── */}
+        <div>
+          <label className="text-[10px] text-text-tertiary">Collateral</label>
+          <SearchSelect
+            options={collateralOptions}
+            value={collateralAsset?.address ?? ""}
+            onChange={(addr) => {
+              const asset =
+                addr === ANY ? null : collateralOptionsAssets.find((a) => a.address === addr) ?? null;
+              // Changing the collateral invalidates a market picked for the old one
+              // (the effect above clears it); the loan filter no longer applies either.
+              updateNodeData(id, { collateralAsset: asset, loanAssetAddress: undefined });
+            }}
+            placeholder="Search collateral..."
+          />
+        </div>
+
+        <div>
+          <label className="text-[10px] text-text-tertiary">Borrow Asset</label>
+          {loanAssetsLoading ? (
+            <div className="mt-0.5 h-7 animate-pulse rounded-lg bg-bg-secondary" />
+          ) : (
+            <SearchSelect
+              options={loanOptions}
+              value={selectedLoanAddress ?? ""}
+              onChange={(v) =>
+                updateNodeData(id, { loanAssetAddress: v === ANY ? undefined : v, market: null })
+              }
+              placeholder="Search asset..."
+            />
+          )}
+        </div>
+
+        <div>
+          <label className="text-[10px] text-text-tertiary">Market</label>
+          {marketsLoading ? (
+            <div className="mt-0.5 h-7 animate-pulse rounded-lg bg-bg-secondary" />
+          ) : (
+            <SearchSelect
+              options={marketOptions}
+              value={d.market?.uniqueKey ?? ""}
+              onChange={selectMarket}
+              placeholder="Search market..."
+            />
+          )}
+        </div>
+
+        {/* Multi-input sources breakdown */}
+        {collateralAsset && inputsWithBalances.length > 1 && (
+          <div className="space-y-0.5 rounded-lg bg-bg-secondary px-2 py-1.5">
+            <span className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Sources</span>
+            {inputsWithBalances.map((input) => (
+              <div key={input.nodeId} className="flex items-center justify-between">
+                <span className="text-[10px] text-text-tertiary">{input.label}</span>
+                <span className="text-[10px] text-text-secondary">
+                  {input.amount.toFixed(4)} {collateralAsset.symbol}
+                </span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between border-t border-border pt-0.5">
+              <span className="text-[10px] font-medium text-text-tertiary">Total</span>
+              <span className="text-[10px] font-medium text-text-primary">
+                {totalAvailable.toFixed(4)} {collateralAsset.symbol}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Wallet balance indicator */}
+        {collateralAsset && (hasWalletInput || inputs.length === 0) && (
+          <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-2 py-1">
+            <span className="text-[10px] text-text-tertiary">Wallet</span>
+            {balanceLoading ? (
+              <div className="h-3 w-16 animate-pulse rounded bg-bg-primary" />
             ) : (
-              <SearchSelect
-                options={loanOptions}
-                value={selectedLoanAddress ?? ""}
-                onChange={(v) => updateNodeData(id, { loanAssetAddress: v, market: null })}
-                placeholder="Search asset..."
-              />
+              <span className="text-[10px] text-text-secondary">
+                {walletBalance.toFixed(4)} {collateralAsset.symbol}
+              </span>
             )}
           </div>
         )}
 
-        {/* Step 2: Pick market */}
-        {selectedLoanAddress && (
-          <div>
-            <label className="text-[10px] text-text-tertiary">Market</label>
-            {marketsLoading ? (
-              <div className="mt-0.5 h-7 animate-pulse rounded-lg bg-bg-secondary" />
-            ) : (
-              <SearchSelect
-                options={marketOptions}
-                value={d.market?.uniqueKey ?? ""}
-                onChange={(v) => {
-                  const market = markets.find((m) => m.uniqueKey === v) ?? null;
-                  updateNodeData(id, { market });
-                }}
-                placeholder="Search market..."
+        {/* Collateral amount: input + USD inline + slider */}
+        {collateralAsset && (
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] text-text-tertiary">Amount</label>
+              <div className="flex items-center gap-2">
+                {soleProducer && (
+                  <button
+                    type="button"
+                    onClick={() => updateNodeData(id, { collateralAll: !d.collateralAll })}
+                    title={
+                      soleProducer.kind === "swap"
+                        ? "Post the exact amount the swap delivers, whatever the fill turns out to be"
+                        : "Post everything the connected node delivers"
+                    }
+                    className={`rounded px-1 py-0.5 text-[9px] font-semibold transition-colors ${
+                      d.collateralAll
+                        ? "bg-brand/15 text-brand"
+                        : "bg-bg-secondary text-text-tertiary hover:text-text-secondary"
+                    }`}
+                  >
+                    {soleProducer.kind === "swap" ? "All swap output" : "All upstream"}
+                  </button>
+                )}
+                {totalAvailable > 0 && !d.collateralAll && (
+                  <button
+                    type="button"
+                    onClick={() => setAmount(totalAvailable.toFixed(6))}
+                    className="text-[9px] text-text-tertiary transition-colors hover:text-brand"
+                  >
+                    MAX
+                  </button>
+                )}
+              </div>
+            </div>
+            <div
+              className={`nodrag relative flex items-center rounded-lg border bg-bg-secondary ${
+                exceedsBalance ? "border-error" : "border-border"
+              }`}
+            >
+              <input
+                type="number"
+                placeholder="0.00"
+                disabled={!!d.collateralAll}
+                className="min-w-0 flex-1 bg-transparent px-2 py-1.5 text-xs text-text-primary outline-none disabled:opacity-60 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                value={d.collateralAmount ?? ""}
+                onChange={(e) => setAmount(e.target.value)}
               />
+              {collateralUsd > 0 && (
+                <span className="pointer-events-none shrink-0 pr-2 text-[10px] text-text-tertiary">
+                  ~${collateralUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </span>
+              )}
+            </div>
+            {exceedsBalance && (
+              <p className="text-[10px] text-error">
+                Exceeds available balance ({totalAvailable.toFixed(4)} {collateralAsset.symbol})
+              </p>
+            )}
+            {totalAvailable > 0 && !d.collateralAll && (
+              <div className="nodrag">
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={Math.min(100, Math.round((currentAmount / totalAvailable) * 100))}
+                  onChange={(e) => {
+                    const p = parseInt(e.target.value);
+                    setAmount(((totalAvailable * p) / 100).toFixed(6));
+                  }}
+                  className="w-full accent-brand"
+                />
+                <div className="flex items-center justify-between rounded-lg bg-bg-primary px-2 py-1">
+                  <span className="text-[10px] text-text-tertiary">
+                    {currentAmount.toFixed(4)} {collateralAsset.symbol}
+                  </span>
+                  <span className="text-[10px] text-text-tertiary">of {totalAvailable.toFixed(4)}</span>
+                </div>
+              </div>
             )}
           </div>
         )}
@@ -337,35 +628,6 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
                 </span>
               </div>
             </div>
-
-            {/* Collateral value (auto-filled from supply) */}
-            {collateralSources.length > 1 && (
-              <div className="space-y-0.5 rounded-lg bg-bg-secondary px-2 py-1.5">
-                <span className="text-[9px] font-semibold uppercase tracking-wider text-text-tertiary">Collateral Sources</span>
-                {collateralSources.map((s) => (
-                  <div key={s.nodeId} className="flex items-center justify-between">
-                    <span className="text-[10px] text-text-tertiary">{s.label}</span>
-                    <span className="text-[10px] text-text-secondary">
-                      ${(s.amount * collateralPrice).toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                ))}
-                <div className="flex items-center justify-between border-t border-border pt-0.5">
-                  <span className="text-[10px] font-medium text-text-tertiary">Total</span>
-                  <span className="text-[10px] font-medium text-text-primary">
-                    ${depositUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-              </div>
-            )}
-            {collateralSources.length <= 1 && (
-              <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-2 py-1.5">
-                <span className="text-[10px] text-text-tertiary">Collateral</span>
-                <span className="text-xs font-medium text-text-primary">
-                  ${depositUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                </span>
-              </div>
-            )}
 
             {/* Rate model — fixed rate is Base-only, so say so elsewhere
                 rather than hiding the option without explanation. */}

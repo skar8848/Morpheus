@@ -30,8 +30,9 @@ The core of Morpheus. Drag-and-drop nodes onto a canvas to build strategies visu
 | Node | Description |
 |------|-------------|
 | **Wallet** | Starting point — shows your token balances |
-| **Supply Collateral** | Supply assets as collateral to a Morpho market |
-| **Borrow** | Borrow against supplied collateral with custom LTV |
+| **Borrow** | Post collateral on a Morpho market and borrow against it with a custom LTV — one node holds both legs |
+| **Lend** | Supply an asset into one isolated Morpho market and earn its supply APY |
+| **Lend Withdraw** | Take supply back out of an isolated market |
 | **Swap** | Execute token swaps via CoW Swap |
 | **Vault Deposit** | Deploy assets into ERC-4626 vaults |
 | **Vault Withdraw** | Withdraw from existing vault positions |
@@ -90,8 +91,9 @@ Inspect any address's Morpho activity:
 
 | Key | Action |
 |-----|--------|
-| `S` | Add Supply Collateral node |
 | `B` | Add Borrow node |
+| `L` | Add Lend node |
+| `U` | Add Lend Withdraw node |
 | `X` | Add Swap node |
 | `D` | Add Vault Deposit node |
 | `W` | Add Vault Withdraw node |

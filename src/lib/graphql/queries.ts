@@ -50,6 +50,96 @@ export const MARKETS_QUERY = `
   }
 `;
 
+/**
+ * Markets a user can LEND into, for a given loan asset — any collateral.
+ *
+ * `listed: true` is load-bearing, not cosmetic. Anyone can create a Morpho Blue
+ * market permissionlessly, and unlisted ones include fake-oracle markets that
+ * report billions in "supply" at 100% utilisation and 0 liquidity: lend into one
+ * and the funds are unwithdrawable. The default query returns them first when
+ * sorted by size, so without this filter the top of the list is a trap.
+ */
+export const LEND_MARKETS_QUERY = `
+  query GetLendMarkets($loanAssets: [String!]!, $chainId: [Int!]!) {
+    markets(
+      first: 100
+      orderBy: SupplyAssetsUsd
+      orderDirection: Desc
+      where: {
+        loanAssetAddress_in: $loanAssets
+        chainId_in: $chainId
+        listed: true
+      }
+    ) {
+      items {
+        uniqueKey: marketId
+        lltv
+        irmAddress
+        oracle { address }
+        collateralAsset {
+          symbol
+          address
+          logoURI
+          price { usd }
+          decimals
+        }
+        loanAsset {
+          symbol
+          address
+          logoURI
+          price { usd }
+          decimals
+        }
+        state {
+          borrowApy
+          netBorrowApy
+          supplyApy
+          netSupplyApy
+          utilization
+          borrowAssets
+          supplyAssets
+          supplyAssetsUsd
+          liquidityAssets
+          liquidityAssetsUsd
+          price
+          rewards {
+            asset {
+              symbol
+              address
+            }
+            supplyApr
+            borrowApr
+          }
+        }
+      }
+    }
+  }
+`;
+
+/** Live state of specific markets (liquidity for a withdraw, current supply APY). */
+export const MARKETS_BY_KEY_QUERY = `
+  query GetMarketsByKey($keys: [String!]!, $chainId: [Int!]!) {
+    markets(
+      where: {
+        uniqueKey_in: $keys
+        chainId_in: $chainId
+      }
+    ) {
+      items {
+        uniqueKey: marketId
+        state {
+          supplyApy
+          netSupplyApy
+          utilization
+          supplyAssets
+          liquidityAssets
+          liquidityAssetsUsd
+        }
+      }
+    }
+  }
+`;
+
 export const VAULTS_QUERY = `
   query GetVaults($assetAddresses: [String!]!, $chainId: [Int!]!) {
     vaults(

@@ -196,10 +196,14 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     };
     for (const n of nodes) {
       const d = n.data as CanvasNodeData;
-      if (d.type === "supplyCollateral") push(d.asset);
-      if (d.type === "borrow" || d.type === "repay") {
+      if (d.type === "borrow") push(d.collateralAsset);
+      if (d.type === "borrow" || d.type === "repay" || d.type === "lend") {
         push(d.market?.loanAsset);
         push(d.market?.collateralAsset);
+      }
+      if (d.type === "lendWithdraw") {
+        push(d.position?.market.loanAsset);
+        push(d.position?.market.collateralAsset);
       }
       if (d.type === "vaultDeposit") push(d.vault?.asset);
       if (d.type === "swap") {
@@ -284,29 +288,72 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           });
           break;
         }
-        case "supplyCollateral": {
-          if (!d.asset || safeFloat(d.amount) <= 0) break;
-          s.push({
-            label: `Approve ${d.asset.symbol}`,
-            detail: `${fmtNum(safeFloat(d.amount))} ${d.asset.symbol} to Bundler`,
-            type: "approve",
-            icon: d.asset.logoURI,
-          });
-          s.push({
-            label: `Supply ${d.asset.symbol} collateral`,
-            detail: `${fmtNum(safeFloat(d.amount))} ${d.asset.symbol}`,
-            type: "supply",
-            icon: d.asset.logoURI,
-          });
-          break;
-        }
         case "borrow": {
           if (!d.market || !isFinite(d.borrowAmount) || d.borrowAmount <= 0) break;
+          // The collateral is pulled from the wallet and posted by this same node.
+          if (d.collateralAsset && (d.collateralAll || safeFloat(d.collateralAmount) > 0)) {
+            const collateralDetail = d.collateralAll
+              ? `All swap output → ${d.collateralAsset.symbol}`
+              : `${fmtNum(safeFloat(d.collateralAmount))} ${d.collateralAsset.symbol}`;
+            s.push({
+              label: `Approve ${d.collateralAsset.symbol}`,
+              detail: `${collateralDetail} to Bundler`,
+              type: "approve",
+              icon: d.collateralAsset.logoURI,
+            });
+            s.push({
+              label: `Post ${d.collateralAsset.symbol} collateral`,
+              detail: collateralDetail,
+              type: "supply",
+              icon: d.collateralAsset.logoURI,
+            });
+          }
           s.push({
             label: `Borrow ${d.market.loanAsset.symbol}`,
             detail: `${fmtNum(d.borrowAmount, 6)} ${d.market.loanAsset.symbol} ($${fmtNum(d.borrowAmountUsd, 2)}) — ${formatApy(d.market.state.netBorrowApy)}`,
             type: "borrow",
             icon: d.market.loanAsset.logoURI,
+          });
+          break;
+        }
+        case "lend": {
+          if (!d.market) break;
+          if (!d.depositAll && safeFloat(d.amount) <= 0) break;
+          const sym = d.market.loanAsset.symbol;
+          const upEdge = edges.find((e) => e.target === node.id);
+          const upNode = upEdge ? sorted.find((n) => n.id === upEdge.source) : null;
+          const upType = upNode ? (upNode.data as { type?: string }).type : null;
+          // Only tokens coming straight from the user's wallet need a fresh allowance
+          // step; a borrow or swap output reaches the adapter another way.
+          if (!d.depositAll && (upType === undefined || upType === null || upType === "wallet" || upType === "vaultWithdraw" || upType === "lendWithdraw")) {
+            s.push({
+              label: `Approve ${sym}`,
+              detail: `${fmtNum(safeFloat(d.amount))} ${sym} to Bundler`,
+              type: "approve",
+              icon: d.market.loanAsset.logoURI,
+            });
+          }
+          const apy = d.market.state.netSupplyApy ?? d.market.state.supplyApy;
+          s.push({
+            label: `Lend ${sym} to ${d.market.collateralAsset.symbol}/${sym}`,
+            detail: `${d.depositAll ? `All swap output → ${sym}` : `${fmtNum(safeFloat(d.amount))} ${sym}`}${
+              apy !== undefined ? ` — ${formatApy(apy)}` : ""
+            }`,
+            type: "supply",
+            icon: d.market.loanAsset.logoURI,
+          });
+          break;
+        }
+        case "lendWithdraw": {
+          if (!d.position || safeFloat(d.amount) <= 0) break;
+          const m = d.position.market;
+          s.push({
+            label: `Withdraw ${m.loanAsset.symbol} from ${m.collateralAsset.symbol}/${m.loanAsset.symbol}`,
+            detail: d.withdrawAll
+              ? `Full position → your wallet`
+              : `${fmtNum(safeFloat(d.amount))} ${m.loanAsset.symbol} → your wallet`,
+            type: "withdraw",
+            icon: m.loanAsset.logoURI,
           });
           break;
         }
@@ -985,13 +1032,16 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     for (const node of nodes) {
       const d = node.data as Record<string, unknown>;
       if (d.exceedsBalance) {
-        const symbol = (d.asset as { symbol?: string })?.symbol
+        const symbol = (d.collateralAsset as { symbol?: string } | undefined)?.symbol
+          ?? (d.market as { loanAsset?: { symbol?: string } } | null | undefined)?.loanAsset?.symbol
           ?? (d.tokenIn as { symbol?: string })?.symbol
           ?? "";
         return `Insufficient ${symbol} balance`;
       }
       if (d.exceedsLiquidity) {
-        const market = d.market as { loanAsset?: { symbol?: string } } | null;
+        // A lend withdraw keeps its market on the position it picked.
+        const market = ((d.market as { loanAsset?: { symbol?: string } } | null | undefined) ??
+          (d.position as { market?: { loanAsset?: { symbol?: string } } } | null | undefined)?.market) ?? null;
         return `Insufficient ${market?.loanAsset?.symbol ?? ""} market liquidity`;
       }
     }

@@ -17,8 +17,9 @@ export interface CanvasApiRequest extends Partial<ImportedStrategy> {
 
 const VALID_NODE_TYPES = new Set([
   "walletNode",
-  "supplyCollateralNode",
   "borrowNode",
+  "lendNode",
+  "lendWithdrawNode",
   "swapNode",
   "vaultDepositNode",
   "vaultWithdrawNode",
@@ -28,8 +29,9 @@ const VALID_NODE_TYPES = new Set([
 
 const VALID_DATA_TYPES = new Set([
   "wallet",
-  "supplyCollateral",
   "borrow",
+  "lend",
+  "lendWithdraw",
   "swap",
   "vaultDeposit",
   "vaultWithdraw",

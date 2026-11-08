@@ -94,12 +94,6 @@ function AnimatedEdgeComponent({
     const type = srcData.type as string;
     const fmt = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 4 });
     switch (type) {
-      case "supplyCollateral": {
-        const asset = srcData.asset as { symbol?: string } | null;
-        const amount = parseFloat(srcData.amount as string);
-        if (!asset?.symbol || !isFinite(amount) || amount <= 0) return null;
-        return `${fmt(amount)} ${asset.symbol}`;
-      }
       case "borrow": {
         const market = srcData.market as { loanAsset?: { symbol?: string } } | null;
         const amount = srcData.borrowAmount as number;
@@ -117,6 +111,13 @@ function AnimatedEdgeComponent({
         const amount = parseFloat(srcData.amount as string);
         if (!pos?.vault?.asset?.symbol || !isFinite(amount) || amount <= 0) return null;
         return `${fmt(amount)} ${pos.vault.asset.symbol}`;
+      }
+      case "lendWithdraw": {
+        const pos = srcData.position as { market?: { loanAsset?: { symbol?: string } } } | null;
+        const amount = parseFloat(srcData.amount as string);
+        const symbol = pos?.market?.loanAsset?.symbol;
+        if (!symbol || !isFinite(amount) || amount <= 0) return null;
+        return `${fmt(amount)} ${symbol}`;
       }
       case "repay": {
         const market = srcData.market as { loanAsset?: { symbol?: string } } | null;

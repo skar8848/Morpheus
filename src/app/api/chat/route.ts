@@ -37,20 +37,23 @@ Help the user design a lending strategy. They describe a goal in natural languag
 A canvas is a directed graph. Each node represents one DeFi action. Edges express data flow.
 
 Node types and their valid connections:
-- wallet: source. Connects to: supplyCollateral, swap, repay
-- supplyCollateral: supply ERC-20 as collateral. Connects from wallet/swap/vaultWithdraw/position. Connects to: borrow, vaultDeposit
-- borrow: borrow loan asset from a Morpho Blue market. Connects from supplyCollateral. Connects to: swap, vaultDeposit
-- swap: CowSwap intent (Ethereum mainnet only — Base not supported by CoW). Connects from wallet/borrow/vaultWithdraw. Connects to: vaultDeposit, supplyCollateral, wallet, repay
+- wallet: source. Connects to: borrow, lend, vaultDeposit, swap, repay
+- borrow: post collateral on a Morpho Blue market AND borrow the loan asset against it (one node holds both legs). Connects from wallet/swap/vaultWithdraw/lendWithdraw/repay/borrow/position. Connects to: swap, vaultDeposit, lend, borrow
+- lend: supply the loan asset into one isolated Morpho Blue market (no collateral, no debt; exposed only to that market's collateral). Connects from wallet/borrow/swap/vaultWithdraw/lendWithdraw/repay. Terminal node.
+- lendWithdraw: take supply back out of an isolated market. Connects from position. Connects to: swap, vaultDeposit, borrow, lend, repay
+- swap: CowSwap intent (Ethereum mainnet only — Base not supported by CoW). Connects from wallet/borrow/vaultWithdraw/lendWithdraw. Connects to: vaultDeposit, borrow, lend, wallet, repay
 - vaultDeposit: deposit into a Morpho Vault. Terminal node.
-- vaultWithdraw: withdraw from existing vault position. Connects from position. Connects to: swap, vaultDeposit, supplyCollateral, repay
+- vaultWithdraw: withdraw from existing vault position. Connects from position. Connects to: swap, vaultDeposit, borrow, lend, repay
 - repay: repay a Morpho Blue borrow. Terminal.
 - position: read-only existing on-chain position.
 
 # Canonical strategies (templates already built into Morpheus)
 1. Looped wstETH (Ethereum): leveraged Lido staking
-2. Borrow & Yield (Ethereum or Base): supply WETH, borrow USDC, deposit USDC into a high-APY vault
-3. Multi-Collateral Diversified (Ethereum): supply wstETH + WBTC, borrow USDC, deposit
-4. Base WETH Carry: same as Borrow & Yield but on Base
+2. Borrow & Yield (Ethereum or Base): post WETH, borrow USDC, deposit USDC into a high-APY vault
+3. Borrow & Lend (Ethereum): post WETH, borrow USDC, lend it into an isolated market
+4. Lend USDC (Ethereum): plain supply into one isolated market, no debt
+5. Multi-Collateral Diversified (Ethereum): post wstETH + WBTC, borrow USDC, deposit
+6. Base WETH Carry: same as Borrow & Yield but on Base
 
 If the user's request maps to one of these templates, recommend they click "Templates" in the sidebar and pick it. Otherwise, walk them through the manual node setup.
 

@@ -19,32 +19,40 @@ Morpheus is a visual node-graph editor for composing Morpho lending strategies. 
 
 A canvas is a directed graph of nodes connected by edges:
 
-- **wallet** — user's source. Connects to: `vaultDeposit` (direct earn), `supplyCollateral` (borrow flow), `swap`, `repay`
-- **supplyCollateral** — supply ERC-20 as **collateral on a Morpho Blue market**. Use ONLY when there's a downstream `borrow` — never as a "transfer" bridge. Connects from `wallet`/`swap`/`vaultWithdraw`/`position`. Connects to: `borrow`
-- **borrow** — borrow loan asset from a Morpho Blue market. Connects from `supplyCollateral`. Connects to: `swap`, `vaultDeposit`
-- **swap** — CowSwap intent (Ethereum mainnet only). Connects from `wallet`/`borrow`/`vaultWithdraw`. Connects to: `vaultDeposit`/`supplyCollateral`/`wallet`/`repay`
-- **vaultDeposit** — deposit into a Morpho Vault. Terminal node. Can be fed by `wallet` (pure earn), `borrow` (carry trade), `swap`, or `vaultWithdraw` (rebalance).
-- **vaultWithdraw** — withdraw from existing vault position. Connects from `position`. Connects to: `swap`/`vaultDeposit`/`supplyCollateral`/`repay`
-- **repay** — repay a Morpho Blue borrow. Terminal.
+- **wallet** — user's source. Connects to: `vaultDeposit` (direct earn), `lend` (direct isolated-market earn), `borrow` (borrow flow), `swap`, `repay`
+- **borrow** — post collateral on a **Morpho Blue market** AND borrow the loan asset against it, in ONE node. The node owns both legs: `collateralAsset` + `collateralAmount` (what it posts) and `market` + `ltvPercent` (what it draws). Connects from `wallet`/`swap`/`vaultWithdraw`/`lendWithdraw`/`repay`/`bridge`/`borrow`/`position`. Connects to: `swap`, `vaultDeposit`, `lend`, `bridge`, `borrow`
+- **lend** — supply the loan asset into ONE **isolated Morpho Blue market** (bare supply — no collateral, no debt). The lender is exposed only to that market's collateral. Terminal node. Connects from `wallet`/`borrow`/`swap`/`vaultWithdraw`/`lendWithdraw`/`repay`/`bridge`.
+- **lendWithdraw** — take supply back out of an isolated market. The position is picked from what the wallet holds. Connects from `position`. Connects to: `swap`/`vaultDeposit`/`borrow`/`lend`/`repay`/`bridge`
+- **swap** — CowSwap intent (Ethereum mainnet only). Connects from `wallet`/`borrow`/`vaultWithdraw`/`lendWithdraw`. Connects to: `vaultDeposit`/`borrow`/`lend`/`wallet`/`repay`
+- **vaultDeposit** — deposit into a Morpho Vault. Terminal node. Can be fed by `wallet` (pure earn), `borrow` (carry trade), `swap`, `vaultWithdraw` or `lendWithdraw` (rebalance).
+- **vaultWithdraw** — withdraw from existing vault position. Connects from `position`. Connects to: `swap`/`vaultDeposit`/`borrow`/`lend`/`repay`
+- **repay** — repay a Morpho Blue borrow. With `withdrawCollateralAfterRepay` it also sources the freed collateral (see below).
 - **position** — read-only existing position.
+
+> There is no standalone "supply collateral" node. Collateral and borrow are one position on Morpho Blue, so the `borrow` node carries both.
 
 ### Choosing the right shape
 
 | User intent | Correct flow |
 |---|---|
 | "Deposit X into vault Y" (pure earn) | `wallet → vaultDeposit` (2 nodes) |
-| "Supply X as collateral and borrow Y" | `wallet → supplyCollateral → borrow` |
-| "Borrow against my collateral and farm the borrowed asset in a vault" (carry trade) | `wallet → supplyCollateral → borrow → vaultDeposit` |
-| "Looped staking" (leverage) | `wallet → supplyCollateral → borrow → swap → supplyCollateral` |
+| "Lend X into the A/B market" (isolated, no curator) | `wallet → lend` (2 nodes) |
+| "Supply X as collateral and borrow Y" | `wallet → borrow` (2 nodes) |
+| "Borrow against my collateral and farm the borrowed asset in a vault" (carry trade) | `wallet → borrow → vaultDeposit` |
+| "Borrow and lend the proceeds into a specific market" | `wallet → borrow → lend` |
+| "Looped staking" (leverage) | `wallet → borrow → swap → borrow` (add another `swap → borrow` to loop further) |
+| "Move my lend position from market A to market B" | `lendWithdraw → lend` |
 | "I want EURCV exposure but the Morpho USDC/EURCV market has no liquidity" | `wallet → swap (USDC→EURCV via CowSwap) → vaultDeposit` |
 
-**Do NOT use `supplyCollateral` as a bridge for direct vault deposits** — it has different semantics (it touches a Morpho Blue market, not the vault's underlying asset). The connection rules now allow `wallet → vaultDeposit` directly.
+**`lend` vs `vaultDeposit`**: a vault is curated and diversified across markets; a `lend` is one market, chosen by you, with that market's utilisation and liquidity risk. Default to `vaultDeposit` for "earn yield" unless the user names a market or wants exposure to a specific collateral.
+
+**Only `listed` markets**: the Morpho API also returns unlisted, permissionless markets — some report billions of "supply" at 100% utilisation and zero liquidity. Never `lend` into a market that isn't `listed: true`.
 
 ### Routing the freed collateral straight from `repay`
 
 When `withdrawCollateralAfterRepay` is set, the **`repay` node becomes a SOURCE
 of the freed collateral asset**. You can connect it directly to a `swap`,
-`supplyCollateral`, or `vaultDeposit` node downstream — DO NOT insert a fake
+`borrow`, `lend`, or `vaultDeposit` node downstream — DO NOT insert a fake
 `wallet` node in between.
 
 ✅ Correct (4 nodes, 3 edges):
@@ -59,12 +67,12 @@ vaultWithdraw → repay (free WBTC)
                 wallet → swap (WBTC → USDC)   ← swap can't auto-detect WBTC, has to be picked manually
 ```
 
-The downstream swap / supplyCollateral / vaultDeposit nodes auto-detect
+The downstream swap / borrow / lend / vaultDeposit nodes auto-detect
 the freed asset and amount from the upstream repay (reading
 `market.collateralAsset` + `collateralToWithdraw`). Just wire the edge
 directly.
 
-VALID_CONNECTIONS includes `repay → ["swap", "supplyCollateral", "vaultDeposit"]`
+VALID_CONNECTIONS includes `repay → ["swap", "borrow", "vaultDeposit", "lend"]`
 when `withdrawCollateralAfterRepay` is true.
 
 ### Repay + free collateral in one node
@@ -114,7 +122,7 @@ The Morpho MCP only knows about Morpho markets. It does NOT know that Morpheus a
 
 **Pattern**: replace the broken borrow branch with a CowSwap swap from a liquid asset the user holds (or can get cheaply) to the desired token. Example:
 
-- **Broken**: `wallet → supplyCollateral(USDC) → borrow(EURCV)` — fails because USDC/EURCV market has $73 of liquidity
+- **Broken**: `wallet → borrow(USDC collateral → EURCV)` — fails because USDC/EURCV market has $73 of liquidity
 - **Fallback**: `wallet → swap(USDC → EURCV)` — uses CowSwap's cross-DEX liquidity directly
 
 The fallback is:
@@ -137,9 +145,9 @@ When mentioning CowSwap to the user, frame it as: *"The Morpho USDC/EURCV market
   "nodes": [
     {
       "id": "string",                  // unique within request
-      "type": "walletNode" | "supplyCollateralNode" | "borrowNode" | "swapNode" | "vaultDepositNode" | "vaultWithdrawNode" | "repayNode" | "positionNode",
+      "type": "walletNode" | "borrowNode" | "lendNode" | "lendWithdrawNode" | "swapNode" | "vaultDepositNode" | "vaultWithdrawNode" | "repayNode" | "positionNode",
       "position": { "x": number, "y": number },
-      "data": { "type": "wallet" | "supplyCollateral" | ... , /* node-specific */ }
+      "data": { "type": "wallet" | "borrow" | "lend" | "lendWithdraw" | ... , /* node-specific */ }
     }
   ],
   "edges": [
@@ -244,7 +252,7 @@ For market discovery (`morpho_query_markets`) and vault discovery (`morpho_query
 
 ### Example: "deposit 10k USDC into the highest-yielding vault on Base"
 
-This is a **pure earn** flow — `wallet → vaultDeposit` directly. NO `supplyCollateral` node.
+This is a **pure earn** flow — `wallet → vaultDeposit` directly. No `borrow` node.
 
 ```typescript
 // Step 1: discover the best vault
@@ -323,13 +331,57 @@ return `Here's your Morpheus deep link: ${deepLinkUrl}\n\nClick to open the canv
 
 ### Example: "borrow 5k USDC against my wstETH and farm the USDC in a vault"
 
-This is a **carry trade** — supplyCollateral IS appropriate here because you're posting wstETH on a Morpho Blue market to borrow against it.
+This is a **carry trade** — a `borrow` node is appropriate here because you're posting wstETH on a Morpho Blue market to borrow against it.
 
 ```
-wallet → supplyCollateral(wstETH) → borrow(wstETH/USDC market) → vaultDeposit(USDC vault)
+wallet → borrow(wstETH collateral, wstETH/USDC market) → vaultDeposit(USDC vault)
 ```
 
-4 nodes, 3 edges, in that exact order.
+3 nodes, 2 edges, in that exact order. The `borrow` node carries both the collateral and the loan:
+
+```jsonc
+{
+  "id": "b1",
+  "type": "borrowNode",
+  "position": { "x": 380, "y": 200 },
+  "data": {
+    "type": "borrow",
+    "collateralAsset": { "symbol": "wstETH", "name": "wstETH", "address": "0x7f39…", "decimals": 18, "logoURI": "…" },
+    "collateralAmount": "2",             // human units, what this node posts
+    "collateralAmountUsd": 8000,
+    "market": { /* full Market object from the Morpho API (uniqueKey, lltv, irmAddress, oracle, collateralAsset, loanAsset, state) */ },
+    "ltvPercent": 50,                    // must stay below the market's LLTV
+    "borrowAmount": 4000,                // loan-asset units = collateralAmountUsd × ltvPercent / 100 / loan price
+    "borrowAmountUsd": 4000,
+    "healthFactor": 1.72                 // = LLTV / LTV
+  }
+}
+```
+
+`collateralAsset` MUST be the market's collateral token — the bundle reverts otherwise, and `/api/canvas/validate` flags it.
+
+### Example: "lend 10k USDC into the highest-yielding cbBTC/USDC market"
+
+```
+wallet → lend(USDC → cbBTC/USDC market)
+```
+
+```jsonc
+{
+  "id": "l1",
+  "type": "lendNode",
+  "position": { "x": 380, "y": 200 },
+  "data": {
+    "type": "lend",
+    "loanAsset": { "symbol": "USDC", "name": "USD Coin", "address": "0xA0b8…", "decimals": 6, "logoURI": "…" },
+    "market": { /* full Market object; state.netSupplyApy / utilization / liquidityAssetsUsd are shown to the user */ },
+    "amount": "10000",
+    "amountUsd": 10000
+  }
+}
+```
+
+Check the market before proposing it: `listed`, utilisation below ~95% (above that, withdrawals can be blocked), and enough liquidity to exit.
 
 ## Hard rules
 
@@ -340,7 +392,7 @@ wallet → supplyCollateral(wstETH) → borrow(wstETH/USDC market) → vaultDepo
 5. **Decimals must match the asset.** USDC = 6, WETH/wstETH = 18, etc. Read from the MCP response, never assume.
 6. **Validate before presenting.** If unsure, POST to `/api/canvas/validate` first to check the schema without generating a URL.
 7. **CowSwap is Ethereum-only.** Don't include `swapNode` for Base canvases.
-8. **Vault deposits are terminal.** No outgoing edges from `vaultDeposit` or `repay` nodes.
+8. **Vault deposits and lends are terminal.** No outgoing edges from `vaultDeposit`, `lend` or `repay` nodes.
 
 ## How to find the user's wallet address
 
@@ -348,9 +400,11 @@ Don't ask repeatedly. If the user is testing locally, leave `sourceAddress` as `
 
 ## Common templates
 
-The user can also load 4 pre-built templates from Morpheus's sidebar without an agent:
+The user can also load pre-built templates from Morpheus's sidebar without an agent:
 - **Looped wstETH** (Ethereum): leverage stETH staking
-- **Borrow & Yield** (Ethereum): supply WETH → borrow USDC → deposit into vault
+- **Borrow & Yield** (Ethereum): post WETH → borrow USDC → deposit into vault
+- **Borrow & Lend** (Ethereum): post WETH → borrow USDC → lend into an isolated market
+- **Lend USDC (isolated market)** (Ethereum): plain supply, no debt
 - **Multi-Collateral Diversified** (Ethereum): wstETH + WBTC → borrow USDC → vault
 - **Base WETH Carry** (Base): same as Borrow & Yield but on Base
 
@@ -362,7 +416,7 @@ After POSTing successfully, mention what the user will see when they open the li
 - Number of nodes / steps
 - Which markets/vaults are pre-selected
 - Net projected APY (computed from your chosen markets/vaults)
-- Whether they'll need to set the LTV slider on the BorrowNode
+- Whether they'll need to set the LTV slider on the BorrowNode (and, for a `lend`, which market's collateral they're exposed to)
 
 ## Presenting the deep link to the user — formatting rules
 

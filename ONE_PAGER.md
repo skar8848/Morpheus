@@ -6,7 +6,7 @@
 
 ## What it is
 
-Morpheus is a **visual node-graph editor for Morpho lending strategies**. Users drag & drop nodes — wallet, supply collateral, borrow, swap (CowSwap), vault deposit, vault withdraw, repay — connect them, and execute the whole graph as **one bundled on-chain transaction**.
+Morpheus is a **visual node-graph editor for Morpho lending strategies**. Users drag & drop nodes — wallet, borrow (collateral + loan in one node), lend (isolated market), lend withdraw, swap (CowSwap), vault deposit, vault withdraw, repay — connect them, and execute the whole graph as **one bundled on-chain transaction**.
 
 It runs on **Ethereum mainnet and Base**, supports both **Morpho Vault V1 (MetaMorpho) and V2**, and ships with templates for the most common flows (looped wstETH, multi-collateral diversified, WETH carry, borrow & yield).
 

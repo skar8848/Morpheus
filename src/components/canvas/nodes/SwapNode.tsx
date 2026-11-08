@@ -13,6 +13,7 @@ import { useTokenBalances } from "@/lib/hooks/useTokenBalances";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
 import { useCowQuote } from "@/lib/hooks/useCowQuote";
 import { isCowSupported } from "@/lib/cowswap/order";
+import { collectUpstream } from "@/lib/canvas/upstream";
 import { getNodeChainId } from "@/lib/canvas/bridge";
 import { wagmiConfig } from "@/lib/web3/config";
 import { formatUsd } from "@/lib/utils/format";
@@ -78,52 +79,36 @@ function SwapNodeComponent({ id, data }: NodeProps) {
   // Custom imported tokens (not in Morpho markets)
   const [customTokens, setCustomTokens] = useState<Asset[]>([]);
 
-  // Detect upstream asset + amount
+  // Detect upstream asset + amount. Several producers can feed one swap (two
+  // borrows of the same asset, a withdrawal and a borrow…): what is available is
+  // their SUM, not whichever edge happens to come first.
   const { upstreamAsset, upstreamAmount } = useMemo(() => {
-    const incomingEdge = edges.find((e) => e.target === id);
-    if (!incomingEdge) return { upstreamAsset: null, upstreamAmount: 0 };
-    const sourceNode = allNodes.find((n) => n.id === incomingEdge.source);
-    if (!sourceNode) return { upstreamAsset: null, upstreamAmount: 0 };
-    const sd = sourceNode.data as Record<string, unknown>;
-
-    if (sd.type === "borrow") {
-      const market = sd.market as { loanAsset?: AssetInfo } | null;
-      const amt = (sd.borrowAmount as number) ?? 0;
-      return { upstreamAsset: market?.loanAsset ?? null, upstreamAmount: amt };
-    }
-    if (sd.type === "vaultWithdraw") {
-      const position = sd.position as { vault: { asset: AssetInfo } } | null;
-      const amt = parseFloat((sd.amount as string) || "0");
-      return { upstreamAsset: position?.vault.asset ?? null, upstreamAmount: amt };
-    }
-    if (sd.type === "repay" && sd.withdrawCollateralAfterRepay) {
-      // Repay nodes that withdraw collateral emit the FREED collateral asset
-      // (not the loan asset). Auto-pick it up so the swap doesn't need a wallet
-      // node in between.
-      const market = sd.market as {
-        collateralAsset?: AssetInfo & { decimals?: number };
-      } | null;
-      const collateralAsset = market?.collateralAsset ?? null;
-      const rawCollateral = (sd.collateralToWithdraw as string | undefined) ?? "0";
-      const decimals = collateralAsset?.decimals ?? 18;
-      let amt = 0;
-      try {
-        amt = Number(BigInt(rawCollateral)) / 10 ** decimals;
-      } catch {
-        amt = 0;
-      }
-      return { upstreamAsset: collateralAsset, upstreamAmount: amt };
-    }
-    if (sd.type === "bridge") {
-      // Funds delivered on the bridge's destination chain. The amount is the
-      // route's quoted output (USD), converted below via the token price when
-      // the rail doesn't give a token figure.
-      const tokenOut = sd.tokenOut as AssetInfo | null;
-      const quoted = parseFloat((sd.quoteOut as string) || "0");
-      return { upstreamAsset: tokenOut ?? null, upstreamAmount: isFinite(quoted) ? quoted : 0 };
-    }
-    return { upstreamAsset: null, upstreamAmount: 0 };
+    const { inputs } = collectUpstream(id, allNodes as CanvasNode[], edges);
+    const producers = inputs.filter((i) => i.asset);
+    if (producers.length === 0) return { upstreamAsset: null, upstreamAmount: 0 };
+    const first = producers[0].asset!;
+    // A swap sells one token: only sources delivering that same token add up.
+    const same = producers.filter((i) => i.asset!.address.toLowerCase() === first.address.toLowerCase());
+    return {
+      upstreamAsset: first as AssetInfo,
+      upstreamAmount: same.reduce((sum, i) => sum + i.amount, 0),
+    };
   }, [edges, allNodes, id]);
+
+  // Keep the amount following the upstream total while the user hasn't chosen one
+  // of their own — it was empty, or equal to the previous total.
+  const prevUpstreamTotalRef = useRef(0);
+  useEffect(() => {
+    if (!(upstreamAmount > 0)) return;
+    const current = parseFloat(d.amountIn || "0");
+    const prev = prevUpstreamTotalRef.current;
+    const following = !d.amountIn || Math.abs(current - prev) < 1e-6;
+    prevUpstreamTotalRef.current = upstreamAmount;
+    if (following && Math.abs(current - upstreamAmount) > 1e-9) {
+      updateNodeData(id, { amountIn: upstreamAmount.toFixed(6) });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [upstreamAmount]);
 
   // Does tokenIn match the upstream asset?
   const tokenInMatchesUpstream = useMemo(() => {
@@ -163,7 +148,8 @@ function SwapNodeComponent({ id, data }: NodeProps) {
   // Auto-detect tokenOut from a downstream node's expected input asset.
   // Covers the common case "swap → vaultDeposit (USDC vault)" where the
   // swap should output USDC. Also handles "swap → repay (market)" where
-  // the swap should output the loan asset (to repay with).
+  // the swap should output the loan asset (to repay with), "swap → lend" (the
+  // market's loan asset) and "swap → borrow" (the market's collateral).
   const downstreamAsset = useMemo(() => {
     const outgoing = edges.find((e) => e.source === id);
     if (!outgoing) return null;
@@ -178,9 +164,15 @@ function SwapNodeComponent({ id, data }: NodeProps) {
       const market = td.market as { loanAsset?: AssetInfo } | null;
       return market?.loanAsset ?? null;
     }
-    if (td.type === "supplyCollateral") {
-      const asset = td.asset as AssetInfo | null;
-      return asset ?? null;
+    if (td.type === "borrow") {
+      // Posting collateral: the swap should deliver the market's collateral token
+      // (or whatever the node already holds as its collateral asset).
+      const market = td.market as { collateralAsset?: AssetInfo } | null;
+      return market?.collateralAsset ?? (td.collateralAsset as AssetInfo | null) ?? null;
+    }
+    if (td.type === "lend") {
+      const market = td.market as { loanAsset?: AssetInfo } | null;
+      return market?.loanAsset ?? (td.loanAsset as AssetInfo | null) ?? null;
     }
     return null;
   }, [edges, allNodes, id]);

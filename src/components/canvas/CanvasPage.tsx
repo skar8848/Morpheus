@@ -269,7 +269,17 @@ export default function CanvasPage() {
       }
       isOrganizing.current = true;
       const organized = organizeLayout(nodes as CanvasNode[], edges, sizes);
-      setNodes(organized);
+      // Apply only the POSITIONS, on top of the live nodes. `nodes` above is the
+      // snapshot from when this effect ran; writing it back wholesale would undo
+      // everything the nodes did to themselves in the 300 ms since (auto-picking
+      // their asset from upstream, syncing amounts, flipping "use all upstream").
+      const placed = new Map(organized.map((n) => [n.id, n.position]));
+      setNodes((current) =>
+        current.map((n) => {
+          const position = placed.get(n.id);
+          return position ? { ...n, position } : n;
+        })
+      );
       setTimeout(() => {
         fitViewAware(organized as CanvasNode[], sizes);
         isOrganizing.current = false;
@@ -491,7 +501,7 @@ export default function CanvasPage() {
         return;
       }
 
-      // Node placement shortcuts (S/B/X/D/W/R) — only bare keys, no modifiers
+      // Node placement shortcuts (see NODE_SHORTCUTS) — only bare keys, no modifiers
       if (!event.metaKey && !event.ctrlKey && !event.altKey) {
         const nodeType = NODE_SHORTCUTS[event.key.toLowerCase()];
         if (nodeType) {
@@ -707,16 +717,7 @@ export default function CanvasPage() {
             className="!rounded-xl !border !border-border !bg-bg-card"
             nodeColor={(node) => {
               const type = (node.data as { type: string }).type;
-              const colors: Record<string, string> = {
-                wallet: "#2973ff",
-                supplyCollateral: "#2973ff",
-                borrow: "#39a699",
-                swap: "#f59e0b",
-                vaultDeposit: "#a855f7",
-                vaultWithdraw: "#f97316",
-                position: "#6b7079",
-              };
-              return colors[type] ?? "#6b7079";
+              return NODE_COLORS[type] ?? "#6b7079";
             }}
             maskColor="rgba(21, 24, 26, 0.7)"
           />

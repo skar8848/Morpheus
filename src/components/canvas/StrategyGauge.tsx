@@ -47,6 +47,12 @@ function projectPnl(nodes: CanvasNode[], days: number) {
       if (isFinite(apy) && isFinite(usd) && usd > 0) {
         earned += usd * apy * yearFraction;
       }
+    } else if (d.type === "lend" && d.market) {
+      const apy = d.market.state?.netSupplyApy ?? d.market.state?.supplyApy ?? 0;
+      const usd = d.amountUsd ?? 0;
+      if (isFinite(apy) && isFinite(usd) && usd > 0) {
+        earned += usd * apy * yearFraction;
+      }
     } else if (d.type === "borrow" && d.market) {
       const netApy = d.market.state?.netBorrowApy ?? 0;
       const usd = d.borrowAmountUsd ?? 0;
@@ -100,7 +106,8 @@ export default function StrategyGauge({ nodes, edges, sidebarCollapsed }: Strate
   const projection = useMemo(() => projectPnl(nodes, period.days), [nodes, period.days]);
 
   // Don't show if no meaningful actions
-  const hasActions = metrics.vaultCount > 0 || metrics.borrowCount > 0 || metrics.totalRepayUsd > 0;
+  const hasActions =
+    metrics.vaultCount > 0 || metrics.lendCount > 0 || metrics.borrowCount > 0 || metrics.totalRepayUsd > 0;
   if (!hasActions) return null;
 
   const netApyColor =

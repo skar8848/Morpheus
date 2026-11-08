@@ -21,8 +21,17 @@
 
 import type { CanvasNode, CanvasNodeData } from "./types";
 
-/** Per-node amounts already deployed, keyed by node id. */
-export type BaselineMap = Record<string, { amount: string; amountUsd: number }>;
+/**
+ * Per-node amounts already deployed, keyed by node id.
+ *
+ * `amount`/`amountUsd` is the node's headline leg (debt for a borrow, the deposit
+ * for a vault or lend). A borrow owns its collateral too, so it also records that
+ * side — it used to be a separate node with a baseline of its own.
+ */
+export type BaselineMap = Record<
+  string,
+  { amount: string; amountUsd: number; collateralAmount?: string; collateralUsd?: number }
+>;
 
 export interface ScaleResult {
   nodes: CanvasNode[];
@@ -39,8 +48,8 @@ export function captureBaseline(nodes: CanvasNode[]): BaselineMap {
   for (const node of nodes) {
     const d = node.data as CanvasNodeData;
     switch (d.type) {
-      case "supplyCollateral":
       case "vaultDeposit":
+      case "lend":
       case "repay":
         baseline[node.id] = { amount: d.amount ?? "0", amountUsd: d.amountUsd ?? 0 };
         break;
@@ -48,6 +57,8 @@ export function captureBaseline(nodes: CanvasNode[]): BaselineMap {
         baseline[node.id] = {
           amount: String(d.borrowAmount ?? 0),
           amountUsd: d.borrowAmountUsd ?? 0,
+          collateralAmount: d.collateralAmount ?? "0",
+          collateralUsd: d.collateralAmountUsd ?? 0,
         };
         break;
     }
@@ -85,8 +96,8 @@ export function scaleStrategy(nodes: CanvasNode[], factor: number, baseline: Bas
     };
 
     switch (d.type) {
-      case "supplyCollateral":
       case "vaultDeposit":
+      case "lend":
       case "repay": {
         const next = scaleAmount(base.amount);
         if (next === null) {
@@ -104,12 +115,20 @@ export function scaleStrategy(nodes: CanvasNode[], factor: number, baseline: Bas
           skipped.push(node.id);
           return node;
         }
-        // ltvPercent is deliberately untouched: scaling both sides of a market
-        // leaves the ratio — and therefore the health factor — identical.
+        // Scale BOTH sides of the market by the same factor. ltvPercent is
+        // deliberately untouched: the ratio — and therefore the health factor —
+        // stays identical. Scaling only the debt would silently change the LTV.
+        const nextCollateral = scaleAmount(base.collateralAmount ?? "0");
+        if (nextCollateral === null) {
+          skipped.push(node.id);
+          return node;
+        }
         return {
           ...node,
           data: {
             ...d,
+            collateralAmount: nextCollateral,
+            collateralAmountUsd: (base.collateralUsd ?? 0) * factor,
             borrowAmount: amt * factor,
             borrowAmountUsd: base.amountUsd * factor,
           },
@@ -140,7 +159,9 @@ export interface ResultingPosition {
 export function resultingPosition(
   nodes: CanvasNode[],
   baseline: BaselineMap,
-  select: (d: CanvasNodeData) => number | null
+  select: (d: CanvasNodeData) => number | null,
+  /** Which side of the baseline entry the selector reads (default: the headline leg). */
+  side: "leg" | "collateral" = "leg"
 ): ResultingPosition {
   let baselineUsd = 0;
   let deltaUsd = 0;
@@ -150,14 +171,14 @@ export function resultingPosition(
     if (value === null) continue;
     deltaUsd += value;
     const base = baseline[node.id];
-    if (base) baselineUsd += base.amountUsd;
+    if (base) baselineUsd += side === "collateral" ? base.collateralUsd ?? 0 : base.amountUsd;
   }
   return { baselineUsd, deltaUsd, totalUsd: baselineUsd + deltaUsd };
 }
 
-/** Collateral selector for resultingPosition. */
+/** Collateral selector for resultingPosition — pass `side: "collateral"` with it. */
 export const selectCollateralUsd = (d: CanvasNodeData): number | null =>
-  d.type === "supplyCollateral" ? d.amountUsd ?? 0 : null;
+  d.type === "borrow" ? d.collateralAmountUsd ?? 0 : null;
 
 /** Debt selector for resultingPosition. */
 export const selectDebtUsd = (d: CanvasNodeData): number | null =>
@@ -190,7 +211,6 @@ export interface MarketHealth {
 
 export function resultingMarketHealth(
   nodes: CanvasNode[],
-  edges: { source: string; target: string }[],
   baseline: BaselineMap
 ): MarketHealth[] {
   const out: MarketHealth[] = [];
@@ -199,17 +219,9 @@ export function resultingMarketHealth(
     const d = node.data as CanvasNodeData;
     if (d.type !== "borrow" || !d.market) continue;
 
-    // Collateral feeding this borrow — the same edges the executor follows.
-    let collateralDelta = 0;
-    let collateralBase = 0;
-    for (const e of edges) {
-      if (e.target !== node.id) continue;
-      const src = nodes.find((n) => n.id === e.source);
-      const sd = src?.data as CanvasNodeData | undefined;
-      if (sd?.type !== "supplyCollateral") continue;
-      collateralDelta += sd.amountUsd ?? 0;
-      collateralBase += baseline[e.source]?.amountUsd ?? 0;
-    }
+    // The borrow node owns its collateral — no feeding nodes to sum anymore.
+    const collateralDelta = d.collateralAmountUsd ?? 0;
+    const collateralBase = baseline[node.id]?.collateralUsd ?? 0;
 
     const debtDelta = d.borrowAmountUsd ?? 0;
     const debtBase = baseline[node.id]?.amountUsd ?? 0;

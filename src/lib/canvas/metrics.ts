@@ -12,13 +12,13 @@
 import type { CanvasNode, CanvasNodeData } from "./types";
 
 export interface StrategyMetrics {
-  /** Collateral + vault deposits — all capital committed. */
+  /** Collateral + yield deposits (vaults and lends) — all capital committed. */
   totalDepositUsd: number;
-  /** Collateral only; excludes the vault leg funded by borrowing. */
+  /** Collateral only; excludes the yield leg funded by borrowing. */
   totalCollateralUsd: number;
   totalBorrowUsd: number;
   totalRepayUsd: number;
-  /** Rate the yield-bearing legs pay, weighted by vault deposits. */
+  /** Rate the yield-bearing legs pay, weighted by deposit size (vaults and lends). */
   avgEarnApy: number;
   /** Rate paid on debt, weighted by borrow size. */
   avgBorrowApy: number;
@@ -29,6 +29,8 @@ export interface StrategyMetrics {
   /** Net USD earned per year (earned − paid). */
   netAnnualUsd: number;
   vaultCount: number;
+  /** Isolated-market supply positions. */
+  lendCount: number;
   borrowCount: number;
 }
 
@@ -43,36 +45,52 @@ export const EMPTY_METRICS: StrategyMetrics = {
   healthFactor: null,
   netAnnualUsd: 0,
   vaultCount: 0,
+  lendCount: 0,
   borrowCount: 0,
 };
 
 export function computeStrategyMetrics(nodes: CanvasNode[]): StrategyMetrics {
   let totalDepositUsd = 0;
-  let totalVaultDepositUsd = 0;
+  // Capital sitting in yield-bearing legs (vault deposits + isolated-market lends).
+  let totalYieldDepositUsd = 0;
   let totalBorrowUsd = 0;
   let totalRepayUsd = 0;
   let weightedEarnApy = 0;
   let weightedBorrowApy = 0;
   let weightedHfNumerator = 0;
   let vaultCount = 0;
+  let lendCount = 0;
   let borrowCount = 0;
 
   for (const node of nodes) {
     const d = node.data as CanvasNodeData;
 
     switch (d.type) {
-      case "supplyCollateral": {
-        const amt = parseFloat(d.amount);
-        if (isFinite(amt) && amt > 0) totalDepositUsd += d.amountUsd || 0;
-        break;
-      }
       case "borrow": {
         if (d.market && d.borrowAmount > 0) {
+          // The collateral posted by this node counts as committed capital, the
+          // same way it did when it was a node of its own.
+          const coll = parseFloat(d.collateralAmount);
+          if (isFinite(coll) && coll > 0) totalDepositUsd += d.collateralAmountUsd || 0;
           totalBorrowUsd += d.borrowAmountUsd || 0;
           borrowCount++;
           weightedBorrowApy += (d.market.state?.netBorrowApy ?? 0) * (d.borrowAmountUsd || 0);
           if (d.healthFactor !== null && d.healthFactor > 0) {
             weightedHfNumerator += d.healthFactor * (d.borrowAmountUsd || 0);
+          }
+        }
+        break;
+      }
+      case "lend": {
+        if (d.market) {
+          const amt = parseFloat(d.amount);
+          const usd = d.amountUsd || 0;
+          if ((isFinite(amt) && amt > 0) || d.depositAll) {
+            lendCount++;
+            totalDepositUsd += usd;
+            totalYieldDepositUsd += usd;
+            // Rewards-inclusive rate, like the vault's netApy.
+            weightedEarnApy += (d.market.state?.netSupplyApy ?? d.market.state?.supplyApy ?? 0) * usd;
           }
         }
         break;
@@ -84,7 +102,7 @@ export function computeStrategyMetrics(nodes: CanvasNode[]): StrategyMetrics {
           if ((isFinite(amt) && amt > 0) || d.depositAll) {
             vaultCount++;
             totalDepositUsd += usd;
-            totalVaultDepositUsd += usd;
+            totalYieldDepositUsd += usd;
             weightedEarnApy += (d.vault.state?.netApy ?? 0) * usd;
           }
         }
@@ -100,9 +118,9 @@ export function computeStrategyMetrics(nodes: CanvasNode[]): StrategyMetrics {
     }
   }
 
-  // Earn APY is weighted by vault deposits only — collateral earns nothing in
+  // Earn APY is weighted by yield deposits only — collateral earns nothing in
   // Morpho Blue (it sits isolated so it stays seizable at liquidation).
-  const avgEarnApy = totalVaultDepositUsd > 0 ? weightedEarnApy / totalVaultDepositUsd : 0;
+  const avgEarnApy = totalYieldDepositUsd > 0 ? weightedEarnApy / totalYieldDepositUsd : 0;
   const avgBorrowApy = totalBorrowUsd > 0 ? weightedBorrowApy / totalBorrowUsd : 0;
   // Net APY divides the annual net flow by all committed capital. Subtracting
   // the two averages directly would compare ratios on different bases.
@@ -110,7 +128,7 @@ export function computeStrategyMetrics(nodes: CanvasNode[]): StrategyMetrics {
 
   return {
     totalDepositUsd,
-    totalCollateralUsd: totalDepositUsd - totalVaultDepositUsd,
+    totalCollateralUsd: totalDepositUsd - totalYieldDepositUsd,
     totalBorrowUsd,
     totalRepayUsd,
     avgEarnApy,
@@ -119,6 +137,7 @@ export function computeStrategyMetrics(nodes: CanvasNode[]): StrategyMetrics {
     healthFactor: totalBorrowUsd > 0 ? weightedHfNumerator / totalBorrowUsd : null,
     netAnnualUsd: weightedEarnApy - weightedBorrowApy,
     vaultCount,
+    lendCount,
     borrowCount,
   };
 }

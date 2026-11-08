@@ -11,7 +11,7 @@ import type {
 import { safeBigInt } from "@/lib/utils/bigint";
 import { isBorrowDust, isSupplyDust, isVaultDust } from "./dust";
 
-const COL = { wallet: 50, supply: 380, borrow: 710, vault: 1040 };
+const COL = { wallet: 50, borrow: 380, vault: 710 };
 const ROW_GAP = 220;
 const START_Y = 80;
 
@@ -27,10 +27,11 @@ export interface ImportedStrategy {
  * Build a canvas graph from an address's Morpho positions.
  *
  * Layout:
- *   Wallet → SupplyCollateral → Borrow → VaultDeposit
+ *   Wallet → Borrow → VaultDeposit
  *
- * For each borrow position: creates Supply + Borrow nodes.
- * For each vault position: creates VaultDeposit node.
+ * For each borrow position: one Borrow node (it carries its own collateral).
+ * For each supply-only market position: one Lend node.
+ * For each vault position: one VaultDeposit node.
  * Links borrows to vault deposits when the borrowed asset matches the vault asset.
  */
 export function buildStrategyFromPositions(
@@ -79,47 +80,15 @@ export function buildStrategyFromPositions(
   const borrowNodesByLoanAsset: Map<string, string[]> = new Map();
   let borrowRow = 0;
 
-  // 2. For each borrow position: Wallet → SupplyCollateral → Borrow
+  // 2. For each borrow position: Wallet → Borrow (the node carries its collateral)
   for (const pos of borrowPositions) {
     const y = START_Y + borrowRow * ROW_GAP;
 
-    // SupplyCollateral node
-    const supplyId = makeId("supply");
     const collateralAsset = pos.market.collateralAsset;
     const collateralAmt = pos.state
       ? (Number(pos.state.collateral) / 10 ** (collateralAsset?.decimals ?? 18)).toFixed(6)
       : "";
 
-    nodes.push({
-      id: supplyId,
-      type: "supplyCollateralNode",
-      position: { x: COL.supply, y },
-      data: {
-        type: "supplyCollateral",
-        asset: collateralAsset
-          ? {
-              symbol: collateralAsset.symbol,
-              name: collateralAsset.symbol,
-              address: collateralAsset.address,
-              decimals: collateralAsset.decimals,
-              logoURI: collateralAsset.logoURI,
-            }
-          : null,
-        amount: collateralAmt,
-        amountUsd: pos.state?.collateralUsd ?? 0,
-      } as CanvasNodeData,
-    });
-
-    // Wallet → SupplyCollateral
-    edges.push({
-      id: `${walletId}-${supplyId}`,
-      source: walletId,
-      target: supplyId,
-      type: "animatedEdge",
-      animated: true,
-    });
-
-    // Borrow node
     const borrowId = makeId("borrow");
     const borrowAmt = pos.state?.borrowAssets
       ? Number(pos.state.borrowAssets) / 10 ** pos.market.loanAsset.decimals
@@ -135,6 +104,17 @@ export function buildStrategyFromPositions(
       position: { x: COL.borrow, y },
       data: {
         type: "borrow",
+        collateralAsset: collateralAsset
+          ? {
+              symbol: collateralAsset.symbol,
+              name: collateralAsset.symbol,
+              address: collateralAsset.address,
+              decimals: collateralAsset.decimals,
+              logoURI: collateralAsset.logoURI,
+            }
+          : null,
+        collateralAmount: collateralAmt,
+        collateralAmountUsd: collateralUsd,
         market: {
           uniqueKey: pos.market.uniqueKey,
           lltv: pos.market.lltv,
@@ -162,14 +142,13 @@ export function buildStrategyFromPositions(
         borrowAmount: borrowAmt,
         borrowAmountUsd: borrowUsd,
         healthFactor: pos.healthFactor,
-        depositAmountUsd: collateralUsd,
       } as CanvasNodeData,
     });
 
-    // SupplyCollateral → Borrow
+    // Wallet → Borrow
     edges.push({
-      id: `${supplyId}-${borrowId}`,
-      source: supplyId,
+      id: `${walletId}-${borrowId}`,
+      source: walletId,
       target: borrowId,
       type: "animatedEdge",
       animated: true,
@@ -184,28 +163,53 @@ export function buildStrategyFromPositions(
     borrowRow++;
   }
 
-  // 3. Supply-only positions: Wallet → SupplyCollateral (no borrow downstream)
+  // 3. Supply-only market positions: Wallet → Lend. These are bare supply
+  // positions in an isolated market — they used to be forced into a Supply
+  // Collateral node, which meant "supplying the LOAN token as collateral".
   for (const pos of supplyOnlyPositions) {
     const y = START_Y + borrowRow * ROW_GAP;
 
-    const supplyId = makeId("supply-only");
+    const lendId = makeId("lend");
     const loanAsset = pos.market.loanAsset;
     const supplyAmt = pos.state?.supplyAssets
       ? (Number(pos.state.supplyAssets) / 10 ** loanAsset.decimals).toFixed(6)
       : "";
 
     nodes.push({
-      id: supplyId,
-      type: "supplyCollateralNode",
-      position: { x: COL.supply, y },
+      id: lendId,
+      type: "lendNode",
+      position: { x: COL.borrow, y },
       data: {
-        type: "supplyCollateral",
-        asset: {
+        type: "lend",
+        loanAsset: {
           symbol: loanAsset.symbol,
           name: loanAsset.symbol,
           address: loanAsset.address,
           decimals: loanAsset.decimals,
           logoURI: loanAsset.logoURI,
+        },
+        market: {
+          uniqueKey: pos.market.uniqueKey,
+          lltv: pos.market.lltv,
+          irmAddress: pos.market.irmAddress,
+          oracle: pos.market.oracle,
+          collateralAsset: pos.market.collateralAsset ?? {
+            symbol: "?",
+            address: "",
+            logoURI: "",
+            priceUsd: null,
+            decimals: 18,
+          },
+          loanAsset: pos.market.loanAsset,
+          state: {
+            borrowApy: pos.market.state.borrowApy,
+            netBorrowApy: pos.market.state.netBorrowApy,
+            borrowAssets: "0",
+            supplyAssets: "0",
+            liquidityAssets: "0",
+            price: null,
+            rewards: [],
+          },
         },
         amount: supplyAmt,
         amountUsd: pos.state?.supplyAssetsUsd ?? 0,
@@ -213,9 +217,9 @@ export function buildStrategyFromPositions(
     });
 
     edges.push({
-      id: `${walletId}-${supplyId}`,
+      id: `${walletId}-${lendId}`,
       source: walletId,
-      target: supplyId,
+      target: lendId,
       type: "animatedEdge",
       animated: true,
     });
@@ -298,12 +302,12 @@ export function saveImportedStrategy(strategy: ImportedStrategy) {
 }
 
 const VALID_NODE_TYPES = new Set([
-  "walletNode", "supplyCollateralNode", "borrowNode",
+  "walletNode", "borrowNode", "lendNode", "lendWithdrawNode",
   "swapNode", "vaultDepositNode", "vaultWithdrawNode", "positionNode",
   "repayNode",
 ]);
 const VALID_DATA_TYPES = new Set([
-  "wallet", "supplyCollateral", "borrow",
+  "wallet", "borrow", "lend", "lendWithdraw",
   "swap", "vaultDeposit", "vaultWithdraw", "position",
   "repay",
 ]);

@@ -104,7 +104,14 @@ export function planCrossChainExecution(
   const actionable = (segment: { nodes: CanvasNode[] }) =>
     segment.nodes.some((n) => {
       const t = (n.data as { type?: string }).type;
-      return t === "supplyCollateral" || t === "borrow" || t === "vaultDeposit" || t === "vaultWithdraw" || t === "repay";
+      return (
+        t === "borrow" ||
+        t === "lend" ||
+        t === "lendWithdraw" ||
+        t === "vaultDeposit" ||
+        t === "vaultWithdraw" ||
+        t === "repay"
+      );
     });
 
   const phases: ExecutionPhase[] = [];
