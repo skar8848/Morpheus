@@ -60,7 +60,10 @@ export async function morphoQuery<T>(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query, variables }),
-      next: { revalidate: 60 },
+      // Never served from Next's data cache: inside a route handler a POST with
+      // `revalidate` is cached by URL + body, so /api/positions re-read right
+      // after a transaction could answer with the pre-transaction state.
+      cache: "no-store",
       signal: requestSignal(signal),
     });
   } catch (err) {
