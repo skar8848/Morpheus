@@ -25,6 +25,7 @@ const VALID_NODE_TYPES = new Set([
   "vaultWithdrawNode",
   "positionNode",
   "repayNode",
+  "bridgeNode",
 ]);
 
 const VALID_DATA_TYPES = new Set([
@@ -37,17 +38,88 @@ const VALID_DATA_TYPES = new Set([
   "vaultWithdraw",
   "position",
   "repay",
+  "bridge",
 ]);
 
 const MAX_NODES = 200;
 const MAX_EDGES = 500;
 const MAX_STRING_LEN = 500;
 
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const MARKET_KEY = /^0x[0-9a-fA-F]{64}$/;
+
 /**
- * Edge-runtime safe validator. Mirrors the schema check inside
- * `importStrategy.ts`'s `isValidImportedStrategy`, but kept separate so
- * the API routes can run in the Edge runtime without pulling in
- * @xyflow/react / browser-only deps.
+ * Format checks on the addresses a node carries. This doesn't make them
+ * trustworthy (the canvas re-resolves markets and vaults against the Morpho API
+ * on import, see verifyImport.ts), it only rejects garbage early with a clear
+ * error instead of a blank node or an encoding failure at Execute time.
+ * Empty values are allowed: templates and half-built nodes leave them unset.
+ */
+function checkNodeAddresses(i: number, d: Record<string, unknown>, errors: string[]): void {
+  const at = (v: unknown, key: string): unknown =>
+    v && typeof v === "object" ? (v as Record<string, unknown>)[key] : undefined;
+  const address = (path: string, v: unknown) => {
+    if (v === undefined || v === null || v === "") return;
+    if (typeof v !== "string" || !ADDRESS.test(v)) {
+      errors.push(`nodes[${i}].data.${path}: must be a 0x-prefixed 20-byte address`);
+    }
+  };
+  const market = (path: string, m: unknown) => {
+    if (!m || typeof m !== "object") return;
+    const key = at(m, "uniqueKey");
+    if (typeof key !== "string" || !MARKET_KEY.test(key)) {
+      errors.push(`nodes[${i}].data.${path}.uniqueKey: must be a 0x-prefixed 32-byte market id`);
+    }
+    address(`${path}.irmAddress`, at(m, "irmAddress"));
+    address(`${path}.oracle.address`, at(at(m, "oracle"), "address"));
+    address(`${path}.loanAsset.address`, at(at(m, "loanAsset"), "address"));
+    address(`${path}.collateralAsset.address`, at(at(m, "collateralAsset"), "address"));
+  };
+
+  switch (d.type) {
+    case "wallet":
+      address("address", d.address);
+      break;
+    case "borrow":
+      address("collateralAsset.address", at(d.collateralAsset, "address"));
+      market("market", d.market);
+      break;
+    case "lend":
+      address("loanAsset.address", at(d.loanAsset, "address"));
+      market("market", d.market);
+      break;
+    case "repay":
+      market("market", d.market);
+      break;
+    case "lendWithdraw":
+      market("position.market", at(d.position, "market"));
+      break;
+    case "vaultDeposit":
+      address("vault.address", at(d.vault, "address"));
+      address("vault.asset.address", at(at(d.vault, "asset"), "address"));
+      break;
+    case "vaultWithdraw":
+      address("position.vault.address", at(at(d.position, "vault"), "address"));
+      break;
+    case "swap":
+    case "bridge":
+      address("tokenIn.address", at(d.tokenIn, "address"));
+      address("tokenOut.address", at(d.tokenOut, "address"));
+      break;
+    case "position":
+      market("marketPosition.market", at(d.marketPosition, "market"));
+      address("vaultPosition.vault.address", at(at(d.vaultPosition, "vault"), "address"));
+      break;
+  }
+}
+
+/**
+ * Edge-runtime safe validator, and the ONLY schema check for an imported
+ * strategy: the API routes call it, and so does `importStrategy.ts` for deep
+ * links and localStorage handoffs. It used to have a lighter twin there, which
+ * let a deep link through with duplicate ids, edges to missing nodes or a node
+ * type that disagreed with its data. It stays free of @xyflow/react and
+ * browser-only deps so the routes can keep running in the Edge runtime.
  */
 export function isValidImportedStrategyForApi(
   data: unknown
@@ -117,6 +189,14 @@ export function isValidImportedStrategyForApi(
         errors.push(
           `nodes[${i}].data.type: must be one of ${Array.from(VALID_DATA_TYPES).join(", ")}`
         );
+      } else {
+        // The node type picks the component that RENDERS the node, the data type
+        // picks what the executor DOES with it. A walletNode carrying vaultDeposit
+        // data would show a wallet and execute a deposit, so they must agree.
+        if (typeof n.type === "string" && n.type !== `${d.type}Node`) {
+          errors.push(`nodes[${i}]: type "${n.type}" does not match data.type "${d.type}"`);
+        }
+        checkNodeAddresses(i, d, errors);
       }
     }
   }

@@ -10,6 +10,7 @@ import type {
 
 import { safeBigInt } from "@/lib/utils/bigint";
 import { isBorrowDust, isSupplyDust, isVaultDust } from "./dust";
+import { isValidImportedStrategyForApi } from "./api";
 
 const COL = { wallet: 50, borrow: 380, vault: 710 };
 const ROW_GAP = 220;
@@ -321,54 +322,13 @@ export function saveImportedStrategy(strategy: ImportedStrategy) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(strategy));
 }
 
-const VALID_NODE_TYPES = new Set([
-  "walletNode", "borrowNode", "lendNode", "lendWithdrawNode",
-  "swapNode", "vaultDepositNode", "vaultWithdrawNode", "positionNode",
-  "repayNode",
-]);
-const VALID_DATA_TYPES = new Set([
-  "wallet", "borrow", "lend", "lendWithdraw",
-  "swap", "vaultDeposit", "vaultWithdraw", "position",
-  "repay",
-]);
-const MAX_STRING_LEN = 500;
-
-/** Validate that an imported strategy has valid structure */
+/**
+ * Validate that an imported strategy has valid structure. Delegates to the same
+ * validator the public API uses (api.ts), so a deep link, a localStorage handoff
+ * and a POST /api/canvas are held to exactly one schema.
+ */
 function isValidImportedStrategy(data: unknown): data is ImportedStrategy {
-  if (!data || typeof data !== "object") return false;
-  const obj = data as Record<string, unknown>;
-
-  // Must have nodes array, edges array, sourceAddress string
-  if (!Array.isArray(obj.nodes) || !Array.isArray(obj.edges)) return false;
-  if (typeof obj.sourceAddress !== "string" || obj.sourceAddress.length > 100) return false;
-
-  // Limit size to prevent memory abuse
-  if (obj.nodes.length > 200 || obj.edges.length > 500) return false;
-
-  // Validate each node has required fields + whitelisted types
-  for (const node of obj.nodes) {
-    if (!node || typeof node !== "object") return false;
-    const n = node as Record<string, unknown>;
-    if (typeof n.id !== "string" || n.id.length > MAX_STRING_LEN) return false;
-    if (typeof n.type !== "string" || !VALID_NODE_TYPES.has(n.type)) return false;
-    if (!n.position || typeof n.position !== "object") return false;
-    if (!n.data || typeof n.data !== "object") return false;
-    const d = n.data as Record<string, unknown>;
-    if (typeof d.type !== "string" || !VALID_DATA_TYPES.has(d.type)) return false;
-  }
-
-  // Validate each edge has required fields + string length limits
-  for (const edge of obj.edges) {
-    if (!edge || typeof edge !== "object") return false;
-    const e = edge as Record<string, unknown>;
-    if (typeof e.id !== "string" || e.id.length > MAX_STRING_LEN) return false;
-    if (typeof e.source !== "string" || e.source.length > MAX_STRING_LEN) return false;
-    if (typeof e.target !== "string" || e.target.length > MAX_STRING_LEN) return false;
-    // Reject self-loops
-    if (e.source === e.target) return false;
-  }
-
-  return true;
+  return isValidImportedStrategyForApi(data).ok;
 }
 
 /** Load and consume (delete) an imported strategy from localStorage */
