@@ -134,12 +134,13 @@ export async function fetchUserVaultV2PositionsServer(
 
   return hits.map((h, i) => {
     const ar = assetResults[i];
-    const assetsRaw =
-      ar && ar.status === "success" ? (ar.result as bigint) : h.shares;
+    // No convertToAssets answer means the asset amount is unknown. Shares are
+    // not a stand-in: V2 shares carry max(18, asset decimals) decimals, so a
+    // USDC position read as shares came out ~1e12 times too large.
+    const assetsRaw = ar && ar.status === "success" ? (ar.result as bigint) : null;
     const decimals = h.vault.asset.decimals;
-    const assetsFloat = Number(assetsRaw) / 10 ** decimals;
     const priceUsd = h.vault.asset.priceUsd ?? 0;
-    const assetsUsd = assetsFloat * priceUsd;
+    const assetsUsd = assetsRaw !== null ? (Number(assetsRaw) / 10 ** decimals) * priceUsd : 0;
 
     return {
       vault: {
@@ -158,7 +159,7 @@ export async function fetchUserVaultV2PositionsServer(
         },
       },
       state: {
-        assets: assetsRaw.toString(),
+        assets: assetsRaw !== null ? assetsRaw.toString() : null,
         assetsUsd: assetsUsd > 0 ? assetsUsd : null,
         shares: h.shares.toString(),
         pnl: null,

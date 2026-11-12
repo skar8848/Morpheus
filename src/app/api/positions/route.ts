@@ -221,7 +221,8 @@ export async function GET(req: Request) {
         assetAddress: p.vault.asset.address,
         assetDecimals: p.vault.asset.decimals,
         shares: p.state?.shares ?? "0",
-        assets: p.state?.assets ?? "0",
+        // null when the vault's convertToAssets could not be read: unknown, not zero.
+        assets: p.state?.assets ?? null,
         assetsUsd: p.state?.assetsUsd ?? null,
         netApy: p.vault.state.netApy,
         version: "v2" as const,

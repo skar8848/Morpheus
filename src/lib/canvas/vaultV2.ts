@@ -146,16 +146,17 @@ export async function fetchUserVaultV2Positions(
   // 5. Normalize into UserVaultPosition shape.
   return hits.map((h, i) => {
     const assetResult = assetResults[i];
+    // No convertToAssets answer means the asset amount is unknown. Shares are
+    // not a stand-in: V2 shares carry max(18, asset decimals) decimals, so a
+    // USDC position read as shares came out ~1e12 times too large, and the
+    // Vault Withdraw full-exit check reads this figure.
     const assetsRaw =
-      assetResult && assetResult.status === "success"
-        ? (assetResult.result as bigint)
-        : h.shares; // best-effort fallback
+      assetResult && assetResult.status === "success" ? (assetResult.result as bigint) : null;
 
     const d = details.get(h.vault.address.toLowerCase());
     const decimals = d?.asset.decimals ?? h.vault.decimals;
-    const assetsFloat = Number(assetsRaw) / 10 ** decimals;
     const priceUsd = d?.asset.price?.usd ?? 0;
-    const assetsUsd = assetsFloat * priceUsd;
+    const assetsUsd = assetsRaw !== null ? (Number(assetsRaw) / 10 ** decimals) * priceUsd : 0;
 
     return {
       vault: {
@@ -174,7 +175,7 @@ export async function fetchUserVaultV2Positions(
         },
       },
       state: {
-        assets: assetsRaw.toString(),
+        assets: assetsRaw !== null ? assetsRaw.toString() : null,
         assetsUsd: assetsUsd > 0 ? assetsUsd : null,
         shares: h.shares.toString(),
         // V2 positions are discovered on-chain (no userAddress-filtered API
