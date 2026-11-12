@@ -121,7 +121,10 @@ export function getNodeChainId(
       visited.add(id);
       const node = nodes.find((n) => n.id === id);
       if (node && id !== nodeId && (node.data as { type?: string }).type === "bridge") {
-        return (node.data as BridgeNodeData).dstChainId;
+        // An unconfigured bridge has no destination yet: until it does, what
+        // sits behind it stays on the home chain, as getNodeOutputChainId
+        // already assumes.
+        return (node.data as BridgeNodeData).dstChainId ?? homeChainId;
       }
       for (const e of edges) if (e.target === id) next.push(e.source);
     }
