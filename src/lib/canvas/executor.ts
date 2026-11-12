@@ -36,6 +36,7 @@ import type {
   VaultWithdrawNodeData,
   RepayNodeData,
 } from "./types";
+import { isFixedRateBorrow } from "./types";
 import {
   BUNDLER3,
   GENERAL_ADAPTER1,
@@ -250,6 +251,8 @@ export function getRequiredApprovals(
     // whoever consumes it downstream approves it.)
     if (data.type === "borrow") {
       const d = node.data as unknown as BorrowNodeData;
+      // A fixed-rate leg never pulls collateral through the adapter.
+      if (isFixedRateBorrow(d)) continue;
       if (!d.collateralAsset?.address || !d.collateralAmount) continue;
       let raw = safeAmountToBigInt(d.collateralAmount, d.collateralAsset.decimals);
       raw = capAtUpstreamBorrow(raw, node.id, nodes, edges);
@@ -367,6 +370,8 @@ export function strategyNeedsMorphoAuthorization(nodes: CanvasNode[]): boolean {
     switch (d.type) {
       case "borrow": {
         const bd = node.data as unknown as BorrowNodeData;
+        // Midnight, not Blue: no GA1 authorization involved.
+        if (isFixedRateBorrow(bd)) break;
         if (bd.market && isFinite(bd.borrowAmount) && bd.borrowAmount > 0) return true;
         break;
       }
@@ -626,6 +631,9 @@ function emitNodeCalls(node: CanvasNode, ctx: EmitContext): BundlerCall[] {
 
     case "borrow": {
       const d = node.data as unknown as BorrowNodeData;
+      // A fixed-rate borrow lifts the Midnight book instead. Encoding it here
+      // would quietly turn it into a floating Blue debt.
+      if (isFixedRateBorrow(d)) break;
       if (!d.market || !isFinite(d.borrowAmount) || d.borrowAmount <= 0) break;
       const mp = toMarketParams(d.market);
       if (!mp) break;

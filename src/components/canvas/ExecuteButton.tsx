@@ -10,6 +10,7 @@ import { useAccount, useSendTransaction, useSwitchChain } from "wagmi";
 import { readContract, waitForTransactionReceipt, estimateGas } from "wagmi/actions";
 import { useChain } from "@/lib/context/ChainContext";
 import { validateGraph } from "@/lib/canvas/validation";
+import { isFixedRateBorrow } from "@/lib/canvas/types";
 import {
   buildExecutionBundle,
   getRequiredApprovals,
@@ -605,6 +606,13 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
       // router hands back the exact offers, one `take` each, so a fill that
       // sweeps several price levels becomes several calls — batched together so
       // they settle as one rather than partially.
+      //
+      // Not reachable yet: validateGraph rejects fixed-rate borrows above and
+      // the Execute button is disabled for them. Still missing before this can
+      // run: posting the collateral to Midnight (a borrower lifting the bids
+      // sells units against collateral, it does not pay in the loan token, so
+      // the approval below is on the wrong token), and the rest of the graph:
+      // this block returns after the takes, so every other node is skipped.
       const fixedLegs = execNodes.filter(
         (n) => (n.data as unknown as { fixedRate?: unknown }).fixedRate
       );
@@ -1044,6 +1052,9 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           ?? (d.tokenIn as { symbol?: string })?.symbol
           ?? "";
         return `Insufficient ${symbol} balance`;
+      }
+      if (isFixedRateBorrow(d)) {
+        return "Fixed-rate (Midnight) execution is not available yet: switch the borrow to Floating";
       }
       if (d.exceedsLiquidity) {
         // A lend withdraw keeps its market on the position it picked.
