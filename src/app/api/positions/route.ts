@@ -64,6 +64,7 @@ import type {
 } from "@/lib/graphql/types";
 import { fetchUserVaultV2PositionsServer } from "@/lib/canvas/vaultV2.server";
 import { CHAIN_CONFIGS } from "@/lib/web3/chains";
+import { safeBigInt } from "@/lib/utils/bigint";
 
 // Use Node runtime — viem multicall via createPublicClient is faster on Node
 // than Edge for this workload (multiple RPC roundtrips).
@@ -95,16 +96,6 @@ function jsonError(status: number, message: string) {
     status,
     headers: { ...CORS_HEADERS, "content-type": "application/json" },
   });
-}
-
-function safeBigInt(v: unknown): bigint {
-  if (typeof v === "bigint") return v;
-  if (typeof v !== "string" && typeof v !== "number") return 0n;
-  try {
-    return BigInt(v);
-  } catch {
-    return 0n;
-  }
 }
 
 export async function OPTIONS() {

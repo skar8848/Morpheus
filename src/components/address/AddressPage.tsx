@@ -17,6 +17,7 @@ import {
   saveImportedStrategy,
 } from "@/lib/canvas/importStrategy";
 import { CHAIN_CONFIGS, explorerBase } from "@/lib/web3/chains";
+import { formatUsd } from "@/lib/utils/format";
 import PositionsSummary from "./PositionsSummary";
 import TransactionTimeline from "./TransactionTimeline";
 
@@ -334,12 +335,7 @@ function SummaryCard({
   negative?: boolean;
   accent?: boolean;
 }) {
-  const formatted =
-    value >= 1_000_000
-      ? `$${(value / 1_000_000).toFixed(2)}M`
-      : value >= 1_000
-        ? `$${(value / 1_000).toFixed(1)}K`
-        : `$${value.toFixed(2)}`;
+  const formatted = formatUsd(value);
 
   return (
     <div
