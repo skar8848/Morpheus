@@ -17,7 +17,6 @@ import type {
   UserMarketPositionsResponse,
   UserVaultPositionsResponse,
   MorphoTransaction,
-  TransactionsResponse,
 } from "../graphql/types";
 import { safeBigInt } from "../utils/bigint";
 import { fetchUserVaultV2Positions } from "../canvas/vaultV2";
@@ -45,12 +44,13 @@ const MAX_TRANSACTIONS = 1000;
 type RawTx = Record<string, unknown>;
 
 function normalizeTxs(market: RawTx[], vault: RawTx[]): MorphoTransaction[] {
-  const shape = (t: RawTx): RawTx => ({
+  const shape = (surface: MorphoTransaction["surface"]) => (t: RawTx): RawTx => ({
     ...t,
+    surface,
     id: `${String(t.txHash)}-${String(t.logIndex ?? 0)}`,
     hash: String(t.txHash),
   });
-  const all: RawTx[] = [...market.map(shape), ...vault.map(shape)];
+  const all: RawTx[] = [...market.map(shape("market")), ...vault.map(shape("vault"))];
   all.sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0));
   return all as unknown as MorphoTransaction[];
 }

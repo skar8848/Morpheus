@@ -4,9 +4,8 @@
 "use client";
 
 import Image from "next/image";
-import { formatUsd } from "@/lib/utils/format";
 import { useChain } from "@/lib/context/ChainContext";
-import type { MorphoTransaction, TransactionType } from "@/lib/graphql/types";
+import type { MarketTransaction, MorphoTransaction, VaultTransaction } from "@/lib/graphql/types";
 
 const EXPLORER_BASE: Record<number, string> = {
   1: "https://etherscan.io",
@@ -19,45 +18,60 @@ interface Props {
   hasMore: boolean;
 }
 
-const TX_LABELS: Record<TransactionType, string> = {
-  MetaMorphoDeposit: "Vault Deposit",
-  MetaMorphoWithdraw: "Vault Withdraw",
-  MetaMorphoTransfer: "Vault Transfer",
-  MetaMorphoFee: "Vault Fee",
-  MarketBorrow: "Borrow",
-  MarketLiquidation: "Liquidation",
-  MarketRepay: "Repay",
-  MarketSupply: "Supply",
-  MarketSupplyCollateral: "Supply Collateral",
-  MarketWithdraw: "Withdraw",
-  MarketWithdrawCollateral: "Withdraw Collateral",
+/**
+ * Keyed on `surface:type`: the API reuses "Withdraw" for a market withdraw and
+ * a vault withdraw, which are labelled differently here.
+ */
+type TxKey =
+  | `market:${MarketTransaction["type"]}`
+  | `vault:${VaultTransaction["type"]}`;
+
+const txKey = (tx: MorphoTransaction) => `${tx.surface}:${tx.type}` as TxKey;
+
+const TX_LABELS: Record<TxKey, string> = {
+  "vault:Deposit": "Vault Deposit",
+  "vault:Withdraw": "Vault Withdraw",
+  "vault:Transfer": "Vault Transfer",
+  "market:Borrow": "Borrow",
+  "market:Liquidation": "Liquidation",
+  "market:Repay": "Repay",
+  "market:Supply": "Supply",
+  "market:SupplyCollateral": "Supply Collateral",
+  "market:Withdraw": "Withdraw",
+  "market:WithdrawCollateral": "Withdraw Collateral",
 };
 
-const TX_COLORS: Record<string, string> = {
-  MetaMorphoDeposit: "bg-purple-500",
-  MetaMorphoWithdraw: "bg-orange-400",
-  MetaMorphoTransfer: "bg-gray-400",
-  MetaMorphoFee: "bg-gray-400",
-  MarketBorrow: "bg-teal-500",
-  MarketLiquidation: "bg-red-500",
-  MarketRepay: "bg-teal-400",
-  MarketSupply: "bg-blue-500",
-  MarketSupplyCollateral: "bg-blue-500",
-  MarketWithdraw: "bg-orange-400",
-  MarketWithdrawCollateral: "bg-orange-400",
+const TX_COLORS: Record<TxKey, string> = {
+  "vault:Deposit": "bg-purple-500",
+  "vault:Withdraw": "bg-orange-400",
+  "vault:Transfer": "bg-gray-400",
+  "market:Borrow": "bg-teal-500",
+  "market:Liquidation": "bg-red-500",
+  "market:Repay": "bg-teal-400",
+  "market:Supply": "bg-blue-500",
+  "market:SupplyCollateral": "bg-blue-500",
+  "market:Withdraw": "bg-orange-400",
+  "market:WithdrawCollateral": "bg-orange-400",
 };
 
-const TX_ICONS: Record<string, string> = {
-  MetaMorphoDeposit: "M5 12l5 5 5-5M10 17V3",
-  MetaMorphoWithdraw: "M5 8l5-5 5 5M10 3v14",
-  MarketBorrow: "M5 8l5-5 5 5M10 3v14",
-  MarketRepay: "M5 12l5 5 5-5M10 17V3",
-  MarketSupply: "M5 12l5 5 5-5M10 17V3",
-  MarketSupplyCollateral: "M5 12l5 5 5-5M10 17V3",
-  MarketWithdraw: "M5 8l5-5 5 5M10 3v14",
-  MarketWithdrawCollateral: "M5 8l5-5 5 5M10 3v14",
-  MarketLiquidation: "M4 4l12 12M16 4L4 16",
+const TX_ICONS: Partial<Record<TxKey, string>> = {
+  "vault:Deposit": "M5 12l5 5 5-5M10 17V3",
+  "vault:Withdraw": "M5 8l5-5 5 5M10 3v14",
+  "market:Borrow": "M5 8l5-5 5 5M10 3v14",
+  "market:Repay": "M5 12l5 5 5-5M10 17V3",
+  "market:Supply": "M5 12l5 5 5-5M10 17V3",
+  "market:SupplyCollateral": "M5 12l5 5 5-5M10 17V3",
+  "market:Withdraw": "M5 8l5-5 5 5M10 3v14",
+  "market:WithdrawCollateral": "M5 8l5-5 5 5M10 3v14",
+  "market:Liquidation": "M4 4l12 12M16 4L4 16",
 };
+
+const INFLOW: ReadonlySet<TxKey> = new Set<TxKey>([
+  "market:Supply",
+  "market:SupplyCollateral",
+  "market:Repay",
+  "vault:Deposit",
+]);
 
 function formatTimestamp(ts: string): string {
   const date = new Date(Number(ts) * 1000);
@@ -82,66 +96,44 @@ function formatTimestamp(ts: string): string {
   });
 }
 
+/** Human amount from a raw BigInt scalar (a JSON number or string). */
+function toAmount(raw: string | number | undefined, decimals: number): number {
+  return Number(raw ?? 0) / 10 ** decimals;
+}
+
 function getTransactionDetails(tx: MorphoTransaction) {
-  const { data, type } = tx;
-
-  if (data.__typename === "VaultTransactionData") {
-    const decimals = data.vault.asset.decimals;
-    const amount = Number(data.assets) / 10 ** decimals;
+  if (tx.surface === "vault") {
     return {
-      asset: data.vault.asset.symbol,
-      icon: data.vault.asset.logoURI,
-      amount,
-      usd: data.assetsUsd,
-      context: data.vault.name,
+      asset: tx.vault.asset.symbol,
+      icon: tx.vault.asset.logoURI,
+      amount: toAmount(tx.assets, tx.vault.asset.decimals),
+      context: tx.vault.name,
     };
   }
 
-  if (data.__typename === "MarketCollateralTransferTransactionData") {
-    const collat = data.market.collateralAsset;
-    const decimals = collat?.decimals ?? 18;
-    const amount = Number(data.assets) / 10 ** decimals;
+  const { market, data } = tx;
+  const collat = market.collateralAsset;
+  const context = `${collat?.symbol ?? "?"}/${market.loanAsset.symbol}`;
+
+  // A liquidation is shown as the collateral it seized; collateral transfers
+  // move the collateral asset; every other market event moves the loan asset.
+  if (data.__typename === "MarketTransactionLiquidationData") {
     return {
       asset: collat?.symbol ?? "?",
       icon: collat?.logoURI ?? "",
-      amount,
-      usd: data.assetsUsd,
-      context: `${collat?.symbol ?? "?"}/${data.market.loanAsset.symbol}`,
+      amount: toAmount(data.seizedAssets, collat?.decimals ?? 18),
+      context,
     };
   }
 
-  if (data.__typename === "MarketLiquidationTransactionData") {
-    const collat = data.market.collateralAsset;
-    const seizedDecimals = collat?.decimals ?? 18;
-    const seizedAmt = Number(data.seizedAssets) / 10 ** seizedDecimals;
-    return {
-      asset: collat?.symbol ?? "?",
-      icon: collat?.logoURI ?? "",
-      amount: seizedAmt,
-      usd: data.seizedAssetsUsd,
-      context: `${collat?.symbol ?? "?"}/${data.market.loanAsset.symbol}`,
-    };
-  }
-
-  if (data.__typename === "MarketTransferTransactionData") {
-    // For borrow/repay/supply/withdraw — the asset is the loan asset
-    const isCollateralType =
-      type === "MarketSupplyCollateral" || type === "MarketWithdrawCollateral";
-    const asset = isCollateralType
-      ? data.market.collateralAsset
-      : data.market.loanAsset;
-    const decimals = asset?.decimals ?? 18;
-    const amount = Number(data.assets) / 10 ** decimals;
-    return {
-      asset: asset?.symbol ?? "?",
-      icon: asset?.logoURI ?? "",
-      amount,
-      usd: data.assetsUsd,
-      context: `${data.market.collateralAsset?.symbol ?? "?"}/${data.market.loanAsset.symbol}`,
-    };
-  }
-
-  return { asset: "?", icon: "", amount: 0, usd: null, context: "" };
+  const asset =
+    data.__typename === "MarketTransactionCollateralTransferData" ? collat : market.loanAsset;
+  return {
+    asset: asset?.symbol ?? "?",
+    icon: asset?.logoURI ?? "",
+    amount: toAmount(data.assets, asset?.decimals ?? 18),
+    context,
+  };
 }
 
 // Group transactions by date
@@ -207,15 +199,12 @@ function isValidTxHash(hash: string): boolean {
 
 function TransactionRow({ tx, explorerBase }: { tx: MorphoTransaction; explorerBase: string }) {
   const details = getTransactionDetails(tx);
-  const label = TX_LABELS[tx.type] ?? tx.type;
-  const dotColor = TX_COLORS[tx.type] ?? "bg-gray-400";
-  const iconPath = TX_ICONS[tx.type] ?? "M10 3v14";
-  const isLiquidation = tx.type === "MarketLiquidation";
-  const isInflow =
-    tx.type === "MarketSupply" ||
-    tx.type === "MarketSupplyCollateral" ||
-    tx.type === "MetaMorphoDeposit" ||
-    tx.type === "MarketRepay";
+  const key = txKey(tx);
+  const label = TX_LABELS[key] ?? tx.type;
+  const dotColor = TX_COLORS[key] ?? "bg-gray-400";
+  const iconPath = TX_ICONS[key] ?? "M10 3v14";
+  const isLiquidation = key === "market:Liquidation";
+  const isInflow = INFLOW.has(key);
 
   const txUrl = isValidTxHash(tx.hash)
     ? `${explorerBase}/tx/${tx.hash}`
@@ -298,11 +287,6 @@ function TransactionRow({ tx, explorerBase }: { tx: MorphoTransaction; explorerB
               : details.amount.toFixed(4)}{" "}
             {details.asset}
           </span>
-          {details.usd != null && details.usd > 0 && (
-            <div className="text-[10px] text-text-tertiary">
-              {formatUsd(details.usd)}
-            </div>
-          )}
         </div>
       </div>
     </a>

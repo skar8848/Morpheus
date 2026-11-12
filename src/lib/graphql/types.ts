@@ -235,91 +235,71 @@ export interface LoanAssetsResponse {
 }
 
 // --- Transactions ---
+//
+// The API serves market and vault activity from two separate root fields
+// (`marketTransactions`, `vaultV1Transactions`) with their own type enums, so
+// each transaction carries the surface it came from. "Withdraw" exists on both
+// sides and means different things, which is why the timeline keys on
+// `surface:type` rather than on the type alone.
 
-export type TransactionType =
-  | "MetaMorphoDeposit"
-  | "MetaMorphoWithdraw"
-  | "MetaMorphoTransfer"
-  | "MetaMorphoFee"
-  | "MarketBorrow"
-  | "MarketLiquidation"
-  | "MarketRepay"
-  | "MarketSupply"
-  | "MarketSupplyCollateral"
-  | "MarketWithdraw"
-  | "MarketWithdrawCollateral";
+export type MarketTransactionType =
+  | "Supply"
+  | "Withdraw"
+  | "Borrow"
+  | "Repay"
+  | "SupplyCollateral"
+  | "WithdrawCollateral"
+  | "Liquidation";
 
-export interface VaultTransactionData {
-  __typename: "VaultTransactionData";
-  assets: string;
-  assetsUsd: number | null;
-  vault: {
-    name: string;
-    address: string;
-    asset: {
-      symbol: string;
-      decimals: number;
-      logoURI: string;
+export type VaultTransactionType = "Deposit" | "Withdraw" | "Transfer";
+
+interface TransactionAsset {
+  symbol: string;
+  decimals: number;
+  logoURI: string;
+}
+
+/** BigInt scalars come back as a JSON number when small and a string when large. */
+type RawAmount = string | number;
+
+export type MarketTransactionData =
+  | { __typename: "MarketTransactionTransferData"; assets: RawAmount; shares: RawAmount }
+  | { __typename: "MarketTransactionCollateralTransferData"; assets: RawAmount }
+  | {
+      __typename: "MarketTransactionLiquidationData";
+      repaidAssets: RawAmount;
+      seizedAssets: RawAmount;
+      badDebtAssets: RawAmount;
     };
-  };
-}
 
-export interface MarketTransferTransactionData {
-  __typename: "MarketTransferTransactionData";
-  assets: string;
-  assetsUsd: number | null;
-  shares: string;
-  market: {
-    uniqueKey: string;
-    collateralAsset: { symbol: string; decimals: number; logoURI: string } | null;
-    loanAsset: { symbol: string; decimals: number; logoURI: string };
-  };
-}
-
-export interface MarketCollateralTransferTransactionData {
-  __typename: "MarketCollateralTransferTransactionData";
-  assets: string;
-  assetsUsd: number | null;
-  market: {
-    uniqueKey: string;
-    collateralAsset: { symbol: string; decimals: number; logoURI: string } | null;
-    loanAsset: { symbol: string; decimals: number; logoURI: string };
-  };
-}
-
-export interface MarketLiquidationTransactionData {
-  __typename: "MarketLiquidationTransactionData";
-  repaidAssets: string;
-  repaidAssetsUsd: number | null;
-  seizedAssets: string;
-  seizedAssetsUsd: number | null;
-  badDebtAssets: string;
-  badDebtAssetsUsd: number | null;
-  liquidator: string;
-  market: {
-    uniqueKey: string;
-    collateralAsset: { symbol: string; decimals: number; logoURI: string } | null;
-    loanAsset: { symbol: string; decimals: number; logoURI: string };
-  };
-}
-
-export type TransactionData =
-  | VaultTransactionData
-  | MarketTransferTransactionData
-  | MarketCollateralTransferTransactionData
-  | MarketLiquidationTransactionData;
-
-export interface MorphoTransaction {
+interface TransactionBase {
+  /** txHash + logIndex: one transaction can emit several Morpho events. */
   id: string;
   hash: string;
   timestamp: string;
   blockNumber: string;
-  type: TransactionType;
-  data: TransactionData;
 }
 
-export interface TransactionsResponse {
-  transactions: {
-    items: MorphoTransaction[];
+export interface MarketTransaction extends TransactionBase {
+  surface: "market";
+  type: MarketTransactionType;
+  market: {
+    uniqueKey: string;
+    collateralAsset: TransactionAsset | null;
+    loanAsset: TransactionAsset;
+  };
+  data: MarketTransactionData;
+}
+
+export interface VaultTransaction extends TransactionBase {
+  surface: "vault";
+  type: VaultTransactionType;
+  assets: RawAmount;
+  vault: {
+    name: string;
+    address: string;
+    asset: TransactionAsset;
   };
 }
+
+export type MorphoTransaction = MarketTransaction | VaultTransaction;
