@@ -236,6 +236,11 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   // Track wallet address via ref for reliable detection during async flow
   const addressRef = useRef(address);
   addressRef.current = address;
+  // Same for the chain: handleExecute closes over the chainId of the render that
+  // started it, so a network switch mid-flow (during a CoW fill, say) would go
+  // unnoticed without reading the live value.
+  const walletChainIdRef = useRef(walletChainId);
+  walletChainIdRef.current = walletChainId;
   // Track pending CowSwap orders to avoid duplicate submissions
   const pendingOrdersRef = useRef<Map<string, string>>(new Map()); // nodeId → orderUid
   const isExecutingRef = useRef(false);
@@ -495,7 +500,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
 
       // Helper: abort if chain changed mid-execution
       const assertChain = () => {
-        if (walletChainId !== chainId) {
+        if (walletChainIdRef.current !== chainId) {
           throw new Error(`Network changed during execution — expected ${expectedChainLabel}`);
         }
       };
