@@ -227,7 +227,7 @@ export function getRequiredApprovals(
     if (!isAddress(address) || amount <= 0n) return;
     const key = address.toLowerCase();
     const existing = approvals.get(key);
-    // Cap at MAX_UINT256 to avoid encoding overflow (vault share approvals use MAX_UINT256)
+    // Cap at MAX_UINT256 to avoid encoding overflow (a vault share approval can be MAX_UINT256)
     let newAmount = (existing?.amount ?? 0n) + amount;
     if (newAmount > MAX_UINT256) newAmount = MAX_UINT256;
     approvals.set(key, {
@@ -277,12 +277,20 @@ export function getRequiredApprovals(
       addApproval(d.market.loanAsset.address, d.market.loanAsset.symbol, repayPullRaw(d));
     }
 
-    // VaultWithdraw: adapter needs approval on vault shares (vault address is the ERC-20 share token)
-    // Use MAX_UINT256 since exact share amount requires on-chain read
+    // VaultWithdraw: adapter needs approval on vault shares (vault address is the ERC-20 share token).
+    // A full exit redeems exactly the position's shares, and a partial withdraw
+    // burns fewer than that, so the share balance is a tight upper bound: no
+    // unlimited allowance left on the vault after the exit. MAX only when the
+    // position came without a share count.
     if (data.type === "vaultWithdraw") {
       const d = node.data as unknown as VaultWithdrawNodeData;
       if (!d.position?.vault?.address) continue;
-      addApproval(d.position.vault.address, `${d.position.vault.name} shares`, MAX_UINT256);
+      const sharesRaw = d.position.state?.shares ? safeBigInt(d.position.state.shares) : 0n;
+      addApproval(
+        d.position.vault.address,
+        `${d.position.vault.name} shares`,
+        sharesRaw > 0n ? sharesRaw : MAX_UINT256
+      );
     }
   }
 

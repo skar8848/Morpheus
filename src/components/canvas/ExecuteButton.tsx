@@ -33,7 +33,6 @@ import type { CanvasNode, CanvasNodeData } from "@/lib/canvas/types";
 import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
 import { GENERAL_ADAPTER1, MORPHO_BLUE, BUNDLER3, morphoBlueAbi } from "@/lib/constants/contracts";
 import { erc20Abi } from "viem";
-import { encodeFunctionData } from "viem";
 import { wagmiConfig } from "@/lib/web3/config";
 import SimulationPreview from "./SimulationPreview";
 import BundleInspector from "./BundleInspector";
@@ -940,22 +939,21 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           // 2a + 2b: Approve sell token & fetch quote in parallel
           setSwapStatus(`Preparing ${swap.sellSymbol} → ${swap.buySymbol}...`);
 
-          const MAX_APPROVAL = 2n ** 256n - 1n;
+          // Approve exactly what this order sells rather than an unlimited amount:
+          // the relayer keeps no standing allowance on the user's tokens once the
+          // order is filled. buildApprovalTxs adds the reset-to-zero USDT needs,
+          // since an exact allowance is no longer approved only once.
+          const sellAmount = BigInt(swap.sellAmountWei);
           const approvalPromise = (async () => {
             const sellNeeded = await filterNeededApprovals(
-              [{ token: swap.sellToken, amount: BigInt(swap.sellAmountWei) }],
+              [{ token: swap.sellToken, amount: sellAmount }],
               currentAddress,
               vaultRelayer
             );
             if (sellNeeded.length > 0) {
               assertChain();
               setSwapStatus(`Approving ${swap.sellSymbol} for CowSwap...`);
-              const approveData = encodeFunctionData({
-                abi: erc20Abi,
-                functionName: "approve",
-                args: [vaultRelayer, MAX_APPROVAL],
-              });
-              await sendApprovals([{ to: swap.sellToken, data: approveData }]);
+              await sendApprovals(buildApprovalTxs(sellNeeded, vaultRelayer, cid));
             }
           })();
 
