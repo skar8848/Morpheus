@@ -17,6 +17,7 @@ import { useChain } from "@/lib/context/ChainContext";
 import { findChainConflictEdges } from "@/lib/canvas/bridge";
 import type { CanvasNode } from "@/lib/canvas/types";
 import type { SupportedChainId } from "@/lib/web3/chains";
+import { safeBigInt } from "@/lib/utils/bigint";
 
 /** Walk upstream from a node and return true if it or any ancestor has a blocking error */
 function isUpstreamBlocked(
@@ -120,10 +121,21 @@ function AnimatedEdgeComponent({
         return `${fmt(amount)} ${symbol}`;
       }
       case "repay": {
-        const market = srcData.market as { loanAsset?: { symbol?: string } } | null;
-        const amount = parseFloat(srcData.amount as string);
-        if (!market?.loanAsset?.symbol || !isFinite(amount) || amount <= 0) return null;
-        return `${fmt(amount)} ${market.loanAsset.symbol}`;
+        // What leaves a repay is the collateral it frees, not the debt it
+        // pays back (labelling "850 USDC" into a swap that sells wstETH).
+        if (!srcData.withdrawCollateralAfterRepay) return null;
+        const market = srcData.market as { collateralAsset?: { symbol?: string; decimals?: number } } | null;
+        const collateral = market?.collateralAsset;
+        if (!collateral?.symbol) return null;
+        const amount = Number(safeBigInt(srcData.collateralToWithdraw)) / 10 ** (collateral.decimals ?? 18);
+        if (!isFinite(amount) || amount <= 0) return null;
+        return `${fmt(amount)} ${collateral.symbol}`;
+      }
+      case "bridge": {
+        const tokenOut = srcData.tokenOut as { symbol?: string } | null;
+        const quoteOut = parseFloat(srcData.quoteOut as string);
+        if (!tokenOut?.symbol || !isFinite(quoteOut) || quoteOut <= 0) return null;
+        return `${fmt(quoteOut)} ${tokenOut.symbol}`;
       }
       default:
         return null;
