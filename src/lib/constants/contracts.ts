@@ -24,9 +24,10 @@ export const BUNDLER3: Record<SupportedChainId, `0x${string}`> = {
 
 export const GENERAL_ADAPTER1: Record<SupportedChainId, `0x${string}`> = {
   1: "0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0",
-  // NOTE: the SDK registry lists 0xb98c948CFA24072e58935BC004a8A7b376AE746A for
-  // Base — this older GeneralAdapter1 is kept as-is pending confirmation.
-  8453: "0x12fa4A73d40E2F7a8cFfE97FB2e690213d9A5bCe",
+  // Base has its own deployment (its BUNDLER3() is the Base Bundler3 above).
+  // The address used before had no bytecode on Base, so every call to it
+  // succeeded as a no-op and approvals went to an empty account.
+  8453: "0xb98c948CFA24072e58935BC004a8A7b376AE746A",
   42161: "0x9954aFB60BB5A222714c478ac86990F221788B88",
   999: "0xD7F48aDE56613E8605863832B7B8A1985B934aE4",
   143: "0x725AB8CAd931BCb80Fdbf10955a806765cCe00e5",

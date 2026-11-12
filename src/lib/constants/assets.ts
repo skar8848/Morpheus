@@ -80,10 +80,10 @@ export const COLLATERAL_ASSETS: Partial<Record<SupportedChainId, Asset[]>> = {
       logoURI: "https://cdn.morpho.org/assets/logos/usds.svg",
     },
     {
-      symbol: "aUSD",
-      name: "Agora USD",
-      address: "0x2b6D5f29b8C3e6950d8A0641bF441bfAf9E65fBa",
-      decimals: 18,
+      symbol: "AUSD",
+      name: "AUSD",
+      address: "0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a",
+      decimals: 6,
       logoURI: "https://cdn.morpho.org/assets/logos/ausd.svg",
     },
     {
