@@ -124,24 +124,36 @@ export async function GET(req: Request) {
   }
   const chainSlug = chainId === 1 ? "ethereum" : "base";
 
+  // V2 discovery is a multicall over public RPCs and can fail on its own; it is
+  // reported in `warnings` rather than failing the whole call. The two Morpho
+  // API queries are not optional: if they fail, an empty list would read as
+  // "this address holds nothing", and an agent would act on that.
+  const warnings: string[] = [];
+  let upstreamFailed = false;
+  const upstream = <T,>(p: Promise<T>) =>
+    p.catch((err) => {
+      upstreamFailed = true;
+      throw err;
+    });
+
   try {
     const [marketData, vaultV1Data, v2Positions] = await Promise.all([
-      morphoQuery<UserMarketPositionsResponse>(USER_MARKET_POSITIONS_QUERY, {
-        userAddress: [userAddress],
-        chainId: [chainId],
-      }).catch((err) => {
-        console.warn("[/api/positions] V1 markets fetch failed:", err);
-        return { marketPositions: { items: [] } };
-      }),
-      morphoQuery<UserVaultPositionsResponse>(USER_VAULT_POSITIONS_QUERY, {
-        userAddress: [userAddress],
-        chainId: [chainId],
-      }).catch((err) => {
-        console.warn("[/api/positions] V1 vaults fetch failed:", err);
-        return { vaultPositions: { items: [] } };
-      }),
+      upstream(
+        morphoQuery<UserMarketPositionsResponse>(USER_MARKET_POSITIONS_QUERY, {
+          userAddress: [userAddress],
+          chainId: [chainId],
+        })
+      ),
+      upstream(
+        morphoQuery<UserVaultPositionsResponse>(USER_VAULT_POSITIONS_QUERY, {
+          userAddress: [userAddress],
+          chainId: [chainId],
+        })
+      ),
       fetchUserVaultV2PositionsServer(userAddress, chainId).catch((err) => {
         console.warn("[/api/positions] V2 fetch failed:", err);
+        const msg = err instanceof Error ? err.message : String(err);
+        warnings.push(`V2 vault discovery failed, V2 positions may be missing: ${msg.slice(0, 200)}`);
         return [];
       }),
     ]);
@@ -229,6 +241,7 @@ export async function GET(req: Request) {
           vaultsV1: activeV1Vaults.length,
           vaultsV2: mergedV2.length,
         },
+        ...(warnings.length > 0 ? { warnings } : {}),
       }),
       {
         status: 200,
@@ -238,6 +251,10 @@ export async function GET(req: Request) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[/api/positions] failed:", msg);
+    if (upstreamFailed) {
+      // Outage, timeout or a query the API rejects: either way nothing is known.
+      return jsonError(502, `Morpho API error, positions unknown: ${msg.slice(0, 200)}`);
+    }
     return jsonError(500, `Failed to fetch positions: ${msg.slice(0, 200)}`);
   }
 }

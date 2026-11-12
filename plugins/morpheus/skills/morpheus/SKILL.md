@@ -237,6 +237,8 @@ Response (flat, agent-friendly):
 }
 ```
 
+A `502` means the Morpho API failed (unreachable, timed out, or it rejected the query) and the positions are **unknown**, not empty: do not build a repay or withdraw on it, retry later. If only the V2 discovery failed, the call still succeeds and adds `"warnings": ["V2 vault discovery failed, ..."]`: V2 vault positions may then be missing.
+
 For market discovery (`morpho_query_markets`) and vault discovery (`morpho_query_vaults`) the Morpho MCP is fine — those queries don't have the V2 hole. The bug is **only** on `morpho_get_positions` for vault holdings.
 
 ### Recommended flow
