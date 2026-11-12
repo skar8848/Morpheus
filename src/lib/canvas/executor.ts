@@ -89,7 +89,8 @@ function safeAmountToBigInt(amount: number | string, decimals: number): bigint {
 }
 
 /**
- * Raw sell amount of a swap, or null when the input is not a positive number.
+ * Raw amount a swap sells (or a bridge sends), or null when the input is not a
+ * positive number.
  *
  * Truncates extra decimals rather than rounding like parseUnits: the order
  * must never sell a wei more than the user typed or holds. Shared with
