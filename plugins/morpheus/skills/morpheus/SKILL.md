@@ -145,9 +145,9 @@ When mentioning CowSwap to the user, frame it as: *"The Morpho USDC/EURCV market
   "nodes": [
     {
       "id": "string",                  // unique within request
-      "type": "walletNode" | "borrowNode" | "lendNode" | "lendWithdrawNode" | "swapNode" | "vaultDepositNode" | "vaultWithdrawNode" | "repayNode" | "positionNode",
+      "type": "walletNode" | "borrowNode" | "lendNode" | "lendWithdrawNode" | "swapNode" | "vaultDepositNode" | "vaultWithdrawNode" | "repayNode" | "bridgeNode" | "positionNode",
       "position": { "x": number, "y": number },
-      "data": { "type": "wallet" | "borrow" | "lend" | "lendWithdraw" | ... , /* node-specific */ }
+      "data": { "type": "wallet" | "borrow" | "lend" | "lendWithdraw" | ... , /* must match the node type: borrow ↔ borrowNode */ }
     }
   ],
   "edges": [
@@ -175,6 +175,8 @@ Returns:
 ```
 
 Validation errors come back as `{ ok: false, errors: [...] }`. Limits: 100 KB body, 200 nodes, 500 edges. CORS is `*`.
+
+When the user opens the link, every market and vault in it is fetched again from the Morpho API by `uniqueKey` / address, and that data replaces what the JSON carried. Borrow, Lend and Vault Deposit need a market or vault listed by Morpho. Anything the API doesn't know is cleared from its node with a notice, so always take ids from the Morpho MCP, never make them up.
 
 ## How to compose with the Morpho MCP
 

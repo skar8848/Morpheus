@@ -119,23 +119,9 @@ https://morpheus-visualizer.vercel.app/{chain}/canvas?strategy=<base64url(json)>
 - `{chain}`: `ethereum` or `base`
 - `strategy`: a base64url-encoded UTF-8 JSON blob using the **Canonical Canvas JSON** format above
 
-**Shorter alternative** for atomic operations (no full graph):
+Morpheus lays the graph out and waits for the user to click Execute. **Morpheus never auto-executes from a deep link**: the user must always confirm.
 
-```
-https://morpheus-visualizer.vercel.app/{chain}/canvas?actions=<base64url(json)>
-```
-
-Where the JSON is an array of action descriptors:
-
-```jsonc
-[
-  { "kind": "borrow",       "marketId": "0x...", "collateralAmount": "10", "ltvPercent": 60 },
-  { "kind": "lend",         "marketId": "0x...", "amount": "5000" },
-  { "kind": "vaultDeposit", "vaultAddress": "0x...", "amount": "max" }
-]
-```
-
-Morpheus parses this list, builds the corresponding nodes + edges, auto-lays them out, and waits for the user to click Execute. **Morpheus never auto-executes from a deep link** — the user must always confirm.
+**A link is trusted for identity only.** Before the graph appears, every market (by `uniqueKey`) and every vault (by address) it names is fetched again from the Morpho API on the chain the node runs on, and that data replaces whatever the link carried (oracle, IRM, LLTV, tokens, name, APY). Borrow, Lend and Vault Deposit need a market or vault **listed** by Morpho; Repay, the withdraw nodes and positions accept any indexed one. Anything the API doesn't know is cleared from its node and reported on the canvas, so the user picks it again. Put real ids in the link and nothing gets cleared. If the Morpho API can't be reached, nothing from the link is loaded and the canvas offers a retry.
 
 ## Public HTTP API (for agents)
 
@@ -155,7 +141,7 @@ Validates a canvas and returns a deep-link URL the user can open.
 }
 ```
 
-The `nodes` and `edges` shapes match the internal `ImportedStrategy` format documented in `src/lib/canvas/importStrategy.ts`. Node `type` must be one of: `walletNode`, `borrowNode`, `lendNode`, `lendWithdrawNode`, `swapNode`, `vaultDepositNode`, `vaultWithdrawNode`, `repayNode`, `positionNode`. The inner `data.type` is the data discriminant: `wallet`, `borrow`, `lend`, `lendWithdraw`, `swap`, `vaultDeposit`, `vaultWithdraw`, `repay`, `position`.
+The `nodes` and `edges` shapes match the internal `ImportedStrategy` format documented in `src/lib/canvas/importStrategy.ts`. Node `type` must be one of: `walletNode`, `borrowNode`, `lendNode`, `lendWithdrawNode`, `swapNode`, `vaultDepositNode`, `vaultWithdrawNode`, `repayNode`, `bridgeNode`, `positionNode`. The inner `data.type` is the data discriminant: `wallet`, `borrow`, `lend`, `lendWithdraw`, `swap`, `vaultDeposit`, `vaultWithdraw`, `repay`, `bridge`, `position`, and it must match the node type (`borrow` ↔ `borrowNode`). Ids must be unique, every edge must point at an existing node, market ids must be 32-byte hex and addresses 20-byte hex.
 
 **Response** (200):
 ```jsonc
