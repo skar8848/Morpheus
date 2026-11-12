@@ -185,11 +185,14 @@ export async function GET(req: Request) {
     );
 
     // Build the flat agent-friendly response
+    // Idle markets (supply-only, no collateral asset) come back with
+    // `collateralAsset: null` even though the type says otherwise; reading
+    // through it crashed the whole call for any address that lends into one.
     const marketPositions = activeMarkets.map((p) => ({
       marketId: p.market.uniqueKey,
-      collateralSymbol: p.market.collateralAsset.symbol,
-      collateralAddress: p.market.collateralAsset.address,
-      collateralDecimals: p.market.collateralAsset.decimals,
+      collateralSymbol: p.market.collateralAsset?.symbol ?? null,
+      collateralAddress: p.market.collateralAsset?.address ?? null,
+      collateralDecimals: p.market.collateralAsset?.decimals ?? null,
       loanSymbol: p.market.loanAsset.symbol,
       loanAddress: p.market.loanAsset.address,
       loanDecimals: p.market.loanAsset.decimals,
