@@ -466,19 +466,10 @@ export default function CanvasPage() {
       const tag = (event.target as HTMLElement).tagName;
       const inInput = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
 
-      // Ctrl+Shift+Z / Cmd+Shift+Z or Ctrl+Y — redo
-      if ((event.metaKey || event.ctrlKey) && ((event.shiftKey && event.key === "z") || event.key === "y")) {
-        event.preventDefault();
-        redo();
-        return;
-      }
-
-      // Ctrl+Z / Cmd+Z — undo
-      if ((event.metaKey || event.ctrlKey) && event.key === "z") {
-        event.preventDefault();
-        undo();
-        return;
-      }
+      // Undo / redo are handled by the window listener below. Handling them
+      // here as well made one Cmd+Z pop two history entries, since
+      // preventDefault does not stop the event from reaching the window.
+      if ((event.metaKey || event.ctrlKey) && (event.key === "z" || event.key === "y")) return;
 
       // Delete/Backspace — only when not in input
       if (inInput) return;
@@ -520,7 +511,7 @@ export default function CanvasPage() {
         });
       }
     },
-    [nodes, deleteNode, undo]
+    [nodes, deleteNode]
   );
 
   // Also listen globally for Ctrl+Z / Ctrl+Shift+Z when canvas is focused
