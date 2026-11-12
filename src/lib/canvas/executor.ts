@@ -68,7 +68,12 @@ const ZERO_HASH =
  */
 function safeAmountToBigInt(amount: number | string, decimals: number): bigint {
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) return 0n;
-  const str = typeof amount === "number" ? String(amount) : amount;
+  let str = typeof amount === "number" ? String(amount) : amount;
+  // String() switches to exponential notation below 1e-6 ("1e-7"), which
+  // parseUnits rejects, so the node would silently be skipped as a zero amount.
+  // Only then fall back to toFixed: on ordinary numbers it would print binary
+  // noise (0.1 → "0.100000000000000006") where String() gives the clean value.
+  if (typeof amount === "number" && /e/i.test(str)) str = amount.toFixed(decimals);
   if (!str || str.trim() === "") return 0n;
   // Quick sanity check: must look like a positive number
   const num = parseFloat(str);
