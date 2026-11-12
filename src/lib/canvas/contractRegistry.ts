@@ -59,7 +59,7 @@ export const KNOWN_CONTRACTS: Record<string, KnownContract> = Object.fromEntries
 
       // ── GeneralAdapter1 — the contract approvals are granted to ──────────
       M("0x4A6c312ec70E8747a587EE860a0353cd42Be0aE0", "GeneralAdapter1 (Ethereum)"),
-      M("0x12fa4A73d40E2F7a8cFfE97FB2e690213d9A5bCe", "GeneralAdapter1 (Base)"),
+      M("0xb98c948CFA24072e58935BC004a8A7b376AE746A", "GeneralAdapter1 (Base)"),
       M("0x9954aFB60BB5A222714c478ac86990F221788B88", "GeneralAdapter1 (Arbitrum)"),
       M("0xD7F48aDE56613E8605863832B7B8A1985B934aE4", "GeneralAdapter1 (HyperEVM)"),
       M("0x725AB8CAd931BCb80Fdbf10955a806765cCe00e5", "GeneralAdapter1 (Monad)"),
