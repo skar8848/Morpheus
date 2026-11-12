@@ -114,7 +114,7 @@ export async function runPreflight(
   const result: PreflightResult = { ...EMPTY_PREFLIGHT, loading: false };
 
   // 1. Graph validation
-  const validationErrors = validateGraph(nodes, edges);
+  const validationErrors = validateGraph(nodes, edges, chainId as SupportedChainId);
   if (validationErrors.length > 0) {
     result.errors = validationErrors;
     return result;
@@ -218,6 +218,8 @@ export async function runPreflight(
           abi: morphoBlueAbi,
           functionName: "isAuthorized",
           args: [userAddress, adapter],
+          // The canvas chain, not whichever chain the wallet is on.
+          chainId: chainId as SupportedChainId,
         })) as boolean;
       } catch {
         // RPC failure — assume not authorized so we set the warning
@@ -239,6 +241,7 @@ export async function runPreflight(
       data: bundle.data,
       value: 0n,
       account: userAddress,
+      chainId: chainId as SupportedChainId,
     });
     result.gasEstimate = gas;
     result.ok = result.errors.length === 0;

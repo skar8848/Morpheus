@@ -52,8 +52,9 @@ import {
 // because it sometimes shows a red "Will revert" banner that doesn't match
 // the actual execution (e.g. first-time borrow auth flow timing) — bad for
 // the launch demo. Flip to `true` once the preview logic is polished.
-// The preflight hook still runs and blocks execution on real errors; only
-// the visual card is gated.
+// The preflight result only feeds that card (Execute validates and simulates
+// on its own), so the hook is switched off with it rather than running
+// estimateGas on every edit for nothing.
 const ENABLE_SIMULATION_PREVIEW = false;
 
 interface ExecuteButtonProps {
@@ -155,8 +156,13 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   const [swapStatus, setSwapStatus] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
 
-  // Run preflight only while the panel is expanded AND we're not currently executing
-  const preflight = useBundlePreflight(nodes, edges, expanded && !isExecuting);
+  // Run preflight only while the preview is on, the panel is expanded AND we're
+  // not currently executing
+  const preflight = useBundlePreflight(
+    nodes,
+    edges,
+    ENABLE_SIMULATION_PREVIEW && expanded && !isExecuting
+  );
   // A Safe queues transactions instead of mining them — the execute flow needs
   // to know so it doesn't wait on a hash that will never appear on-chain.
   const { isSmartAccount, isSafeApp } = useSmartAccount();
