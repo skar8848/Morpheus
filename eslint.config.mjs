@@ -10,11 +10,16 @@ const eslintConfig = defineConfig([
   ...nextTs,
   // Override default ignores of eslint-config-next.
   globalIgnores([
-    // Default ignores of eslint-config-next:
-    ".next/**",
-    "out/**",
-    "build/**",
+    // Default ignores of eslint-config-next, at any depth: anchored to the
+    // root they let `npm run lint` walk the build output of nested checkouts
+    // (worktrees under .claude/) and report thousands of errors in generated
+    // chunks.
+    "**/.next/**",
+    "**/out/**",
+    "**/build/**",
     "next-env.d.ts",
+    // Agent tooling: skills, plugin copies and worktrees, not app code.
+    ".claude/**",
   ]),
 ]);
 
