@@ -17,7 +17,7 @@
 
 import type { SupportedChainId } from "@/lib/web3/chains";
 
-export type ContractOwner = "morpho" | "cowswap" | "lifi" | "circle" | "safe" | "token";
+export type ContractOwner = "morpho" | "cowswap" | "lifi" | "circle" | "safe" | "token" | "vault";
 
 export interface KnownContract {
   address: string;
@@ -124,11 +124,31 @@ export interface Verdict {
  */
 export function classifyDestination(
   to: string,
-  strategyTokens: { address: string; symbol: string }[] = []
+  strategyTokens: { address: string; symbol: string }[] = [],
+  strategyVaults: { address: string; name: string; listed: boolean }[] = []
 ): Verdict {
   const key = to.toLowerCase();
   const known = KNOWN_CONTRACTS[key];
   if (known) return { known: true, contract: known };
+
+  // Vaults are curated contracts, thousands of them, so they can't be allow-listed
+  // here either. The ones passed in were just looked up on the Morpho API by
+  // address, which is what makes them "known": a vault the API has never heard
+  // of is never passed in, and falls through to UNRECOGNISED below.
+  const vault = strategyVaults.find((v) => v.address.toLowerCase() === key);
+  if (vault) {
+    return {
+      known: true,
+      contract: {
+        address: to,
+        owner: "vault",
+        role: `${vault.name}, the vault the bundle deposits into or redeems from${
+          vault.listed ? "" : " (not listed by Morpho)"
+        }`,
+        provenance: "looked up by address on the Morpho API",
+      },
+    };
+  }
 
   const token = strategyTokens.find((t) => t.address.toLowerCase() === key);
   if (token) {
@@ -168,4 +188,5 @@ export const OWNER_LABELS: Record<ContractOwner, string> = {
   circle: "Circle",
   safe: "Safe",
   token: "Token",
+  vault: "Morpho Vault",
 };

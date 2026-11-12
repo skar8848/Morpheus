@@ -92,6 +92,11 @@ export default function CanvasPage() {
     setEdges,
     setNodes,
     wasImported,
+    verifyingImport,
+    importWarnings,
+    importFailure,
+    retryImport,
+    dismissImportWarnings,
   } = useCanvasState();
 
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
@@ -679,6 +684,66 @@ export default function CanvasPage() {
               <circle cx="8" cy="11.5" r="0.75" fill="#f59e0b" />
             </svg>
             <span className="text-xs font-medium text-text-primary">{connectionHint.message}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Deep-link verification: what the link named that Morpho couldn't vouch for */}
+      {(verifyingImport || importFailure !== null || importWarnings.length > 0) && (
+        <div className="pointer-events-none absolute left-1/2 top-6 z-50 w-[min(520px,90%)] -translate-x-1/2 animate-fade-in">
+          <div className="pointer-events-auto rounded-xl border border-border bg-bg-card/95 px-4 py-2.5 shadow-lg backdrop-blur-sm">
+            {verifyingImport ? (
+              <span className="text-xs font-medium text-text-secondary">
+                Verifying the linked markets and vaults with Morpho…
+              </span>
+            ) : (
+              <>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                      <circle cx="8" cy="8" r="7" stroke="#f59e0b" strokeWidth="1.5" />
+                      <path d="M8 4.5v4" stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" />
+                      <circle cx="8" cy="11.5" r="0.75" fill="#f59e0b" />
+                    </svg>
+                    <span className="text-xs font-medium text-text-primary">
+                      {importFailure === "unreachable"
+                        ? "Morpho could not be reached to verify the linked strategy, so it was not loaded"
+                        : importFailure === "error"
+                          ? "The linked strategy could not be verified, so it was not loaded"
+                          : "Part of the linked strategy could not be verified and was cleared"}
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    {importFailure === "unreachable" && (
+                      <button
+                        type="button"
+                        onClick={retryImport}
+                        className="text-[11px] font-medium text-brand hover:underline"
+                      >
+                        Retry
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={dismissImportWarnings}
+                      className="text-text-tertiary hover:text-text-primary"
+                      title="Dismiss"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                        <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                {importWarnings.length > 0 && (
+                  <ul className="mt-1.5 space-y-0.5 pl-6">
+                    {importWarnings.map((w, i) => (
+                      <li key={`${i}-${w}`} className="text-[11px] text-text-secondary">{w}</li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}

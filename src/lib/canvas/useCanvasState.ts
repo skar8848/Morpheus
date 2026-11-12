@@ -21,7 +21,8 @@ import { buildInitialLayout } from "./layout";
 import { isValidConnection } from "./validation";
 import { KNOWN_NODE_TYPES, VALID_CONNECTIONS, type CanvasNode, type CanvasNodeData } from "./types";
 import type { SupportedChainId } from "@/lib/web3/chains";
-import { consumeImportedStrategy, parseDeepLink } from "./importStrategy";
+import { consumeImportedStrategy, parseDeepLink, type ImportedStrategy } from "./importStrategy";
+import { verifyImportedStrategy } from "./verifyImport";
 import { stripDustNodes } from "./dust";
 
 const MAX_HISTORY = 50;
@@ -63,6 +64,17 @@ export function useCanvasState() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const initialized = useRef(false);
   const wasImported = useRef(false);
+  // A deep-linked strategy is checked against the Morpho API before it lands on
+  // the canvas; these drive the "verifying" notice and the list of what was cleared.
+  const [verifyingImport, setVerifyingImport] = useState(() => parseDeepLink(searchParams) !== null);
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  // Set when the link could not be verified, so nothing from it was loaded.
+  // "unreachable": the API could not be reached; the link stays in the URL and
+  // in this ref, so the user can retry instead of going back to whoever sent it.
+  // "error": verification itself failed on the link's content; retrying would
+  // fail the same way, so no retry is offered.
+  const [importFailure, setImportFailure] = useState<"unreachable" | "error" | null>(null);
+  const pendingDeepLink = useRef<ImportedStrategy | null>(null);
 
   // --- Undo / Redo history ---
   const historyRef = useRef<SavedGraph[]>([]);
@@ -119,41 +131,8 @@ export function useCanvasState() {
 
   const STORAGE_KEY = `morpho-canvas-${chainId}`;
 
-  // Initialize: deep link (?strategy=) → imported strategy → localStorage draft → fresh layout
-  useEffect(() => {
-    if (initialized.current) return;
-    initialized.current = true;
-
-    // 1. Highest precedence: URL deep link from an agent
-    const deepLink = parseDeepLink(searchParams);
-    if (deepLink) {
-      setNodes(deepLink.nodes);
-      setEdges(deepLink.edges);
-      wasImported.current = true;
-      // Strip ?strategy= from the URL so a refresh doesn't re-import
-      // and so the saved draft takes over from here.
-      try {
-        if (pathname) {
-          const next = new URLSearchParams(searchParams?.toString() ?? "");
-          next.delete("strategy");
-          const qs = next.toString();
-          router.replace(qs ? `${pathname}?${qs}` : pathname);
-        }
-      } catch { /* router not available, ignore */ }
-      return;
-    }
-
-    // 2. Next: import from /address page (localStorage handoff)
-    const imported = consumeImportedStrategy();
-    if (imported) {
-      const clean = stripDustNodes(imported.nodes, imported.edges);
-      setNodes(clean.nodes);
-      setEdges(clean.edges);
-      wasImported.current = true;
-      return;
-    }
-
-    // 3. Saved draft from previous session
+  /** The saved draft for this chain, or a fresh layout when there is none. */
+  const loadDraftOrFresh = useCallback(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
@@ -170,10 +149,90 @@ export function useCanvasState() {
       }
     } catch { /* ignore corrupt data */ }
 
-    // 4. Fresh layout
     const initial = buildInitialLayout(address, slug, chainId, [], []);
     setNodes(initial);
-  }, [address, slug, chainId, setNodes, setEdges, searchParams, router, pathname]);
+  }, [STORAGE_KEY, address, slug, chainId, setNodes, setEdges]);
+
+  /**
+   * Verify a deep-linked strategy against the Morpho API, then load it. Its
+   * markets and vaults are re-resolved first, so the canvas never shows (or
+   * signs) an address the link made up. See verifyImport.ts.
+   *
+   * When the API can't be reached, nothing from the link is loaded and the link
+   * is kept (URL and ref) so the user can retry: a hollow copy of the strategy
+   * would otherwise be autosaved over the draft and the link lost for good.
+   */
+  const importDeepLink = useCallback(
+    (link: ImportedStrategy) => {
+      pendingDeepLink.current = link;
+      setVerifyingImport(true);
+      setImportFailure(null);
+      verifyImportedStrategy(link, chainId as SupportedChainId)
+        .then(({ strategy, warnings, reachable }) => {
+          if (!reachable) {
+            setImportFailure("unreachable");
+            setVerifyingImport(false);
+            return;
+          }
+          pendingDeepLink.current = null;
+          wasImported.current = true;
+          setNodes(strategy.nodes);
+          setEdges(strategy.edges);
+          setImportWarnings(warnings);
+          setVerifyingImport(false);
+          // Strip ?strategy= from the URL so a refresh doesn't re-import
+          // and so the saved draft takes over from here.
+          try {
+            if (pathname) {
+              const next = new URLSearchParams(window.location.search);
+              next.delete("strategy");
+              const qs = next.toString();
+              router.replace(qs ? `${pathname}?${qs}` : pathname);
+            }
+          } catch { /* router not available, ignore */ }
+        })
+        .catch((err) => {
+          // Not a network failure (fetchRegistry absorbs those): the link's
+          // content broke verification. Report it as such, never as "unreachable".
+          console.error("[Morpheus] deep-link verification failed", err);
+          setImportFailure("error");
+          setVerifyingImport(false);
+        });
+    },
+    [chainId, setNodes, setEdges, router, pathname]
+  );
+
+  const retryImport = useCallback(() => {
+    if (pendingDeepLink.current) importDeepLink(pendingDeepLink.current);
+  }, [importDeepLink]);
+
+  // Initialize: deep link (?strategy=) → imported strategy → localStorage draft → fresh layout
+  useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
+
+    // 1. Highest precedence: URL deep link from an agent. The draft (or a fresh
+    // layout) shows while it is being verified, and stays if verification can't run.
+    const deepLink = parseDeepLink(searchParams);
+    if (deepLink) {
+      loadDraftOrFresh();
+      importDeepLink(deepLink);
+      return;
+    }
+
+    // 2. Next: import from /address page (localStorage handoff)
+    const imported = consumeImportedStrategy();
+    if (imported) {
+      const clean = stripDustNodes(imported.nodes, imported.edges);
+      setNodes(clean.nodes);
+      setEdges(clean.edges);
+      wasImported.current = true;
+      return;
+    }
+
+    // 3. Saved draft from previous session, else 4. a fresh layout
+    loadDraftOrFresh();
+  }, [setNodes, setEdges, searchParams, loadDraftOrFresh, importDeepLink]);
 
   // Auto-save to localStorage (debounced 2s)
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -421,5 +480,13 @@ export function useCanvasState() {
     setNodes,
     setEdges,
     wasImported,
+    verifyingImport,
+    importWarnings,
+    importFailure,
+    retryImport,
+    dismissImportWarnings: () => {
+      setImportWarnings([]);
+      setImportFailure(null);
+    },
   };
 }
