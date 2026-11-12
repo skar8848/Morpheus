@@ -42,6 +42,7 @@ import {
   buildDeepLinkPayload,
   type CanvasApiRequest,
 } from "@/lib/canvas/api";
+import { CHAIN_CONFIGS } from "@/lib/web3/chains";
 
 export const runtime = "edge"; // fast, low-overhead
 export const dynamic = "force-dynamic";
@@ -55,7 +56,9 @@ const CORS_HEADERS = {
   "Access-Control-Max-Age": "86400",
 };
 
-const VALID_CHAIN_SLUGS = new Set(["ethereum", "base"]);
+// Every chain with a canvas page (/arbitrum/canvas exists, so the API has to be
+// able to link to it). Derived from CHAIN_CONFIGS, the one list of chains.
+const VALID_CHAIN_SLUGS = new Set(CHAIN_CONFIGS.map((c) => c.slug));
 
 function jsonError(status: number, message: string, extra: object = {}) {
   return NextResponse.json(
@@ -96,7 +99,7 @@ export async function POST(req: Request) {
     "ethereum";
 
   if (!VALID_CHAIN_SLUGS.has(chainSlug)) {
-    return jsonError(400, `Unknown chain "${chainSlug}". Supported: ethereum, base`);
+    return jsonError(400, `Unknown chain "${chainSlug}". Supported: ${[...VALID_CHAIN_SLUGS].join(", ")}`);
   }
 
   // Validate the strategy shape

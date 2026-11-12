@@ -2,7 +2,8 @@
 // Copyright (c) 2025-2026 Alban Derouin. All rights reserved.
 
 /**
- * GET /api/positions?address=0x...&chain=ethereum|base
+ * GET /api/positions?address=0x...&chain=ethereum|base|arbitrum|hyperevm|monad
+ *     (`chainId=1` etc. is accepted in place of `chain`)
  *
  * Returns ALL Morpho positions held by an address — V1 (legacy MetaMorpho)
  * AND V2 vault positions, plus all market positions (borrows + supplies).
@@ -62,6 +63,7 @@ import type {
   UserVaultPositionsResponse,
 } from "@/lib/graphql/types";
 import { fetchUserVaultV2PositionsServer } from "@/lib/canvas/vaultV2.server";
+import { CHAIN_CONFIGS } from "@/lib/web3/chains";
 
 // Use Node runtime — viem multicall via createPublicClient is faster on Node
 // than Edge for this workload (multiple RPC roundtrips).
@@ -75,13 +77,17 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "content-type",
 };
 
+// Every chain the app supports, by slug or numeric id, plus the usual aliases
+// for mainnet. Derived from CHAIN_CONFIGS so a new chain needs no edit here.
 const CHAIN_SLUG_TO_ID: Record<string, number> = {
-  ethereum: 1,
   eth: 1,
   mainnet: 1,
-  "1": 1,
-  base: 8453,
-  "8453": 8453,
+  ...Object.fromEntries(
+    CHAIN_CONFIGS.flatMap((c) => [
+      [c.slug, c.chainId],
+      [String(c.chainId), c.chainId],
+    ])
+  ),
 };
 
 function jsonError(status: number, message: string) {
@@ -108,7 +114,13 @@ export async function OPTIONS() {
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const addressParam = url.searchParams.get("address");
-  const chainParam = (url.searchParams.get("chain") ?? "ethereum").toLowerCase();
+  // `chainId` is accepted too: the one-pager documents `?chainId=1`, and before
+  // this it was ignored, so `chainId=8453` silently returned Ethereum positions.
+  const chainParam = (
+    url.searchParams.get("chain") ??
+    url.searchParams.get("chainId") ??
+    "ethereum"
+  ).toLowerCase();
 
   if (!addressParam || !isAddress(addressParam)) {
     return jsonError(400, "Missing or invalid `address` query param (must be 0x...)");
@@ -119,10 +131,11 @@ export async function GET(req: Request) {
   if (!chainId) {
     return jsonError(
       400,
-      `Unknown chain "${chainParam}". Supported: ethereum, base`
+      `Unknown chain "${chainParam}". Supported: ${CHAIN_CONFIGS.map((c) => c.slug).join(", ")}`
     );
   }
-  const chainSlug = chainId === 1 ? "ethereum" : "base";
+  // chainId came out of CHAIN_SLUG_TO_ID, so it always has a config.
+  const chainSlug = CHAIN_CONFIGS.find((c) => c.chainId === chainId)!.slug;
 
   // V2 discovery is a multicall over public RPCs and can fail on its own; it is
   // reported in `warnings` rather than failing the whole call. The two Morpho

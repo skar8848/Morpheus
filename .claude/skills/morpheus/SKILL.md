@@ -140,7 +140,7 @@ When mentioning CowSwap to the user, frame it as: *"The Morpho USDC/EURCV market
 
 ```jsonc
 {
-  "chain": "ethereum" | "base",
+  "chain": "ethereum" | "base" | "arbitrum" | "hyperevm" | "monad",
   "sourceAddress": "0x...",
   "nodes": [
     {
@@ -390,7 +390,7 @@ Check the market before proposing it: `listed`, utilisation below ~95% (above th
 1. **Never invent vault or market addresses.** Always discover them via the Morpho MCP first.
 2. **Never auto-execute.** The deep link only opens the canvas — the user must click Execute and sign.
 3. **Never set the wallet address to anything other than the user's own.** If you don't know it, leave it as `undefined`.
-4. **Always parameterize the chain.** `chain: "ethereum"` (chainId 1) or `chain: "base"` (chainId 8453) — match the chain of the markets/vaults you found.
+4. **Always parameterize the chain.** `chain` is `"ethereum"` (chainId 1), `"base"` (8453), `"arbitrum"` (42161), `"hyperevm"` (999) or `"monad"` (143): match the chain of the markets/vaults you found.
 5. **Decimals must match the asset.** USDC = 6, WETH/wstETH = 18, etc. Read from the MCP response, never assume.
 6. **Validate before presenting.** If unsure, POST to `/api/canvas/validate` first to check the schema without generating a URL.
 7. **CowSwap is Ethereum-only.** Don't include `swapNode` for Base canvases.
