@@ -5,7 +5,7 @@
 <h1 align="center">Morpheus</h1>
 
 <p align="center">
-  Visual strategy composer for <a href="https://morpho.org">Morpho Protocol</a> — build, simulate, and execute complex DeFi yield strategies on Ethereum and Base.
+  Visual strategy composer for <a href="https://morpho.org">Morpho Protocol</a> — build, simulate, and execute complex DeFi yield strategies on Ethereum, Base, Arbitrum, HyperEVM and Monad.
 </p>
 
 <p align="center">
@@ -36,28 +36,18 @@ The core of Morpheus. Drag-and-drop nodes onto a canvas to build strategies visu
 | **Swap** | Execute token swaps via CoW Swap |
 | **Vault Deposit** | Deploy assets into ERC-4626 vaults |
 | **Vault Withdraw** | Withdraw from existing vault positions |
-| **Repay** | Repay borrowed positions |
+| **Repay** | Repay borrowed positions, optionally freeing the collateral in the same bundle |
+| **Bridge** | Move an asset to another supported chain through LI.FI, so the next nodes run there |
+| **Position** | An existing on-chain position imported from the Address page (read-only) |
 
 **Canvas features:**
-- Drag & drop nodes from sidebar or use keyboard shortcuts (`S`, `B`, `X`, `D`, `W`, `R`)
+- Drag & drop nodes from sidebar or use keyboard shortcuts (`B`, `L`, `U`, `X`, `D`, `W`, `R`, `G`)
 - Smart connection validation — only valid flows are allowed
 - Auto-layout to organize nodes
 - Save/load strategies to browser storage
 - Export strategy as PNG screenshot
 - Undo/redo (`Ctrl+Z` / `Ctrl+Shift+Z`)
 - Import existing on-chain positions directly onto the canvas
-
-### Strategy — Guided Form Builder
-
-A step-by-step interface for users who prefer a linear workflow over freeform canvas:
-
-1. View your active positions
-2. Pick collateral assets
-3. Choose a loan asset
-4. Configure borrow amounts across markets
-5. Simulate health factor and liquidation prices
-6. Select vaults and allocate funds
-7. Review and execute the full transaction bundle
 
 ### Address Explorer
 
@@ -71,6 +61,9 @@ Inspect any address's Morpho activity:
 
 - **Ethereum** (Mainnet)
 - **Base**
+- **Arbitrum**
+- **HyperEVM**
+- **Monad**
 
 ## Protocol Integrations
 
@@ -78,6 +71,7 @@ Inspect any address's Morpho activity:
 - **ERC-4626 Vaults** — Morpho strategy vaults with APY and allocation data
 - **CoW Swap** — Decentralized token swaps via batch auctions
 - **Morpho Bundler3** — Atomic multi-step transaction execution
+- **LI.FI**: cross-chain routes for the Bridge node
 
 ## Tech Stack
 
@@ -98,9 +92,11 @@ Inspect any address's Morpho activity:
 | `D` | Add Vault Deposit node |
 | `W` | Add Vault Withdraw node |
 | `R` | Add Repay node |
-| `Delete` | Remove selected node |
+| `G` | Add Bridge node |
+| `M` | Toggle the minimap |
+| `Delete` / `Backspace` | Remove selected node |
 | `Ctrl+Z` | Undo |
-| `Ctrl+Shift+Z` | Redo |
+| `Ctrl+Shift+Z` / `Ctrl+Y` | Redo |
 | `?` | Show help |
 
 ## Built by
