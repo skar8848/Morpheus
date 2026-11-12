@@ -258,24 +258,26 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
       owner: `0x${string}`,
       spender: `0x${string}`
     ) => {
-      const needed: { token: `0x${string}`; amount: bigint }[] = [];
-      for (const a of approvals) {
-        try {
-          const allowance = await readContract(wagmiConfig, {
-            address: a.token,
-            abi: erc20Abi,
-            functionName: "allowance",
-            args: [owner, spender],
-          });
-          if ((allowance as bigint) < a.amount) {
-            needed.push(a);
+      // The reads are independent, so run them side by side rather than one
+      // round-trip per token. (Not a multicall: the HyperEVM and Monad chain
+      // configs define no multicall3 contract.)
+      const isNeeded = await Promise.all(
+        approvals.map(async (a) => {
+          try {
+            const allowance = await readContract(wagmiConfig, {
+              address: a.token,
+              abi: erc20Abi,
+              functionName: "allowance",
+              args: [owner, spender],
+            });
+            return (allowance as bigint) < a.amount;
+          } catch {
+            // RPC error — include approval to be safe
+            return true;
           }
-        } catch {
-          // RPC error — include approval to be safe
-          needed.push(a);
-        }
-      }
-      return needed;
+        })
+      );
+      return approvals.filter((_, i) => isNeeded[i]);
     },
     []
   );
