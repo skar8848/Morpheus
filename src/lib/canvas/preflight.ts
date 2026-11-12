@@ -76,6 +76,11 @@ export interface PreflightResult {
   needsMorphoAuthorization: boolean;
 }
 
+/** The authorization warning, exported so the preview can recognise it and show
+ * it in its dedicated panel instead of the generic warnings list. */
+export const MORPHO_AUTH_WARNING =
+  "This strategy borrows or withdraws on your behalf — a one-time Morpho authorization tx will be sent before the bundle (auto-handled at Execute)";
+
 export const EMPTY_PREFLIGHT: PreflightResult = {
   ok: false,
   loading: false,
@@ -228,9 +233,7 @@ export async function runPreflight(
     }
     result.needsMorphoAuthorization = !isAuthorized;
     if (!isAuthorized) {
-      result.warnings.push(
-        "This strategy borrows or withdraws on your behalf — a one-time Morpho authorization tx will be sent before the bundle (auto-handled at Execute)"
-      );
+      result.warnings.push(MORPHO_AUTH_WARNING);
     }
   }
 

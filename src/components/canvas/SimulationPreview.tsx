@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 import type { Edge } from "@xyflow/react";
-import type { PreflightResult } from "@/lib/canvas/preflight";
+import { MORPHO_AUTH_WARNING, type PreflightResult } from "@/lib/canvas/preflight";
 import { formatUnits } from "viem";
 import {
   useMorphoMcpSimulate,
@@ -200,11 +200,9 @@ export default function SimulationPreview({ result, nodes, edges }: SimulationPr
   } = result;
 
   // The auth warning gets its own dedicated panel — filter it out of the
-  // generic warnings list to avoid duplication.
-  const AUTH_WARNING_PREFIX = "First-time borrow";
-  const filteredWarnings = warnings.filter(
-    (w) => !w.startsWith(AUTH_WARNING_PREFIX)
-  );
+  // generic warnings list to avoid duplication. Matched on the exact string
+  // preflight emits: the old prefix check ("First-time borrow") never matched.
+  const filteredWarnings = warnings.filter((w) => w !== MORPHO_AUTH_WARNING);
 
   // Status banner
   let statusLabel: string;
