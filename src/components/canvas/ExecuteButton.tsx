@@ -1052,11 +1052,13 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
 
         setSwapStatus(null);
       }
-
-      setShowConfirm(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to build bundle");
     } finally {
+      // Every exit re-arms the "click again to confirm" step, not only success:
+      // the early `setError(...); return;` paths used to leave it armed, so the
+      // next click signed straight away.
+      setShowConfirm(false);
       setApprovalStep(0);
       isExecutingRef.current = false;
       setIsExecuting(false);
