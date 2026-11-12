@@ -29,13 +29,12 @@ function PositionNodeComponent({ data }: NodeProps) {
     borrow: "Borrow Position",
     supply: "Supply Position",
     vault: "Vault Position",
-    collateral: "Collateral Position",
   };
 
   return (
     <NodeShell nodeType="position" title={titleMap[d.positionType] ?? "Position"}>
       <div className="space-y-1.5">
-        {/* Market position (borrow/supply/collateral) */}
+        {/* Market position (borrow/supply) */}
         {d.marketPosition && (
           <>
             <div className="flex items-center gap-2">

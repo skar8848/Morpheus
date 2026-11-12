@@ -337,14 +337,3 @@ export function getTemplatesForChain(chainId: number): StrategyTemplate[] {
   return TEMPLATES.filter((t) => t.chainId === chainId);
 }
 
-/** Return all templates. */
-export function getAllTemplates(): StrategyTemplate[] {
-  return TEMPLATES;
-}
-
-/** Build a template by id. */
-export function buildTemplate(id: string): ImportedStrategy | null {
-  const tpl = TEMPLATES.find((t) => t.id === id);
-  if (!tpl) return null;
-  return tpl.build();
-}

@@ -437,8 +437,8 @@ export default function CanvasPage() {
   );
 
   // Validate connection before allowing — also track rejections for hints
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const connectionValidator = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (connection: any) => {
       const valid = isValidConnection(connection, nodes as CanvasNode[]);
       if (!valid && connection.source && connection.target) {
@@ -624,7 +624,6 @@ export default function CanvasPage() {
                 const pushIdx = a.x <= b.x ? j : i;
                 const stayIdx = a.x <= b.x ? i : j;
                 const stay = rects[stayIdx];
-                const push = rects[pushIdx];
                 const newX = stay.x + stay.w + GAP;
                 updated[pushIdx].position.x = newX;
                 rects[pushIdx].x = newX;

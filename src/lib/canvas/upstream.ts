@@ -37,8 +37,6 @@ export interface UpstreamResult {
   inputs: UpstreamInput[];
   /** The asset the last producing source delivers — what a consumer should default to. */
   suggestedAsset: Asset | null;
-  /** The swap feeding this node, if any: its fill is unknown until it executes. */
-  swapNodeId: string | null;
 }
 
 type AssetLike = {
@@ -63,7 +61,6 @@ function toAsset(a: AssetLike | null | undefined): Asset | null {
 export function collectUpstream(nodeId: string, nodes: CanvasNode[], edges: Edge[]): UpstreamResult {
   const inputs: UpstreamInput[] = [];
   let suggestedAsset: Asset | null = null;
-  let swapNodeId: string | null = null;
 
   for (const edge of edges) {
     if (edge.target !== nodeId) continue;
@@ -80,7 +77,6 @@ export function collectUpstream(nodeId: string, nodes: CanvasNode[], edges: Edge
       case "swap": {
         const out = toAsset(sd.tokenOut as AssetLike | null);
         if (!out) break;
-        swapNodeId = source.id;
         push("swap", `Swap → ${out.symbol}`, parseFloat((sd.quoteOut as string) || "0"), out);
         break;
       }
@@ -146,7 +142,7 @@ export function collectUpstream(nodeId: string, nodes: CanvasNode[], edges: Edge
     }
   }
 
-  return { inputs, suggestedAsset, swapNodeId };
+  return { inputs, suggestedAsset };
 }
 
 /**

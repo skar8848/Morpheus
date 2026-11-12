@@ -179,7 +179,7 @@ export interface BridgeNodeData {
 export interface PositionNodeData {
   [key: string]: unknown;
   type: "position";
-  positionType: "borrow" | "supply" | "vault" | "collateral";
+  positionType: "borrow" | "supply" | "vault";
   marketPosition: UserMarketPosition | null;
   vaultPosition: UserVaultPosition | null;
 }

@@ -7,7 +7,7 @@ import { useState, useEffect, type DragEvent } from "react";
 import Image from "next/image";
 import { useAccount } from "wagmi";
 import { useUserPositions } from "@/lib/hooks/useUserPositions";
-import { formatUsd, formatApy, formatTokenAmount } from "@/lib/utils/format";
+import { formatUsd } from "@/lib/utils/format";
 import { safeBigInt } from "@/lib/utils/bigint";
 import { DRAGGABLE_NODE_TYPES, NODE_COLORS } from "@/lib/canvas/types";
 import { isBorrowDust, isVaultDust } from "@/lib/canvas/dust";
