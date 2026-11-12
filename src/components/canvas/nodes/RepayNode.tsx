@@ -54,6 +54,15 @@ function RepayNodeComponent({ id, data }: NodeProps) {
     Number(currentCollateralRaw) / 10 ** collateralDecimals;
   const currentCollateralUsd = selectedPosition?.state?.collateralUsd ?? 0;
 
+  // What the bundle will actually withdraw is the stored raw figure, so that is
+  // what the toggle shows (it can trail the live position by a few blocks).
+  let storedCollateral = 0;
+  try {
+    storedCollateral = Number(BigInt(d.collateralToWithdraw ?? "0")) / 10 ** collateralDecimals;
+  } catch { /* malformed raw amount: show 0 */ }
+  const storedCollateralUsd =
+    currentCollateral > 0 ? (currentCollateralUsd * storedCollateral) / currentCollateral : 0;
+
   const amount = parseFloat(d.amount || "0");
   const isFullRepay = currentDebt > 0 && amount >= currentDebt * 0.999;
 
@@ -128,11 +137,16 @@ function RepayNodeComponent({ id, data }: NodeProps) {
             value={d.market?.uniqueKey ?? ""}
             onChange={(val) => {
               const pos = borrowPositions.find((p) => p.market.uniqueKey === val);
+              // The collateral to free is in the OLD market's collateral units:
+              // carried over, the executor would withdraw a wstETH raw figure
+              // as WBTC (1e18 vs 1e8) and downstream nodes would be fed it.
               updateNodeData(id, {
                 market: pos?.market ?? null,
                 amount: "",
                 amountUsd: 0,
                 repayAll: false,
+                withdrawCollateralAfterRepay: false,
+                collateralToWithdraw: undefined,
               });
             }}
             placeholder="Select borrow to repay..."
@@ -279,14 +293,14 @@ function RepayNodeComponent({ id, data }: NodeProps) {
                       />
                     )}
                     <span className="flex-1 text-xs text-text-primary">
-                      {currentCollateral.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                      {storedCollateral.toLocaleString(undefined, { maximumFractionDigits: 6 })}
                     </span>
                     <span className="shrink-0 text-[10px] text-text-tertiary">
                       {d.market.collateralAsset.symbol}
                     </span>
                   </div>
                   <p className="mt-1 text-right text-[10px] text-text-tertiary">
-                    ≈ {formatUsd(currentCollateralUsd)}
+                    ≈ {formatUsd(storedCollateralUsd)}
                   </p>
                 </>
               )}
