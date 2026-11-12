@@ -786,7 +786,10 @@ function emitNodeCalls(node: CanvasNode, ctx: EmitContext): BundlerCall[] {
     case "repay": {
       const d = node.data as unknown as RepayNodeData;
       if (!d.market || !d.amount) break;
-      const rawAmount = repayPullRaw(d);
+      // Like every other consumer, a repay fed by a swap pulls no more than the
+      // fill delivered: the quote it was sized on can land a little short, and
+      // pulling the quoted amount would revert or dip into the user's own balance.
+      const rawAmount = resolveConsumerAmount(node.id, repayPullRaw(d), false, ctx);
       if (rawAmount === 0n) break;
       const mp = toMarketParams(d.market);
       if (!mp) break;
