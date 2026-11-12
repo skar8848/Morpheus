@@ -592,7 +592,14 @@ export default function CanvasPage() {
     }
   }, [nodes, setNodes, getNodeRect]);
 
-  // Watch for node resizes — push overlapping neighbors apart
+  // Watch for node resizes — push overlapping neighbors apart.
+  //
+  // Set up once. The effect used to have no dependency list, so every
+  // keystroke in any node disconnected the observer, re-queried every node and
+  // re-observed it, and each observe() fires an initial callback, which queued
+  // a setNodes. React Flow mounts node elements a render after the nodes
+  // change, so instead of re-running on nodes.length a MutationObserver picks
+  // up the ones that appear.
   const resizeDebounce = useRef<NodeJS.Timeout | null>(null);
   useEffect(() => {
     const container = reactFlowWrapper.current;
@@ -630,12 +637,25 @@ export default function CanvasPage() {
       }, 200);
     });
 
-    // Observe all node elements
-    const nodeEls = container.querySelectorAll(".react-flow__node");
-    nodeEls.forEach((el) => observer.observe(el));
+    // Observe every node element, now and as they are added
+    const observed = new WeakSet<Element>();
+    const observeNodes = () => {
+      container.querySelectorAll(".react-flow__node").forEach((el) => {
+        if (observed.has(el)) return;
+        observed.add(el);
+        observer.observe(el);
+      });
+    };
+    observeNodes();
+    const mutations = new MutationObserver(observeNodes);
+    mutations.observe(container, { childList: true, subtree: true });
 
-    return () => observer.disconnect();
-  });
+    return () => {
+      mutations.disconnect();
+      observer.disconnect();
+      if (resizeDebounce.current) clearTimeout(resizeDebounce.current);
+    };
+  }, [setNodes, getNodeRect]);
 
   // Node deletions never reach onNodesChange: onBeforeDelete takes them over
   // (deleteNodes snapshots history itself) and hands React Flow an empty list.
