@@ -17,7 +17,8 @@ import "@xyflow/react/dist/style.css";
 import type { Edge } from "@xyflow/react";
 import { nodeTypes } from "./nodes";
 import { edgeTypes } from "./edges";
-import { useCanvasState } from "@/lib/canvas/useCanvasState";
+import { useCanvasState, dropUnknownNodes } from "@/lib/canvas/useCanvasState";
+import { stripDustNodes } from "@/lib/canvas/dust";
 import { useChain } from "@/lib/context/ChainContext";
 import { isValidConnection, getConnectionHint } from "@/lib/canvas/validation";
 import { organizeLayout } from "@/lib/canvas/layout";
@@ -227,8 +228,13 @@ export default function CanvasPage() {
   const loadStrategy = useCallback(
     (strategy: SavedStrategy) => {
       pushHistory();
-      setNodes(strategy.nodes as CanvasNode[]);
-      setEdges(strategy.edges);
+      // Same cleanup as the autosaved draft: a strategy saved before the
+      // Supply Collateral node was folded into Borrow still holds that node,
+      // which renders as a blank box and fails validation.
+      const known = dropUnknownNodes(strategy.nodes as CanvasNode[], strategy.edges);
+      const clean = stripDustNodes(known.nodes, known.edges);
+      setNodes(clean.nodes);
+      setEdges(clean.edges);
       setShowLoad(false);
     },
     [pushHistory, setNodes, setEdges]

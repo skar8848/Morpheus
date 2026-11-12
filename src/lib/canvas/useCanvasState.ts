@@ -40,7 +40,7 @@ interface SavedGraph {
  * renders an unknown type as a blank box with no handles, which looks like a bug
  * and can never be connected or executed — better to leave it out.
  */
-function dropUnknownNodes(
+export function dropUnknownNodes(
   nodes: CanvasNode[],
   edges: Edge[]
 ): { nodes: CanvasNode[]; edges: Edge[] } {
