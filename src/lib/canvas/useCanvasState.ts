@@ -71,7 +71,17 @@ export function useCanvasState() {
   const skipHistoryRef = useRef(false);
   const [historyVersion, setHistoryVersion] = useState(0);
 
+  // The graph the last snapshot was taken from. One user action can reach
+  // pushHistory twice in the same tick (a deletion that removes nodes and
+  // selected edges: once from deleteNodes, once from the edges change), and a
+  // second identical snapshot would make the next Undo look like it did
+  // nothing.
+  const lastSnapshotRef = useRef<{ nodes: CanvasNode[]; edges: Edge[] } | null>(null);
+
   const pushHistory = useCallback(() => {
+    const last = lastSnapshotRef.current;
+    if (last && last.nodes === nodes && last.edges === edges) return;
+    lastSnapshotRef.current = { nodes, edges };
     // Snapshot current state before a destructive action
     historyRef.current.push({
       nodes: JSON.parse(JSON.stringify(nodes)),
