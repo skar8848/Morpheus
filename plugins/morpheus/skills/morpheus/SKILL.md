@@ -19,15 +19,16 @@ Morpheus is a visual node-graph editor for composing Morpho lending strategies. 
 
 A canvas is a directed graph of nodes connected by edges:
 
-- **wallet** — user's source. Connects to: `vaultDeposit` (direct earn), `lend` (direct isolated-market earn), `borrow` (borrow flow), `swap`, `repay`
+- **wallet** — user's source. Connects to: `vaultDeposit` (direct earn), `lend` (direct isolated-market earn), `borrow` (borrow flow), `swap`, `repay`, `bridge`
 - **borrow** — post collateral on a **Morpho Blue market** AND borrow the loan asset against it, in ONE node. The node owns both legs: `collateralAsset` + `collateralAmount` (what it posts) and `market` + `ltvPercent` (what it draws). Connects from `wallet`/`swap`/`vaultWithdraw`/`lendWithdraw`/`repay`/`bridge`/`borrow`/`position`. Connects to: `swap`, `vaultDeposit`, `lend`, `bridge`, `borrow`
 - **lend** — supply the loan asset into ONE **isolated Morpho Blue market** (bare supply — no collateral, no debt). The lender is exposed only to that market's collateral. Terminal node. Connects from `wallet`/`borrow`/`swap`/`vaultWithdraw`/`lendWithdraw`/`repay`/`bridge`.
 - **lendWithdraw** — take supply back out of an isolated market. The position is picked from what the wallet holds. Connects from `position`. Connects to: `swap`/`vaultDeposit`/`borrow`/`lend`/`repay`/`bridge`
 - **swap** — CowSwap intent (Ethereum mainnet only). Connects from `wallet`/`borrow`/`vaultWithdraw`/`lendWithdraw`. Connects to: `vaultDeposit`/`borrow`/`lend`/`wallet`/`repay`
 - **vaultDeposit** — deposit into a Morpho Vault. Terminal node. Can be fed by `wallet` (pure earn), `borrow` (carry trade), `swap`, `vaultWithdraw` or `lendWithdraw` (rebalance).
-- **vaultWithdraw** — withdraw from existing vault position. Connects from `position`. Connects to: `swap`/`vaultDeposit`/`borrow`/`lend`/`repay`
+- **vaultWithdraw** — withdraw from existing vault position. Connects from `position`. Connects to: `swap`/`vaultDeposit`/`borrow`/`lend`/`repay`/`bridge`
 - **repay** — repay a Morpho Blue borrow. With `withdrawCollateralAfterRepay` it also sources the freed collateral (see below).
 - **position** — read-only existing position.
+- **bridge**: move an asset to another supported chain through LI.FI. The only edge allowed to cross chains; the nodes after it run on the destination chain. Connects from `wallet`/`borrow`/`swap`/`vaultWithdraw`/`lendWithdraw`/`position`. Connects to: `borrow`/`vaultDeposit`/`lend`/`swap`/`repay`
 
 > There is no standalone "supply collateral" node. Collateral and borrow are one position on Morpho Blue, so the `borrow` node carries both.
 
