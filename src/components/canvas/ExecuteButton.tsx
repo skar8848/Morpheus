@@ -291,6 +291,14 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
       switch (d.type) {
         case "vaultWithdraw": {
           if (!d.position || safeFloat(d.amount) <= 0) break;
+          // The adapter redeems the shares on the user's behalf, so it needs an
+          // allowance on them (the vault is the share token).
+          s.push({
+            label: `Approve ${d.position.vault.name} shares`,
+            detail: `Vault shares to the adapter`,
+            type: "approve",
+            icon: d.position.vault.asset.logoURI,
+          });
           s.push({
             label: `Withdraw from ${d.position.vault.name}`,
             detail: `${fmtNum(safeFloat(d.amount))} ${d.position.vault.asset.symbol}`,
@@ -308,7 +316,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               : `${fmtNum(safeFloat(d.collateralAmount))} ${d.collateralAsset.symbol}`;
             s.push({
               label: `Approve ${d.collateralAsset.symbol}`,
-              detail: `${collateralDetail} to Bundler`,
+              detail: `${collateralDetail} to the adapter`,
               type: "approve",
               icon: d.collateralAsset.logoURI,
             });
@@ -331,19 +339,18 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           if (!d.market) break;
           if (!d.depositAll && safeFloat(d.amount) <= 0) break;
           const sym = d.market.loanAsset.symbol;
-          const upEdge = edges.find((e) => e.target === node.id);
-          const upNode = upEdge ? sorted.find((n) => n.id === upEdge.source) : null;
-          const upType = upNode ? (upNode.data as { type?: string }).type : null;
-          // Only tokens coming straight from the user's wallet need a fresh allowance
-          // step; a borrow or swap output reaches the adapter another way.
-          if (!d.depositAll && (upType === undefined || upType === null || upType === "wallet" || upType === "vaultWithdraw" || upType === "lendWithdraw")) {
-            s.push({
-              label: `Approve ${sym}`,
-              detail: `${fmtNum(safeFloat(d.amount))} ${sym} to Bundler`,
-              type: "approve",
-              icon: d.market.loanAsset.logoURI,
-            });
-          }
+          // The lend always pulls its tokens from the user's wallet: a borrow sends
+          // the loan to the user and a CoW fill lands there too, so whatever feeds
+          // it, the adapter needs an allowance. Fed by a swap, it is granted after
+          // the fill, for the amount actually received.
+          s.push({
+            label: `Approve ${sym}`,
+            detail: d.depositAll
+              ? `Swap output (${sym}) to the adapter, after the fill`
+              : `${fmtNum(safeFloat(d.amount))} ${sym} to the adapter`,
+            type: "approve",
+            icon: d.market.loanAsset.logoURI,
+          });
           const apy = d.market.state.netSupplyApy ?? d.market.state.supplyApy;
           s.push({
             label: `Lend ${sym} to ${d.market.collateralAsset.symbol}/${sym}`,
@@ -383,25 +390,18 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           // When depositAll is true, amount comes from upstream swap at execution time
           if (!d.depositAll && safeFloat(d.amount) <= 0) break;
 
-          // Show approval step when the tokens are pulled from the user's wallet.
-          // Skip when the upstream is a swap (CowSwap output lands on the adapter
-          // already) or a borrow (the adapter holds the borrowed tokens directly).
-          const upEdge = edges.find((e) => e.target === node.id);
-          const upNode = upEdge ? sorted.find((n) => n.id === upEdge.source) : null;
-          const upType = upNode ? (upNode.data as { type?: string }).type : null;
-          const tokensComeFromUser =
-            upType === undefined ||
-            upType === "wallet" ||
-            upType === "vaultWithdraw";
-
-          if (tokensComeFromUser && !d.depositAll) {
-            s.push({
-              label: `Approve ${d.vault.asset.symbol}`,
-              detail: `${fmtNum(safeFloat(d.amount))} ${d.vault.asset.symbol} to Bundler`,
-              type: "approve",
-              icon: d.vault.asset.logoURI,
-            });
-          }
+          // The deposit always pulls its tokens from the user's wallet: a borrow
+          // sends the loan to the user (receiver = user) and a CoW order's
+          // receiver is the user too, so whatever feeds it, the adapter needs an
+          // allowance. Fed by a swap, it is granted after the fill.
+          s.push({
+            label: `Approve ${d.vault.asset.symbol}`,
+            detail: d.depositAll
+              ? `Swap output (${d.vault.asset.symbol}) to the adapter, after the fill`
+              : `${fmtNum(safeFloat(d.amount))} ${d.vault.asset.symbol} to the adapter`,
+            type: "approve",
+            icon: d.vault.asset.logoURI,
+          });
 
           const depositDetail = d.depositAll
             ? `All swap output → ${d.vault.asset.symbol} — ${formatApy(d.vault.state.netApy)}`
@@ -419,7 +419,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           // Repay needs an approval on the loan token (transferFrom from user)
           s.push({
             label: `Approve ${d.market.loanAsset.symbol}`,
-            detail: `${fmtNum(safeFloat(d.amount))} ${d.market.loanAsset.symbol} to Bundler`,
+            detail: `${fmtNum(safeFloat(d.amount))} ${d.market.loanAsset.symbol} to the adapter`,
             type: "approve",
             icon: d.market.loanAsset.logoURI,
           });
@@ -450,6 +450,17 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     }
     return s;
   }, [nodes, edges]);
+
+  // What the user will actually be asked to sign besides the approvals. A swap
+  // splits the strategy around a CoW order (a bundle before it, one after the
+  // fill), and a bridge sends its own transaction after the source bundle.
+  const txSummary = useMemo(() => {
+    if (planCrossChainExecution(nodes, edges, chainId as SupportedChainId).isCrossChain) {
+      return "source bundle + bridge transaction";
+    }
+    if (getSwapDetails(nodes, edges).length > 0) return "CoW order + up to 2 bundled transactions";
+    return "1 bundled transaction";
+  }, [nodes, edges, chainId]);
 
   // Handle approval + execution flow
   const handleExecute = useCallback(async () => {
@@ -1149,7 +1160,10 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               <div className="no-scrollbar relative max-h-[280px] overflow-y-auto pr-1">
                 <div className="space-y-0">
                   {steps.map((step, i) => {
-                    const done = !!txHash;
+                    // txHash is set by the first bundle already: with a swap or a
+                    // bridge more is still to come, so only a finished, error-free
+                    // run marks the steps done.
+                    const done = !!txHash && !isExecuting && !error;
                     const isLast = i === steps.length - 1;
 
                     return (
@@ -1272,7 +1286,8 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
                   Review the steps above carefully. Click Execute again to sign.
                 </p>
                 <p className="mt-0.5 text-[9px] text-yellow-400/70">
-                  {steps.filter((s) => s.type === "approve").length} approval(s) + 1 bundled tx
+                  {/* "Up to": an allowance that is already high enough is skipped. */}
+                  Up to {steps.filter((s) => s.type === "approve").length} approval(s) + {txSummary}
                 </p>
               </div>
             )}
@@ -1312,7 +1327,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
             {/* Summary bar */}
             <div className="mt-3 flex items-center justify-between rounded-lg border border-border bg-bg-secondary px-3 py-2 text-[10px] text-text-tertiary">
               <span>{steps.length} action{steps.length !== 1 ? "s" : ""}</span>
-              <span>1 bundled transaction</span>
+              <span>{txSummary.charAt(0).toUpperCase() + txSummary.slice(1)}</span>
             </div>
 
             {/* Pre-execution simulation — hidden behind a feature flag until polished */}
