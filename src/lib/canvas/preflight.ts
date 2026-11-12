@@ -17,7 +17,6 @@ import { wagmiConfig } from "@/lib/web3/config";
 import {
   buildExecutionBundle,
   getRequiredApprovals,
-  getRequiredApprovals as _getRequiredApprovals,
   strategyNeedsMorphoAuthorization,
 } from "./executor";
 import { validateGraph } from "./validation";
@@ -28,9 +27,6 @@ import {
   MORPHO_BLUE,
   morphoBlueAbi,
 } from "@/lib/constants/contracts";
-
-// Silence unused — kept to avoid editing imports above twice in case of refactor
-void _getRequiredApprovals;
 
 export interface PreflightResult {
   /** True when preflight has finished without blocking errors */

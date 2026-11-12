@@ -22,6 +22,7 @@
  */
 
 import { encodeFunctionData } from "viem";
+import { MIDNIGHT_API } from "./api";
 
 export const MIDNIGHT_CORE = "0xAdedD8ab6dE832766Fedf0FaC4992E5C4D3EA18A" as const;
 export const MIDNIGHT_BUNDLES = "0x091183d729BE9f808c212b475E387A12E67850A7" as const;
@@ -215,7 +216,7 @@ export async function fetchMidnightQuote(
   slippagePct = 0.5
 ): Promise<MidnightQuote> {
   const url =
-    `https://api.morpho.org/v0/midnight/books/${marketId}/${side}/quote` +
+    `${MIDNIGHT_API}/books/${marketId}/${side}/quote` +
     `?assets=${assets.toString()}&slippage=${slippagePct}`;
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`Midnight quote ${res.status}`);

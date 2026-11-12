@@ -34,21 +34,6 @@ export interface StrategyMetrics {
   borrowCount: number;
 }
 
-export const EMPTY_METRICS: StrategyMetrics = {
-  totalDepositUsd: 0,
-  totalCollateralUsd: 0,
-  totalBorrowUsd: 0,
-  totalRepayUsd: 0,
-  avgEarnApy: 0,
-  avgBorrowApy: 0,
-  netApy: 0,
-  healthFactor: null,
-  netAnnualUsd: 0,
-  vaultCount: 0,
-  lendCount: 0,
-  borrowCount: 0,
-};
-
 export function computeStrategyMetrics(nodes: CanvasNode[]): StrategyMetrics {
   let totalDepositUsd = 0;
   // Capital sitting in yield-bearing legs (vault deposits + isolated-market lends).

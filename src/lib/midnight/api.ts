@@ -16,7 +16,7 @@
  * See docs/midnight-design.md.
  */
 
-const MIDNIGHT_API = "https://api.morpho.org/v0/midnight";
+export const MIDNIGHT_API = "https://api.morpho.org/v0/midnight";
 
 /** Midnight is deployed on Base only. */
 export const MIDNIGHT_CHAIN_ID = 8453;
