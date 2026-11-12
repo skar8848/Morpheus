@@ -15,8 +15,8 @@
  */
 
 import { createPublicClient, http, fallback, erc4626Abi, type PublicClient } from "viem";
-import { mainnet, base } from "viem/chains";
 import { morphoQuery } from "@/lib/graphql/client";
+import { CHAIN_CONFIGS, RPC_URLS, type SupportedChainId } from "@/lib/web3/chains";
 import { VAULT_V2_LIST_QUERY } from "@/lib/graphql/queries";
 import type {
   VaultV2ListResponse,
@@ -33,34 +33,28 @@ const PAGE_SIZE = 1000;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const clients = new Map<number, PublicClient<any, any>>();
 
+/**
+ * Same chains and same endpoints as the browser (CHAIN_CONFIGS + RPC_URLS).
+ * This used to hardcode 1rpc.io, ankr and llamarpc for Ethereum and Base only:
+ * the very endpoints config.ts documents as rate-limited or dead, tried first.
+ */
 function getClient(chainId: number): PublicClient {
   const cached = clients.get(chainId);
   if (cached) return cached as PublicClient;
 
-  let c: PublicClient;
-  if (chainId === 1) {
-    c = createPublicClient({
-      chain: mainnet,
-      transport: fallback([
-        http("https://1rpc.io/eth"),
-        http("https://rpc.ankr.com/eth"),
-        http("https://eth.llamarpc.com"),
-        http(),
-      ]),
-    }) as PublicClient;
-  } else if (chainId === 8453) {
-    c = createPublicClient({
-      chain: base,
-      transport: fallback([
-        http("https://1rpc.io/base"),
-        http("https://rpc.ankr.com/base"),
-        http("https://base.llamarpc.com"),
-        http(),
-      ]),
-    }) as PublicClient;
-  } else {
-    throw new Error(`Unsupported chain ${chainId}`);
+  const config = CHAIN_CONFIGS.find((c) => c.chainId === chainId);
+  if (!config) throw new Error(`Unsupported chain ${chainId}`);
+  // Discovery is one multicall over every V2 vault. Without a multicall3 entry
+  // in the chain definition viem refuses it, and the empty result would read as
+  // "no V2 positions"; failing here surfaces as a warning instead.
+  if (!config.chain.contracts?.multicall3) {
+    throw new Error(`No multicall3 configured for ${config.label}`);
   }
+  const urls = RPC_URLS[config.chainId as SupportedChainId];
+  const c = createPublicClient({
+    chain: config.chain,
+    transport: fallback(urls.map((url) => http(url))),
+  }) as PublicClient;
 
   clients.set(chainId, c);
   return c;
@@ -91,34 +85,24 @@ export async function fetchUserVaultV2PositionsServer(
   userAddress: `0x${string}`,
   chainId: number
 ): Promise<UserVaultPosition[]> {
-  let vaults: VaultV2Listing[];
-  try {
-    vaults = await fetchAllV2Vaults(chainId);
-  } catch (err) {
-    console.warn("[vaultV2.server] V2 list fetch failed:", err);
-    return [];
-  }
-
+  // A failed vault list or balanceOf multicall throws rather than returning
+  // []: the caller (/api/positions) reports it as a warning, where an empty
+  // list would read as "this address holds no V2 vault".
+  const vaults = await fetchAllV2Vaults(chainId);
   if (vaults.length === 0) return [];
 
   const client = getClient(chainId);
 
   // Multicall balanceOf for every V2 vault
-  let balances;
-  try {
-    balances = await client.multicall({
-      contracts: vaults.map((v) => ({
-        address: v.address as `0x${string}`,
-        abi: erc4626Abi,
-        functionName: "balanceOf" as const,
-        args: [userAddress] as const,
-      })),
-      allowFailure: true,
-    });
-  } catch (err) {
-    console.warn("[vaultV2.server] balanceOf multicall failed:", err);
-    return [];
-  }
+  const balances = await client.multicall({
+    contracts: vaults.map((v) => ({
+      address: v.address as `0x${string}`,
+      abi: erc4626Abi,
+      functionName: "balanceOf" as const,
+      args: [userAddress] as const,
+    })),
+    allowFailure: true,
+  });
 
   type Hit = { vault: VaultV2Listing; shares: bigint };
   const hits: Hit[] = [];
