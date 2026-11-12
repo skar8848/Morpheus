@@ -160,6 +160,32 @@ async function fetchRegistry(
   return registry;
 }
 
+/** A vault as the Morpho API describes it, for the contract verification panel. */
+export interface MorphoVaultRecord {
+  address: string;
+  name: string;
+  listed: boolean;
+}
+
+/**
+ * Look up vault addresses on the Morpho API. Returns null when the API can't be
+ * reached, so the caller can tell "unknown to Morpho" from "couldn't ask".
+ */
+export async function lookupMorphoVaults(
+  chainId: number,
+  addresses: string[]
+): Promise<MorphoVaultRecord[] | null> {
+  const valid = addresses.filter((a) => ADDRESS.test(a)).map((a) => a.toLowerCase());
+  if (valid.length === 0) return [];
+  const registry = await fetchRegistry(chainId, [], [...new Set(valid)]);
+  if (!registry.reachable) return null;
+  return Array.from(registry.vaults.values(), (v) => ({
+    address: v.address,
+    name: v.name,
+    listed: v.listed,
+  }));
+}
+
 /** Drop the `listed` flag so the node data keeps its usual shape once saved. */
 function asMarket({ listed: _listed, ...market }: ListedMarket): Market {
   void _listed;

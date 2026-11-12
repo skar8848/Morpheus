@@ -16,6 +16,8 @@ interface Props {
   destinations: string[];
   /** Tokens the strategy uses, so approval targets are recognised. */
   strategyTokens?: { address: string; symbol: string }[];
+  /** Vaults the bundle calls, as the Morpho API returned them for their addresses. */
+  strategyVaults?: { address: string; name: string; listed: boolean }[];
   chainId: SupportedChainId | number;
 }
 
@@ -26,6 +28,7 @@ const ownerTone: Record<ContractOwner, string> = {
   circle: "text-success",
   safe: "text-success",
   token: "text-text-secondary",
+  vault: "text-brand",
 };
 
 /**
@@ -37,13 +40,18 @@ const ownerTone: Record<ContractOwner, string> = {
  * we don't recognise is called out in red rather than glossed over. A claim the
  * user can't test is worth nothing.
  */
-export default function ContractVerification({ destinations, strategyTokens = [], chainId }: Props) {
+export default function ContractVerification({
+  destinations,
+  strategyTokens = [],
+  strategyVaults = [],
+  chainId,
+}: Props) {
   const unique = Array.from(new Set(destinations.map((d) => d.toLowerCase()))).map(
     (addr) => destinations.find((d) => d.toLowerCase() === addr) ?? addr
   );
   if (unique.length === 0) return null;
 
-  const rows = unique.map((to) => ({ to, verdict: classifyDestination(to, strategyTokens) }));
+  const rows = unique.map((to) => ({ to, verdict: classifyDestination(to, strategyTokens, strategyVaults) }));
   const unknown = rows.filter((r) => !r.verdict.known);
 
   return (

@@ -29,7 +29,9 @@ import {
   COW_VAULT_RELAYER,
 } from "@/lib/cowswap/order";
 import { formatApy } from "@/lib/utils/format";
-import type { CanvasNode, CanvasNodeData } from "@/lib/canvas/types";
+import type { BorrowNodeData, CanvasNode, CanvasNodeData } from "@/lib/canvas/types";
+import { getNodeChainId } from "@/lib/canvas/bridge";
+import { lookupMorphoVaults, type MorphoVaultRecord } from "@/lib/canvas/verifyImport";
 import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
 import { GENERAL_ADAPTER1, MORPHO_BLUE, BUNDLER3, morphoBlueAbi } from "@/lib/constants/contracts";
 import { erc20Abi } from "viem";
@@ -173,11 +175,51 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   }, [nodes.length]);
 
   /**
+   * Vaults the bundle deposits into or redeems from on this chain. They are not
+   * transaction destinations themselves (the adapter calls them), but they are
+   * where the funds end up, so the panel has to show them too. Whether each one
+   * is a real Morpho vault is asked of the Morpho API by address, never taken
+   * from the node data, which can come from a deep link.
+   */
+  const vaultAddresses = useMemo(() => {
+    const cid = chainId as SupportedChainId;
+    const out = new Set<string>();
+    for (const n of nodes) {
+      if (getNodeChainId(n.id, nodes, edges, cid) !== cid) continue;
+      const d = n.data as CanvasNodeData;
+      if (d.type === "vaultDeposit" && d.vault?.address) out.add(d.vault.address);
+      if (d.type === "vaultWithdraw" && d.position?.vault.address) out.add(d.position.vault.address);
+    }
+    return [...out].sort();
+  }, [nodes, edges, chainId]);
+  const vaultKey = `${chainId}:${vaultAddresses.join(",").toLowerCase()}`;
+  const [vaultLookup, setVaultLookup] = useState<{
+    key: string;
+    vaults: MorphoVaultRecord[] | null;
+  } | null>(null);
+  useEffect(() => {
+    if (vaultAddresses.length === 0) return;
+    // An answered lookup for this set stands. One that failed (API unreachable)
+    // is asked again each time the panel is opened, so the vaults don't stay
+    // unrecognised until the strategy changes.
+    if (vaultLookup?.key === vaultKey && vaultLookup.vaults !== null) return;
+    let cancelled = false;
+    lookupMorphoVaults(chainId, vaultAddresses).then((vaults) => {
+      if (!cancelled) setVaultLookup({ key: vaultKey, vaults });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Keyed on the address list, not the array: node edits re-create it constantly.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vaultKey, expanded]);
+
+  /**
    * Every contract this execution will target, for the verification panel.
    * Derived from the same maps the executor uses, so the panel can't drift from
    * what actually gets signed.
    */
-  const { txDestinations, strategyTokens } = useMemo(() => {
+  const { txDestinations, strategyTokens, strategyVaults } = useMemo(() => {
     const cid = chainId as SupportedChainId;
     const dests: string[] = [];
     const adapter = GENERAL_ADAPTER1[cid];
@@ -189,6 +231,17 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
       const relayer = COW_VAULT_RELAYER[cid];
       if (relayer) dests.push(relayer);
     }
+    // A fixed-rate borrow is a `take` sent straight to the Midnight core.
+    const hasFixedRate = nodes.some(
+      (n) => (n.data as CanvasNodeData).type === "borrow" && (n.data as BorrowNodeData).fixedRate
+    );
+    if (hasFixedRate) dests.push(MIDNIGHT_CORE);
+    // Vaults are always listed. Only an answered lookup for this exact set can
+    // vouch for them: while it is in flight, or if the API couldn't be reached,
+    // nothing does, so they read as unrecognised rather than as "all known".
+    dests.push(...vaultAddresses);
+    const lookupReady = vaultLookup?.key === vaultKey;
+    const vaults = lookupReady ? vaultLookup.vaults ?? [] : [];
 
     const tokens: { address: string; symbol: string }[] = [];
     const push = (a?: { address?: string; symbol?: string } | null) => {
@@ -215,8 +268,8 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         push(d.tokenOut);
       }
     }
-    return { txDestinations: dests, strategyTokens: tokens };
-  }, [nodes, edges, chainId]);
+    return { txDestinations: dests, strategyTokens: tokens, strategyVaults: vaults };
+  }, [nodes, edges, chainId, vaultAddresses, vaultKey, vaultLookup]);
 
   const wrongChain = isConnected && walletChainId !== chainId;
   const expectedChainLabel = CHAIN_CONFIGS.find((c) => c.chainId === chainId)?.label ?? `Chain ${chainId}`;
@@ -1273,6 +1326,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
             <ContractVerification
               destinations={txDestinations}
               strategyTokens={strategyTokens}
+              strategyVaults={strategyVaults}
               chainId={chainId}
             />
 
