@@ -96,7 +96,9 @@ export async function POST(req: Request) {
     if (!step) {
       return Response.json({ ok: false, error: "route has no executable step" }, { status: 502 });
     }
-    const substituted = !!tool && chosen.steps?.[0]?.tool !== tool;
+    // No tool means the picked route was never a LI.FI one, so routes[0] is a
+    // substitution too, not a match.
+    const substituted = chosen.steps?.[0]?.tool !== tool;
 
     // 3. Ask LI.FI to build the transaction for that step.
     const txRes = await fetch(LIFI_STEP_TX, {

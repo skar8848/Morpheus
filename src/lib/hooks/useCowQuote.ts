@@ -4,6 +4,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { swapAmountToRaw } from "@/lib/canvas/executor";
 
 const COW_API_BASE: Record<number, string> = {
   1: "https://api.cow.fi/mainnet/api/v1",
@@ -76,14 +77,11 @@ export function useCowQuote({
       abortRef.current = controller;
 
       try {
-        // String-based conversion to avoid float precision loss for large amounts
-        const sellAmountWei = (() => {
-          const parts = amountIn.split(".");
-          const intPart = parts[0] || "0";
-          const fracPart = (parts[1] || "").slice(0, decimalsIn).padEnd(decimalsIn, "0");
-          const raw = BigInt(intPart + fracPart);
-          return raw.toString();
-        })();
+        // Same conversion as the executor, so the size quoted here is the size
+        // that gets signed.
+        const sellRaw = swapAmountToRaw(amountIn, decimalsIn);
+        if (sellRaw === null) throw new Error("Invalid amount");
+        const sellAmountWei = sellRaw.toString();
 
         const res = await fetch(`${apiBase}/quote`, {
           method: "POST",

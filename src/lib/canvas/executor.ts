@@ -36,6 +36,7 @@ import type {
   VaultWithdrawNodeData,
   RepayNodeData,
 } from "./types";
+import { isFixedRateBorrow } from "./types";
 import {
   BUNDLER3,
   GENERAL_ADAPTER1,
@@ -68,7 +69,12 @@ const ZERO_HASH =
  */
 function safeAmountToBigInt(amount: number | string, decimals: number): bigint {
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) return 0n;
-  const str = typeof amount === "number" ? String(amount) : amount;
+  let str = typeof amount === "number" ? String(amount) : amount;
+  // String() switches to exponential notation below 1e-6 ("1e-7"), which
+  // parseUnits rejects, so the node would silently be skipped as a zero amount.
+  // Only then fall back to toFixed: on ordinary numbers it would print binary
+  // noise (0.1 → "0.100000000000000006") where String() gives the clean value.
+  if (typeof amount === "number" && /e/i.test(str)) str = amount.toFixed(decimals);
   if (!str || str.trim() === "") return 0n;
   // Quick sanity check: must look like a positive number
   const num = parseFloat(str);
@@ -80,6 +86,31 @@ function safeAmountToBigInt(amount: number | string, decimals: number): bigint {
   } catch {
     return 0n;
   }
+}
+
+/**
+ * Raw amount a swap sells (or a bridge sends), or null when the input is not a
+ * positive number.
+ *
+ * Truncates extra decimals rather than rounding like parseUnits: the order
+ * must never sell a wei more than the user typed or holds. Shared with
+ * useCowQuote so the quoted size and the signed size are the same number.
+ * The amount input is type="number", so "1e-7" or "1e18" can reach here;
+ * BigInt() throws on those, which crashed the panel during render, so
+ * exponential notation is spelled out first.
+ */
+export function swapAmountToRaw(amount: string, decimals: number): bigint | null {
+  let str = amount.trim();
+  if (/e/i.test(str)) {
+    const n = Number(str);
+    if (!isFinite(n) || n <= 0) return null;
+    str = n.toFixed(decimals);
+  }
+  const [intPart = "", fracPart = "", ...rest] = str.split(".");
+  if (rest.length > 0 || !/^\d*$/.test(intPart) || !/^\d*$/.test(fracPart)) return null;
+  if (intPart === "" && fracPart === "") return null;
+  const raw = BigInt((intPart || "0") + fracPart.slice(0, decimals).padEnd(decimals, "0"));
+  return raw > 0n ? raw : null;
 }
 
 /**
@@ -189,6 +220,27 @@ function capAtUpstreamBorrow(
 }
 
 /**
+ * Head-room pulled on top of the debt for a full repay, in basis points (0.1%).
+ * The debt was read from the API some time before the bundle lands and keeps
+ * accruing in between; at a 100% borrow APY, 0.1% still covers about 8 hours.
+ * Whatever is not used is swept back to the user in the same bundle.
+ */
+const FULL_REPAY_BUFFER_BPS = 10n;
+
+/**
+ * Loan tokens a repay node pulls from the user's wallet. Shared by the executor,
+ * the approval list and the node's balance check, so the allowance and the
+ * "insufficient balance" warning always match the pull.
+ */
+export function repayPullRaw(d: RepayNodeData): bigint {
+  if (!d.market || !d.amount) return 0n;
+  const raw = safeAmountToBigInt(d.amount, d.market.loanAsset.decimals);
+  if (!d.repayAll || raw === 0n) return raw;
+  // +1 so a tiny debt still gets a buffer after integer division.
+  return raw + (raw * FULL_REPAY_BUFFER_BPS) / 10_000n + 1n;
+}
+
+/**
  * Collect all ERC-20 tokens that need user approval to the adapter.
  * Returns a list of { token, amount } to approve.
  */
@@ -206,7 +258,7 @@ export function getRequiredApprovals(
     if (!isAddress(address) || amount <= 0n) return;
     const key = address.toLowerCase();
     const existing = approvals.get(key);
-    // Cap at MAX_UINT256 to avoid encoding overflow (vault share approvals use MAX_UINT256)
+    // Cap at MAX_UINT256 to avoid encoding overflow (a vault share approval can be MAX_UINT256)
     let newAmount = (existing?.amount ?? 0n) + amount;
     if (newAmount > MAX_UINT256) newAmount = MAX_UINT256;
     approvals.set(key, {
@@ -224,6 +276,8 @@ export function getRequiredApprovals(
     // whoever consumes it downstream approves it.)
     if (data.type === "borrow") {
       const d = node.data as unknown as BorrowNodeData;
+      // A fixed-rate leg never pulls collateral through the adapter.
+      if (isFixedRateBorrow(d)) continue;
       if (!d.collateralAsset?.address || !d.collateralAmount) continue;
       let raw = safeAmountToBigInt(d.collateralAmount, d.collateralAsset.decimals);
       raw = capAtUpstreamBorrow(raw, node.id, nodes, edges);
@@ -253,16 +307,23 @@ export function getRequiredApprovals(
     if (data.type === "repay") {
       const d = node.data as unknown as RepayNodeData;
       if (!d.market?.loanAsset?.address || !d.amount) continue;
-      const raw = safeAmountToBigInt(d.amount, d.market.loanAsset.decimals);
-      addApproval(d.market.loanAsset.address, d.market.loanAsset.symbol, raw);
+      addApproval(d.market.loanAsset.address, d.market.loanAsset.symbol, repayPullRaw(d));
     }
 
-    // VaultWithdraw: adapter needs approval on vault shares (vault address is the ERC-20 share token)
-    // Use MAX_UINT256 since exact share amount requires on-chain read
+    // VaultWithdraw: adapter needs approval on vault shares (vault address is the ERC-20 share token).
+    // A full exit redeems exactly the position's shares, and a partial withdraw
+    // burns fewer than that, so the share balance is a tight upper bound: no
+    // unlimited allowance left on the vault after the exit. MAX only when the
+    // position came without a share count.
     if (data.type === "vaultWithdraw") {
       const d = node.data as unknown as VaultWithdrawNodeData;
       if (!d.position?.vault?.address) continue;
-      addApproval(d.position.vault.address, `${d.position.vault.name} shares`, MAX_UINT256);
+      const sharesRaw = d.position.state?.shares ? safeBigInt(d.position.state.shares) : 0n;
+      addApproval(
+        d.position.vault.address,
+        `${d.position.vault.name} shares`,
+        sharesRaw > 0n ? sharesRaw : MAX_UINT256
+      );
     }
   }
 
@@ -334,6 +395,8 @@ export function strategyNeedsMorphoAuthorization(nodes: CanvasNode[]): boolean {
     switch (d.type) {
       case "borrow": {
         const bd = node.data as unknown as BorrowNodeData;
+        // Midnight, not Blue: no GA1 authorization involved.
+        if (isFixedRateBorrow(bd)) break;
         if (bd.market && isFinite(bd.borrowAmount) && bd.borrowAmount > 0) return true;
         break;
       }
@@ -593,6 +656,9 @@ function emitNodeCalls(node: CanvasNode, ctx: EmitContext): BundlerCall[] {
 
     case "borrow": {
       const d = node.data as unknown as BorrowNodeData;
+      // A fixed-rate borrow lifts the Midnight book instead. Encoding it here
+      // would quietly turn it into a floating Blue debt.
+      if (isFixedRateBorrow(d)) break;
       if (!d.market || !isFinite(d.borrowAmount) || d.borrowAmount <= 0) break;
       const mp = toMarketParams(d.market);
       if (!mp) break;
@@ -721,7 +787,10 @@ function emitNodeCalls(node: CanvasNode, ctx: EmitContext): BundlerCall[] {
     case "repay": {
       const d = node.data as unknown as RepayNodeData;
       if (!d.market || !d.amount) break;
-      const rawAmount = safeAmountToBigInt(d.amount, d.market.loanAsset.decimals);
+      // Like every other consumer, a repay fed by a swap pulls no more than the
+      // fill delivered: the quote it was sized on can land a little short, and
+      // pulling the quoted amount would revert or dip into the user's own balance.
+      const rawAmount = resolveConsumerAmount(node.id, repayPullRaw(d), false, ctx);
       if (rawAmount === 0n) break;
       const mp = toMarketParams(d.market);
       if (!mp) break;
@@ -729,17 +798,39 @@ function emitNodeCalls(node: CanvasNode, ctx: EmitContext): BundlerCall[] {
       // Transfer loan tokens from user to adapter
       pullFromUser(ctx, calls, mp.loanToken, d.market.loanAsset.symbol ?? "loan token", rawAmount);
 
-      // Repay on behalf of user
+      // Repay on behalf of user. A full repay goes by shares: shares = MAX makes
+      // the adapter read the user's borrow shares on-chain, so the debt is cleared
+      // to the last wei whatever interest accrued since the amount was read.
+      // Repaying by assets would leave dust debt, and make the collateral
+      // withdrawal below revert, since the position would no longer be empty.
       calls.push(
         adapterCall(
           adapter,
           encodeFunctionData({
             abi: generalAdapterAbi,
             functionName: "morphoRepay",
-            args: [mp, rawAmount, 0n, MAX_UINT256, user, "0x"],
+            args: d.repayAll
+              ? [mp, 0n, MAX_UINT256, MAX_UINT256, user, "0x"]
+              : [mp, rawAmount, 0n, MAX_UINT256, user, "0x"],
           })
         )
       );
+
+      // The buffer pulled for a full repay is mostly unused: send it back. MAX
+      // transfers the adapter's whole balance of the loan token, and is a no-op
+      // when nothing is left.
+      if (d.repayAll) {
+        calls.push(
+          adapterCall(
+            adapter,
+            encodeFunctionData({
+              abi: generalAdapterAbi,
+              functionName: "erc20Transfer",
+              args: [mp.loanToken, user, MAX_UINT256],
+            })
+          )
+        );
+      }
 
       // Optional: withdraw the user's collateral after the repay so they
       // get it back in their wallet. Triggered when the user (or the agent
@@ -750,7 +841,10 @@ function emitNodeCalls(node: CanvasNode, ctx: EmitContext): BundlerCall[] {
         // collateralToWithdraw is RAW token units (wei) — already scaled.
         // Use safeBigInt directly. parseUnits via safeAmountToBigInt would
         // re-multiply by 10^decimals and produce a value 10^18 too large.
-        const collateralRaw = safeBigInt(d.collateralToWithdraw);
+        // After a full repay the position holds no debt, so all of the collateral
+        // is free: MAX makes the adapter read the exact on-chain amount instead of
+        // trusting the figure captured when the node was filled in.
+        const collateralRaw = d.repayAll ? MAX_UINT256 : safeBigInt(d.collateralToWithdraw);
         if (collateralRaw > 0n) {
           calls.push(
             adapterCall(
@@ -926,16 +1020,9 @@ export function getSwapDetails(
     if (d.type !== "swap") continue;
     if (!d.tokenIn?.address || !d.tokenOut?.address || !d.amountIn) continue;
 
-    const amountInNum = parseFloat(d.amountIn);
-    if (!isFinite(amountInNum) || amountInNum <= 0) continue;
-
-    // String-based BigInt conversion (same as useCowQuote)
-    const parts = d.amountIn.split(".");
-    const intPart = parts[0] || "0";
-    const fracPart = (parts[1] || "")
-      .slice(0, d.tokenIn.decimals)
-      .padEnd(d.tokenIn.decimals, "0");
-    const sellAmountWei = BigInt(intPart + fracPart).toString();
+    const sellRaw = swapAmountToRaw(d.amountIn, d.tokenIn.decimals);
+    if (sellRaw === null) continue;
+    const sellAmountWei = sellRaw.toString();
 
     swaps.push({
       nodeId: node.id,

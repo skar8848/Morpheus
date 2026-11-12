@@ -5,9 +5,9 @@
 
 import { useMemo, useState } from "react";
 import type { Edge } from "@xyflow/react";
-import type { CanvasNode, CanvasNodeData } from "@/lib/canvas/types";
+import type { CanvasNode } from "@/lib/canvas/types";
 import { formatApy } from "@/lib/utils/format";
-import { computeStrategyMetrics } from "@/lib/canvas/metrics";
+import { computeStrategyMetrics, type StrategyMetrics } from "@/lib/canvas/metrics";
 
 interface StrategyGaugeProps {
   nodes: CanvasNode[];
@@ -35,32 +35,16 @@ function fmtPnl(value: number): string {
   return `${sign}$${abs.toFixed(2)}`;
 }
 
-function projectPnl(nodes: CanvasNode[], days: number) {
-  let earned = 0;
-  let paid = 0;
+/**
+ * Earned / paid over a period, scaled from the annual flows the metrics already
+ * compute. It used to re-walk the nodes with looser guards (no borrow-amount or
+ * deposit-amount check), so the projection and the Net APY above it could
+ * disagree on the same graph.
+ */
+function projectPnl(metrics: StrategyMetrics, days: number) {
   const yearFraction = days / 365;
-  for (const node of nodes) {
-    const d = node.data as CanvasNodeData;
-    if (d.type === "vaultDeposit" && d.vault) {
-      const apy = d.vault.state?.netApy ?? 0;
-      const usd = d.amountUsd ?? 0;
-      if (isFinite(apy) && isFinite(usd) && usd > 0) {
-        earned += usd * apy * yearFraction;
-      }
-    } else if (d.type === "lend" && d.market) {
-      const apy = d.market.state?.netSupplyApy ?? d.market.state?.supplyApy ?? 0;
-      const usd = d.amountUsd ?? 0;
-      if (isFinite(apy) && isFinite(usd) && usd > 0) {
-        earned += usd * apy * yearFraction;
-      }
-    } else if (d.type === "borrow" && d.market) {
-      const netApy = d.market.state?.netBorrowApy ?? 0;
-      const usd = d.borrowAmountUsd ?? 0;
-      if (isFinite(netApy) && isFinite(usd) && usd > 0) {
-        paid += usd * netApy * yearFraction;
-      }
-    }
-  }
+  const earned = metrics.earnedAnnualUsd * yearFraction;
+  const paid = metrics.paidAnnualUsd * yearFraction;
   return { earned, paid, net: earned - paid };
 }
 
@@ -103,7 +87,7 @@ export default function StrategyGauge({ nodes, edges, sidebarCollapsed }: Strate
   const metrics = useStrategyMetrics(nodes, edges);
   const [periodIdx, setPeriodIdx] = useState(2); // default 1M
   const period = PERIODS[periodIdx];
-  const projection = useMemo(() => projectPnl(nodes, period.days), [nodes, period.days]);
+  const projection = useMemo(() => projectPnl(metrics, period.days), [metrics, period.days]);
 
   // Don't show if no meaningful actions
   const hasActions =

@@ -3,7 +3,7 @@
 
 import type { Edge, Connection } from "@xyflow/react";
 import type { CanvasNode, BridgeNodeData } from "./types";
-import { VALID_CONNECTIONS } from "./types";
+import { VALID_CONNECTIONS, isFixedRateBorrow } from "./types";
 import { findChainConflictEdges } from "./bridge";
 import type { SupportedChainId } from "@/lib/web3/chains";
 
@@ -221,6 +221,11 @@ export function validateGraph(
           errors.push(`Borrow node: no collateral amount`);
         if (!d.borrowAmount || !isFinite(d.borrowAmount) || d.borrowAmount <= 0)
           errors.push(`Borrow node: no borrow amount`);
+        // The Midnight write path is only half built (see ExecuteButton), so a
+        // fixed-rate leg can be quoted but not executed. Rejecting it here also
+        // keeps preflight from simulating it as the Blue borrow it isn't.
+        if (isFixedRateBorrow(node.data))
+          errors.push(`Borrow node: fixed-rate (Midnight) execution is not available yet, switch it to Floating`);
         break;
       }
       case "lend": {

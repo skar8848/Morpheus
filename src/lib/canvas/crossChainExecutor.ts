@@ -22,7 +22,7 @@
  */
 
 import type { Edge } from "@xyflow/react";
-import { parseUnits } from "viem";
+import { swapAmountToRaw } from "./executor";
 import type { CanvasNode, BridgeNodeData } from "./types";
 import type { SupportedChainId } from "@/lib/web3/chains";
 import { buildCrossChainPlan, sliceSegment } from "./crossChainPlan";
@@ -76,6 +76,18 @@ export function planCrossChainExecution(
   if (!plan.multiChain || !plan.bridge) return NO_EXECUTION;
   if (plan.error) return { ...NO_EXECUTION, isCrossChain: true, error: plan.error };
 
+  // The phases below never place a CoW order: the source segment is encoded
+  // with the single-phase engine (user amounts, no fill), so a swap feeding the
+  // bridge would have the bridge send an output that was never bought. Refuse
+  // until the two-phase swap flow is wired into the cross-chain phases.
+  if (nodes.some((n) => (n.data as { type?: string }).type === "swap")) {
+    return {
+      ...NO_EXECUTION,
+      isCrossChain: true,
+      error: "Swaps can't run in a cross-chain strategy yet",
+    };
+  }
+
   const bridgeNode = nodes.find((n) => n.id === plan.bridge!.nodeId);
   const bd = bridgeNode?.data as unknown as BridgeNodeData | undefined;
   if (!bd?.tokenIn || !bd.tokenOut) {
@@ -87,14 +99,14 @@ export function planCrossChainExecution(
     return { ...NO_EXECUTION, isCrossChain: true, error: "Bridge node has no amount to send" };
   }
 
-  let amountRaw: string;
-  try {
-    // toFixed, not String(): small amounts otherwise render as "1e-7", which
-    // parseUnits rejects.
-    amountRaw = parseUnits(amountIn.toFixed(bd.tokenIn.decimals), bd.tokenIn.decimals).toString();
-  } catch {
+  // Straight from the typed string, not through parseFloat: a float round-trip
+  // loses digits on 18-decimal amounts. Same conversion as a swap's sell amount
+  // (exponent notation handled, never more than typed).
+  const raw = swapAmountToRaw(bd.amountIn, bd.tokenIn.decimals);
+  if (raw === null) {
     return { ...NO_EXECUTION, isCrossChain: true, error: "Bridge amount could not be encoded" };
   }
+  const amountRaw = raw.toString();
 
   const src = sliceSegment(plan.segments[0], nodes, edges);
   const dst = sliceSegment(plan.segments[1], nodes, edges);

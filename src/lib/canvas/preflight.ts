@@ -17,7 +17,6 @@ import { wagmiConfig } from "@/lib/web3/config";
 import {
   buildExecutionBundle,
   getRequiredApprovals,
-  getRequiredApprovals as _getRequiredApprovals,
   strategyNeedsMorphoAuthorization,
 } from "./executor";
 import { validateGraph } from "./validation";
@@ -28,9 +27,6 @@ import {
   MORPHO_BLUE,
   morphoBlueAbi,
 } from "@/lib/constants/contracts";
-
-// Silence unused — kept to avoid editing imports above twice in case of refactor
-void _getRequiredApprovals;
 
 export interface PreflightResult {
   /** True when preflight has finished without blocking errors */
@@ -76,6 +72,11 @@ export interface PreflightResult {
   needsMorphoAuthorization: boolean;
 }
 
+/** The authorization warning, exported so the preview can recognise it and show
+ * it in its dedicated panel instead of the generic warnings list. */
+export const MORPHO_AUTH_WARNING =
+  "This strategy borrows or withdraws on your behalf — a one-time Morpho authorization tx will be sent before the bundle (auto-handled at Execute)";
+
 export const EMPTY_PREFLIGHT: PreflightResult = {
   ok: false,
   loading: false,
@@ -114,7 +115,7 @@ export async function runPreflight(
   const result: PreflightResult = { ...EMPTY_PREFLIGHT, loading: false };
 
   // 1. Graph validation
-  const validationErrors = validateGraph(nodes, edges);
+  const validationErrors = validateGraph(nodes, edges, chainId as SupportedChainId);
   if (validationErrors.length > 0) {
     result.errors = validationErrors;
     return result;
@@ -218,6 +219,8 @@ export async function runPreflight(
           abi: morphoBlueAbi,
           functionName: "isAuthorized",
           args: [userAddress, adapter],
+          // The canvas chain, not whichever chain the wallet is on.
+          chainId: chainId as SupportedChainId,
         })) as boolean;
       } catch {
         // RPC failure — assume not authorized so we set the warning
@@ -226,9 +229,7 @@ export async function runPreflight(
     }
     result.needsMorphoAuthorization = !isAuthorized;
     if (!isAuthorized) {
-      result.warnings.push(
-        "This strategy borrows or withdraws on your behalf — a one-time Morpho authorization tx will be sent before the bundle (auto-handled at Execute)"
-      );
+      result.warnings.push(MORPHO_AUTH_WARNING);
     }
   }
 
@@ -239,6 +240,7 @@ export async function runPreflight(
       data: bundle.data,
       value: 0n,
       account: userAddress,
+      chainId: chainId as SupportedChainId,
     });
     result.gasEstimate = gas;
     result.ok = result.errors.length === 0;

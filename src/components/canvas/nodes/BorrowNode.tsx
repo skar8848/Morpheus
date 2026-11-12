@@ -3,7 +3,7 @@
 
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position, useReactFlow, useEdges, useNodes, type NodeProps } from "@xyflow/react";
 import Image from "next/image";
 import { useChain } from "@/lib/context/ChainContext";
@@ -338,8 +338,39 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
 
   // Floating (Blue) vs fixed (Midnight). Same intent — borrow X against Y —
   // so it's a mode here, not a separate node the user must know to reach for.
-  const [rateMode, setRateMode] = useState<"floating" | "fixed">("floating");
+  // The choice lives in the node data, not local state: the executor and the
+  // Execute button read it there, and a reload or an import must not silently
+  // turn a fixed-rate leg back into a floating Blue borrow.
+  const rateMode = d.rateMode ?? "floating";
+  const setRateMode = (mode: "floating" | "fixed") =>
+    updateNodeData(
+      id,
+      mode === "fixed" ? { rateMode: "fixed" } : { rateMode: "floating", fixedRate: undefined }
+    );
   const midnightAvailable = nodeChainId === MIDNIGHT_CHAIN_ID;
+
+  // The maturity and size picked in the Midnight panel become the leg's
+  // `fixedRate`. Only written when it actually changed, since the panel reports
+  // on every render of this node.
+  const fixedRate = d.fixedRate;
+  const onFixedRateSelect = useCallback(
+    (sel: { marketId: string; maturity: number; assetsRaw: string } | null) => {
+      if (!sel) {
+        if (fixedRate) updateNodeData(id, { fixedRate: undefined });
+        return;
+      }
+      if (
+        fixedRate &&
+        fixedRate.marketId === sel.marketId &&
+        fixedRate.maturity === sel.maturity &&
+        fixedRate.assetsRaw === sel.assetsRaw
+      )
+        return;
+      // A borrower sells units, so the leg lifts the bids.
+      updateNodeData(id, { fixedRate: { ...sel, side: "bids" } });
+    },
+    [id, fixedRate, updateNodeData]
+  );
 
   // Desired-HF input. HF = LLTV% / LTV% (prices cancel), so a target HF maps
   // to LTV% = LLTV% / HF. Kept as a local draft while focused so the reactive
@@ -658,6 +689,15 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
               </button>
             </div>
 
+            {/* A fixed leg that ends up on another chain (bridge upstream, old
+                draft) keeps its choice so it cannot turn into a floating borrow
+                unnoticed, but it can't be executed or edited here: say how out. */}
+            {rateMode === "fixed" && !midnightAvailable && (
+              <p className="text-[9px] text-yellow-400">
+                Fixed rate is Base-only: switch this borrow back to Floating to execute it here.
+              </p>
+            )}
+
             {rateMode === "fixed" && midnightAvailable && (
               <MidnightPanel
                 loanTokenAddress={d.market.loanAsset.address}
@@ -665,6 +705,8 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
                 loanDecimals={d.market.loanAsset.decimals}
                 amount={d.borrowAmount}
                 floatingApy={d.market.state?.netBorrowApy}
+                selectedMarketId={d.fixedRate?.marketId}
+                onSelect={onFixedRateSelect}
               />
             )}
 

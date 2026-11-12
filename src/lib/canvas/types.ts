@@ -54,6 +54,12 @@ export interface BorrowNodeData {
   borrowAmount: number;
   borrowAmountUsd: number;
   healthFactor: number | null;
+  /**
+   * Rate model picked on the node. Kept in the node data rather than local
+   * state so a reload, a saved draft or an import remembers a fixed-rate choice
+   * instead of quietly falling back to a floating Blue borrow.
+   */
+  rateMode?: "floating" | "fixed";
   /** Fixed-rate borrow through Midnight instead of a floating Blue market. */
   fixedRate?: {
     marketId: string;
@@ -134,6 +140,13 @@ export interface RepayNodeData {
   market: Market | null;
   amount: string;
   amountUsd: number;
+  /** Set by MAX, cleared as soon as the amount is edited by hand. The debt keeps
+   * accruing between the moment it was read and the block the bundle lands in,
+   * so a repay sized in assets always leaves a few wei of debt behind. With
+   * repayAll the executor repays every borrow share instead, pulls `amount`
+   * plus a small buffer to cover the interest, and sends the unused part back.
+   * When the collateral is freed too, all of it is withdrawn. */
+  repayAll?: boolean;
   /** When true, the executor emits a morpho.withdrawCollateral call after
    * the repay so the user gets their collateral back in their wallet.
    * Defaults to false (legacy behavior). Auto-enabled by the UI when the
@@ -196,6 +209,17 @@ export type CanvasNodeData =
   | PositionNodeData;
 
 export type CanvasNode = Node<CanvasNodeData>;
+
+/**
+ * A borrow switched to fixed rate (Midnight). It is NOT a Blue borrow: it lifts
+ * an order book, so nothing about it may be encoded as supplyCollateral +
+ * borrow on the node's Blue market: that would hand the user the floating
+ * debt they explicitly chose not to take.
+ */
+export function isFixedRateBorrow(data: unknown): boolean {
+  const d = data as { type?: string; rateMode?: string; fixedRate?: unknown } | null | undefined;
+  return !!d && d.type === "borrow" && (d.rateMode === "fixed" || !!d.fixedRate);
+}
 
 /** Every React Flow node `type` the canvas can render. */
 export const KNOWN_NODE_TYPES = new Set([

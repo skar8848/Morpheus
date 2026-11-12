@@ -24,6 +24,13 @@ interface Props {
   amount: number;
   /** Floating rate from the Blue market, for the side-by-side comparison. */
   floatingApy?: number;
+  /** Maturity already chosen on the node, so a reload reopens on it. */
+  selectedMarketId?: string;
+  /**
+   * The leg the user is looking at (market, maturity and size in raw units),
+   * or null when there is nothing to take. The node stores it as `fixedRate`.
+   */
+  onSelect?: (sel: { marketId: string; maturity: number; assetsRaw: string } | null) => void;
 }
 
 type OrderMode = "market" | "limit";
@@ -44,10 +51,12 @@ export default function MidnightPanel({
   loanDecimals = 6,
   amount,
   floatingApy,
+  selectedMarketId,
+  onSelect,
 }: Props) {
   const [markets, setMarkets] = useState<MidnightMarket[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [marketId, setMarketId] = useState<string | null>(null);
+  const [marketId, setMarketId] = useState<string | null>(selectedMarketId ?? null);
   const [mode, setMode] = useState<OrderMode>("market");
   const [limitRate, setLimitRate] = useState("");
 
@@ -91,6 +100,29 @@ export default function MidnightPanel({
     () => (fill && market ? fillSlippage(fill, levels, market.maturity) : null),
     [fill, levels, market]
   );
+
+  // Hand the selection up to the node. The size is what the user asked to
+  // borrow, not what the book fills today: the quote at execution time decides
+  // the actual offers, and a partial book is already flagged below.
+  const requestedRaw = useMemo(() => {
+    if (!(amount > 0)) return null;
+    try {
+      return parseUnits(amount.toFixed(loanDecimals), loanDecimals).toString();
+    } catch {
+      return null;
+    }
+  }, [amount, loanDecimals]);
+  useEffect(() => {
+    // Until the markets have loaded there is no `market` yet, and reporting
+    // null would wipe the maturity the node already stored (for good, if the
+    // Midnight API is down).
+    if (!onSelect || markets === null) return;
+    onSelect(
+      market && requestedRaw
+        ? { marketId: market.market_id, maturity: market.maturity, assetsRaw: requestedRaw }
+        : null
+    );
+  }, [onSelect, markets, market, requestedRaw]);
 
   if (error) {
     return <p className="text-[9px] text-error">Midnight: {error}</p>;

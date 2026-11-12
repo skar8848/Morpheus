@@ -10,6 +10,7 @@ import { useAccount, useSendTransaction, useSwitchChain } from "wagmi";
 import { readContract, waitForTransactionReceipt, estimateGas } from "wagmi/actions";
 import { useChain } from "@/lib/context/ChainContext";
 import { validateGraph } from "@/lib/canvas/validation";
+import { isFixedRateBorrow } from "@/lib/canvas/types";
 import {
   buildExecutionBundle,
   getRequiredApprovals,
@@ -33,7 +34,6 @@ import type { CanvasNode, CanvasNodeData } from "@/lib/canvas/types";
 import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
 import { GENERAL_ADAPTER1, MORPHO_BLUE, BUNDLER3, morphoBlueAbi } from "@/lib/constants/contracts";
 import { erc20Abi } from "viem";
-import { encodeFunctionData } from "viem";
 import { wagmiConfig } from "@/lib/web3/config";
 import SimulationPreview from "./SimulationPreview";
 import BundleInspector from "./BundleInspector";
@@ -52,8 +52,9 @@ import {
 // because it sometimes shows a red "Will revert" banner that doesn't match
 // the actual execution (e.g. first-time borrow auth flow timing) — bad for
 // the launch demo. Flip to `true` once the preview logic is polished.
-// The preflight hook still runs and blocks execution on real errors; only
-// the visual card is gated.
+// The preflight result only feeds that card (Execute validates and simulates
+// on its own), so the hook is switched off with it rather than running
+// estimateGas on every edit for nothing.
 const ENABLE_SIMULATION_PREVIEW = false;
 
 interface ExecuteButtonProps {
@@ -155,8 +156,13 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   const [swapStatus, setSwapStatus] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
 
-  // Run preflight only while the panel is expanded AND we're not currently executing
-  const preflight = useBundlePreflight(nodes, edges, expanded && !isExecuting);
+  // Run preflight only while the preview is on, the panel is expanded AND we're
+  // not currently executing
+  const preflight = useBundlePreflight(
+    nodes,
+    edges,
+    ENABLE_SIMULATION_PREVIEW && expanded && !isExecuting
+  );
   // A Safe queues transactions instead of mining them — the execute flow needs
   // to know so it doesn't wait on a hash that will never appear on-chain.
   const { isSmartAccount, isSafeApp } = useSmartAccount();
@@ -236,6 +242,11 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
   // Track wallet address via ref for reliable detection during async flow
   const addressRef = useRef(address);
   addressRef.current = address;
+  // Same for the chain: handleExecute closes over the chainId of the render that
+  // started it, so a network switch mid-flow (during a CoW fill, say) would go
+  // unnoticed without reading the live value.
+  const walletChainIdRef = useRef(walletChainId);
+  walletChainIdRef.current = walletChainId;
   // Track pending CowSwap orders to avoid duplicate submissions
   const pendingOrdersRef = useRef<Map<string, string>>(new Map()); // nodeId → orderUid
   const isExecutingRef = useRef(false);
@@ -247,24 +258,26 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
       owner: `0x${string}`,
       spender: `0x${string}`
     ) => {
-      const needed: { token: `0x${string}`; amount: bigint }[] = [];
-      for (const a of approvals) {
-        try {
-          const allowance = await readContract(wagmiConfig, {
-            address: a.token,
-            abi: erc20Abi,
-            functionName: "allowance",
-            args: [owner, spender],
-          });
-          if ((allowance as bigint) < a.amount) {
-            needed.push(a);
+      // The reads are independent, so run them side by side rather than one
+      // round-trip per token. (Not a multicall: the HyperEVM and Monad chain
+      // configs define no multicall3 contract.)
+      const isNeeded = await Promise.all(
+        approvals.map(async (a) => {
+          try {
+            const allowance = await readContract(wagmiConfig, {
+              address: a.token,
+              abi: erc20Abi,
+              functionName: "allowance",
+              args: [owner, spender],
+            });
+            return (allowance as bigint) < a.amount;
+          } catch {
+            // RPC error — include approval to be safe
+            return true;
           }
-        } catch {
-          // RPC error — include approval to be safe
-          needed.push(a);
-        }
-      }
-      return needed;
+        })
+      );
+      return approvals.filter((_, i) => isNeeded[i]);
     },
     []
   );
@@ -280,6 +293,14 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
       switch (d.type) {
         case "vaultWithdraw": {
           if (!d.position || safeFloat(d.amount) <= 0) break;
+          // The adapter redeems the shares on the user's behalf, so it needs an
+          // allowance on them (the vault is the share token).
+          s.push({
+            label: `Approve ${d.position.vault.name} shares`,
+            detail: `Vault shares to the adapter`,
+            type: "approve",
+            icon: d.position.vault.asset.logoURI,
+          });
           s.push({
             label: `Withdraw from ${d.position.vault.name}`,
             detail: `${fmtNum(safeFloat(d.amount))} ${d.position.vault.asset.symbol}`,
@@ -297,7 +318,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               : `${fmtNum(safeFloat(d.collateralAmount))} ${d.collateralAsset.symbol}`;
             s.push({
               label: `Approve ${d.collateralAsset.symbol}`,
-              detail: `${collateralDetail} to Bundler`,
+              detail: `${collateralDetail} to the adapter`,
               type: "approve",
               icon: d.collateralAsset.logoURI,
             });
@@ -320,19 +341,18 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           if (!d.market) break;
           if (!d.depositAll && safeFloat(d.amount) <= 0) break;
           const sym = d.market.loanAsset.symbol;
-          const upEdge = edges.find((e) => e.target === node.id);
-          const upNode = upEdge ? sorted.find((n) => n.id === upEdge.source) : null;
-          const upType = upNode ? (upNode.data as { type?: string }).type : null;
-          // Only tokens coming straight from the user's wallet need a fresh allowance
-          // step; a borrow or swap output reaches the adapter another way.
-          if (!d.depositAll && (upType === undefined || upType === null || upType === "wallet" || upType === "vaultWithdraw" || upType === "lendWithdraw")) {
-            s.push({
-              label: `Approve ${sym}`,
-              detail: `${fmtNum(safeFloat(d.amount))} ${sym} to Bundler`,
-              type: "approve",
-              icon: d.market.loanAsset.logoURI,
-            });
-          }
+          // The lend always pulls its tokens from the user's wallet: a borrow sends
+          // the loan to the user and a CoW fill lands there too, so whatever feeds
+          // it, the adapter needs an allowance. Fed by a swap, it is granted after
+          // the fill, for the amount actually received.
+          s.push({
+            label: `Approve ${sym}`,
+            detail: d.depositAll
+              ? `Swap output (${sym}) to the adapter, after the fill`
+              : `${fmtNum(safeFloat(d.amount))} ${sym} to the adapter`,
+            type: "approve",
+            icon: d.market.loanAsset.logoURI,
+          });
           const apy = d.market.state.netSupplyApy ?? d.market.state.supplyApy;
           s.push({
             label: `Lend ${sym} to ${d.market.collateralAsset.symbol}/${sym}`,
@@ -372,25 +392,18 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           // When depositAll is true, amount comes from upstream swap at execution time
           if (!d.depositAll && safeFloat(d.amount) <= 0) break;
 
-          // Show approval step when the tokens are pulled from the user's wallet.
-          // Skip when the upstream is a swap (CowSwap output lands on the adapter
-          // already) or a borrow (the adapter holds the borrowed tokens directly).
-          const upEdge = edges.find((e) => e.target === node.id);
-          const upNode = upEdge ? sorted.find((n) => n.id === upEdge.source) : null;
-          const upType = upNode ? (upNode.data as { type?: string }).type : null;
-          const tokensComeFromUser =
-            upType === undefined ||
-            upType === "wallet" ||
-            upType === "vaultWithdraw";
-
-          if (tokensComeFromUser && !d.depositAll) {
-            s.push({
-              label: `Approve ${d.vault.asset.symbol}`,
-              detail: `${fmtNum(safeFloat(d.amount))} ${d.vault.asset.symbol} to Bundler`,
-              type: "approve",
-              icon: d.vault.asset.logoURI,
-            });
-          }
+          // The deposit always pulls its tokens from the user's wallet: a borrow
+          // sends the loan to the user (receiver = user) and a CoW order's
+          // receiver is the user too, so whatever feeds it, the adapter needs an
+          // allowance. Fed by a swap, it is granted after the fill.
+          s.push({
+            label: `Approve ${d.vault.asset.symbol}`,
+            detail: d.depositAll
+              ? `Swap output (${d.vault.asset.symbol}) to the adapter, after the fill`
+              : `${fmtNum(safeFloat(d.amount))} ${d.vault.asset.symbol} to the adapter`,
+            type: "approve",
+            icon: d.vault.asset.logoURI,
+          });
 
           const depositDetail = d.depositAll
             ? `All swap output → ${d.vault.asset.symbol} — ${formatApy(d.vault.state.netApy)}`
@@ -408,13 +421,17 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           // Repay needs an approval on the loan token (transferFrom from user)
           s.push({
             label: `Approve ${d.market.loanAsset.symbol}`,
-            detail: `${fmtNum(safeFloat(d.amount))} ${d.market.loanAsset.symbol} to Bundler`,
+            detail: `${fmtNum(safeFloat(d.amount))} ${d.market.loanAsset.symbol} to the adapter`,
             type: "approve",
             icon: d.market.loanAsset.logoURI,
           });
           s.push({
             label: `Repay ${d.market.loanAsset.symbol}`,
-            detail: `${fmtNum(safeFloat(d.amount))} ${d.market.loanAsset.symbol} — ${formatApy(d.market.state.netBorrowApy)}`,
+            // A full repay clears the debt by shares; the 0.1% buffer pulled with
+            // it comes back to the wallet in the same transaction.
+            detail: d.repayAll
+              ? `All debt (≈ ${fmtNum(safeFloat(d.amount))} ${d.market.loanAsset.symbol}, unused buffer returned)`
+              : `${fmtNum(safeFloat(d.amount))} ${d.market.loanAsset.symbol} — ${formatApy(d.market.state.netBorrowApy)}`,
             type: "repay",
             icon: d.market.loanAsset.logoURI,
           });
@@ -435,6 +452,17 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
     }
     return s;
   }, [nodes, edges]);
+
+  // What the user will actually be asked to sign besides the approvals. A swap
+  // splits the strategy around a CoW order (a bundle before it, one after the
+  // fill), and a bridge sends its own transaction after the source bundle.
+  const txSummary = useMemo(() => {
+    if (planCrossChainExecution(nodes, edges, chainId as SupportedChainId).isCrossChain) {
+      return "source bundle + bridge transaction";
+    }
+    if (getSwapDetails(nodes, edges).length > 0) return "CoW order + up to 2 bundled transactions";
+    return "1 bundled transaction";
+  }, [nodes, edges, chainId]);
 
   // Handle approval + execution flow
   const handleExecute = useCallback(async () => {
@@ -491,7 +519,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
 
       // Helper: abort if chain changed mid-execution
       const assertChain = () => {
-        if (walletChainId !== chainId) {
+        if (walletChainIdRef.current !== chainId) {
           throw new Error(`Network changed during execution — expected ${expectedChainLabel}`);
         }
       };
@@ -592,11 +620,76 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         }
       };
 
+      // ─── Morpho Blue authorization preflight ───────────────────────────────
+      // The bundler executes morpho.borrow on behalf of the user via the
+      // GeneralAdapter1 contract. Morpho Blue requires the user to have
+      // explicitly authorized that adapter via setAuthorization. Without it,
+      // first-time borrowers see "Unauthorized()" reverts.
+      //
+      // We check isAuthorized once before the bundle. If false, we submit a
+      // separate setAuthorization tx (one extra signature for the user). This
+      // is a one-time setup per (user, adapter) pair.
+      //
+      // A helper rather than inline code because the cross-chain path needs it
+      // too: a borrow that feeds a bridge runs in the source-chain bundle, and
+      // that branch returns before the single-chain flow below.
+      //
+      // FUTURE: replace with setAuthorizationWithSig embedded in the bundle
+      // (saves one signature). Requires EIP-712 signing flow.
+      const ensureMorphoAuthorization = async (authNodes: CanvasNode[]) => {
+        if (!strategyNeedsMorphoAuthorization(authNodes)) return;
+        let isAuth = false;
+        try {
+          isAuth = (await readContract(wagmiConfig, {
+            address: MORPHO_BLUE[cid],
+            abi: morphoBlueAbi,
+            functionName: "isAuthorized",
+            args: [currentAddress, adapter],
+          })) as boolean;
+        } catch (err) {
+          // RPC failure — fall through and try the auth tx anyway. If the
+          // user is already authorized the tx is a no-op (cheap).
+          console.warn("[ExecuteButton] isAuthorized check failed, will attempt setAuthorization:", err);
+        }
+        if (isAuth) return;
+
+        const authTx = buildMorphoAuthorizationTx(cid);
+        if (!authTx) throw new Error("Cannot build authorization tx for this chain");
+        assertChain();
+        setSwapStatus("Authorizing Morpho adapter (one-time setup)…");
+        const authHash = await new Promise<`0x${string}`>((resolve, reject) => {
+          sendTransaction(
+            { to: authTx.to, data: authTx.data, value: 0n },
+            { onSuccess: (h) => resolve(h), onError: (err) => reject(err) }
+          );
+        });
+        try {
+          const receipt = await waitWithRetry(authHash);
+          if (receipt.status === "reverted") {
+            throw new Error("Authorization tx reverted on-chain");
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(`Authorization failed: ${msg}`);
+        }
+        setSwapStatus(null);
+        if (addressRef.current !== currentAddress) {
+          throw new Error("Wallet address changed during execution. Aborting.");
+        }
+      };
+
       // ─── Fixed-rate legs (Midnight) ────────────────────────────────────────
       // A fixed-rate borrow isn't a Blue call: it lifts an order book. The
       // router hands back the exact offers, one `take` each, so a fill that
       // sweeps several price levels becomes several calls — batched together so
       // they settle as one rather than partially.
+      //
+      // Not reachable yet: validateGraph rejects fixed-rate borrows above and
+      // the Execute button is disabled for them. Still missing before this can
+      // run: posting the collateral to Midnight (a borrower lifting the bids
+      // sells units against collateral, it does not pay in the loan token, so
+      // the approval below is on the wrong token), and the rest of the graph:
+      // this block returns after the takes, so every other node is skipped.
       const fixedLegs = execNodes.filter(
         (n) => (n.data as unknown as { fixedRate?: unknown }).fixedRate
       );
@@ -658,6 +751,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
 
         // Phase 1 — Morpho actions on the source chain, if any.
         if (xchain.sourceSegment) {
+          await ensureMorphoAuthorization(xchain.sourceSegment.nodes);
           setSwapStatus("Executing source-chain actions…");
           const srcBundle = buildExecutionBundle(
             xchain.sourceSegment.nodes,
@@ -680,8 +774,14 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         if (!bridgeTx.ok || !bridgeTx.transaction) {
           throw new Error(bridgeTx.error ?? "Could not build the bridge transaction");
         }
+        // A different route means a different fee, ETA and minimum received
+        // than the ones the user chose on the node: stop rather than sign it.
         if (bridgeTx.substituted) {
-          console.warn("[ExecuteButton] selected bridge route unavailable, using", bridgeTx.toolName);
+          throw new Error(
+            `The selected bridge route is not available right now${
+              bridgeTx.toolName ? ` (LI.FI would use ${bridgeTx.toolName})` : ""
+            }. Pick another route on the bridge node.`
+          );
         }
 
         // Phase 3 — approve the bridge router for the asset being sent.
@@ -742,63 +842,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         return;
       }
 
-      // ─── Morpho Blue authorization preflight ───────────────────────────────
-      // The bundler executes morpho.borrow on behalf of the user via the
-      // GeneralAdapter1 contract. Morpho Blue requires the user to have
-      // explicitly authorized that adapter via setAuthorization. Without it,
-      // first-time borrowers see "Unauthorized()" reverts.
-      //
-      // We check isAuthorized once before the bundle. If false, we submit a
-      // separate setAuthorization tx (one extra signature for the user). This
-      // is a one-time setup per (user, adapter) pair.
-      //
-      // FUTURE: replace with setAuthorizationWithSig embedded in the bundle
-      // (saves one signature). Requires EIP-712 signing flow.
-      if (strategyNeedsMorphoAuthorization(execNodes)) {
-        let isAuth = false;
-        try {
-          isAuth = (await readContract(wagmiConfig, {
-            address: MORPHO_BLUE[cid],
-            abi: morphoBlueAbi,
-            functionName: "isAuthorized",
-            args: [currentAddress, adapter],
-          })) as boolean;
-        } catch (err) {
-          // RPC failure — fall through and try the auth tx anyway. If the
-          // user is already authorized the tx is a no-op (cheap).
-          console.warn("[ExecuteButton] isAuthorized check failed, will attempt setAuthorization:", err);
-        }
-
-        if (!isAuth) {
-          const authTx = buildMorphoAuthorizationTx(cid);
-          if (!authTx) {
-            setError("Cannot build authorization tx for this chain");
-            return;
-          }
-          assertChain();
-          setSwapStatus("Authorizing Morpho adapter (one-time setup)…");
-          const authHash = await new Promise<`0x${string}`>((resolve, reject) => {
-            sendTransaction(
-              { to: authTx.to, data: authTx.data, value: 0n },
-              { onSuccess: (h) => resolve(h), onError: (err) => reject(err) }
-            );
-          });
-          try {
-            const receipt = await waitWithRetry(authHash);
-            if (receipt.status === "reverted") {
-              throw new Error("Authorization tx reverted on-chain");
-            }
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            throw new Error(`Authorization failed: ${msg}`);
-          }
-          setSwapStatus(null);
-          if (addressRef.current !== currentAddress) {
-            setError("Wallet address changed during execution. Aborting.");
-            return;
-          }
-        }
-      }
+      await ensureMorphoAuthorization(execNodes);
 
       // Detect if graph contains swaps
       const swaps = getSwapDetails(execNodes, execEdges);
@@ -931,22 +975,21 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           // 2a + 2b: Approve sell token & fetch quote in parallel
           setSwapStatus(`Preparing ${swap.sellSymbol} → ${swap.buySymbol}...`);
 
-          const MAX_APPROVAL = 2n ** 256n - 1n;
+          // Approve exactly what this order sells rather than an unlimited amount:
+          // the relayer keeps no standing allowance on the user's tokens once the
+          // order is filled. buildApprovalTxs adds the reset-to-zero USDT needs,
+          // since an exact allowance is no longer approved only once.
+          const sellAmount = BigInt(swap.sellAmountWei);
           const approvalPromise = (async () => {
             const sellNeeded = await filterNeededApprovals(
-              [{ token: swap.sellToken, amount: BigInt(swap.sellAmountWei) }],
+              [{ token: swap.sellToken, amount: sellAmount }],
               currentAddress,
               vaultRelayer
             );
             if (sellNeeded.length > 0) {
               assertChain();
               setSwapStatus(`Approving ${swap.sellSymbol} for CowSwap...`);
-              const approveData = encodeFunctionData({
-                abi: erc20Abi,
-                functionName: "approve",
-                args: [vaultRelayer, MAX_APPROVAL],
-              });
-              await sendApprovals([{ to: swap.sellToken, data: approveData }]);
+              await sendApprovals(buildApprovalTxs(sellNeeded, vaultRelayer, cid));
             }
           })();
 
@@ -1011,11 +1054,13 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
 
         setSwapStatus(null);
       }
-
-      setShowConfirm(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to build bundle");
     } finally {
+      // Every exit re-arms the "click again to confirm" step, not only success:
+      // the early `setError(...); return;` paths used to leave it armed, so the
+      // next click signed straight away.
+      setShowConfirm(false);
       setApprovalStep(0);
       isExecutingRef.current = false;
       setIsExecuting(false);
@@ -1037,6 +1082,9 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           ?? (d.tokenIn as { symbol?: string })?.symbol
           ?? "";
         return `Insufficient ${symbol} balance`;
+      }
+      if (isFixedRateBorrow(d)) {
+        return "Fixed-rate (Midnight) execution is not available yet: switch the borrow to Floating";
       }
       if (d.exceedsLiquidity) {
         // A lend withdraw keeps its market on the position it picked.
@@ -1116,7 +1164,10 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
               <div className="no-scrollbar relative max-h-[280px] overflow-y-auto pr-1">
                 <div className="space-y-0">
                   {steps.map((step, i) => {
-                    const done = !!txHash;
+                    // txHash is set by the first bundle already: with a swap or a
+                    // bridge more is still to come, so only a finished, error-free
+                    // run marks the steps done.
+                    const done = !!txHash && !isExecuting && !error;
                     const isLast = i === steps.length - 1;
 
                     return (
@@ -1239,7 +1290,8 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
                   Review the steps above carefully. Click Execute again to sign.
                 </p>
                 <p className="mt-0.5 text-[9px] text-yellow-400/70">
-                  {steps.filter((s) => s.type === "approve").length} approval(s) + 1 bundled tx
+                  {/* "Up to": an allowance that is already high enough is skipped. */}
+                  Up to {steps.filter((s) => s.type === "approve").length} approval(s) + {txSummary}
                 </p>
               </div>
             )}
@@ -1279,7 +1331,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
             {/* Summary bar */}
             <div className="mt-3 flex items-center justify-between rounded-lg border border-border bg-bg-secondary px-3 py-2 text-[10px] text-text-tertiary">
               <span>{steps.length} action{steps.length !== 1 ? "s" : ""}</span>
-              <span>1 bundled transaction</span>
+              <span>{txSummary.charAt(0).toUpperCase() + txSummary.slice(1)}</span>
             </div>
 
             {/* Pre-execution simulation — hidden behind a feature flag until polished */}

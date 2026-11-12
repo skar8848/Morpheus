@@ -3,12 +3,15 @@
 
 "use client";
 
-import { memo, useMemo } from "react";
-import { Handle, Position, useReactFlow, type NodeProps } from "@xyflow/react";
+import { memo, useEffect, useMemo, useRef } from "react";
+import { Handle, Position, useEdges, useNodes, useReactFlow, type NodeProps } from "@xyflow/react";
 import Image from "next/image";
+import { formatUnits } from "viem";
 import { useUserPositions } from "@/lib/hooks/useUserPositions";
+import { useTokenBalances } from "@/lib/hooks/useTokenBalances";
 import { formatApy, formatUsd } from "@/lib/utils/format";
 import { safeBigInt } from "@/lib/utils/bigint";
+import { repayPullRaw } from "@/lib/canvas/executor";
 import type { RepayNodeData } from "@/lib/canvas/types";
 import NodeShell from "./NodeShell";
 import SearchSelect from "./SearchSelect";
@@ -51,8 +54,52 @@ function RepayNodeComponent({ id, data }: NodeProps) {
     Number(currentCollateralRaw) / 10 ** collateralDecimals;
   const currentCollateralUsd = selectedPosition?.state?.collateralUsd ?? 0;
 
+  // What the bundle will actually withdraw is the stored raw figure, so that is
+  // what the toggle shows (it can trail the live position by a few blocks).
+  let storedCollateral = 0;
+  try {
+    storedCollateral = Number(BigInt(d.collateralToWithdraw ?? "0")) / 10 ** collateralDecimals;
+  } catch { /* malformed raw amount: show 0 */ }
+  const storedCollateralUsd =
+    currentCollateral > 0 ? (currentCollateralUsd * storedCollateral) / currentCollateral : 0;
+
   const amount = parseFloat(d.amount || "0");
   const isFullRepay = currentDebt > 0 && amount >= currentDebt * 0.999;
+
+  // What the bundle will pull from the wallet: the typed amount, or the debt plus
+  // the 0.1% head-room for a full repay. Same figure the executor and the
+  // approval use, so the warning can't disagree with what gets signed.
+  const pullRaw = repayPullRaw(d);
+  const loanAssets = useMemo(
+    () => {
+      if (!d.market) return [];
+      const { symbol, address, decimals, logoURI } = d.market.loanAsset;
+      return [{ symbol, name: symbol, address, decimals, logoURI }];
+    },
+    [d.market]
+  );
+  const { assetsWithBalances, isLoading: balanceLoading } = useTokenBalances(loanAssets);
+  const walletRaw = assetsWithBalances[0]?.balanceRaw ?? 0n;
+
+  // A repay fed by a swap or a withdraw is paid with what arrives during the run,
+  // not with what the wallet holds now, so only a wallet-funded repay is checked.
+  const edges = useEdges();
+  const allNodes = useNodes();
+  const fedByUpstream = edges.some(
+    (e) => e.target === id && allNodes.find((n) => n.id === e.source)?.type !== "walletNode"
+  );
+  const exceedsBalance =
+    !fedByUpstream && !balanceLoading && pullRaw > 0n && pullRaw > walletRaw;
+
+  // Persist for edge rendering + the Execute button's insufficient-balance guard
+  const prevExceedsRef = useRef(false);
+  useEffect(() => {
+    if (exceedsBalance !== prevExceedsRef.current) {
+      prevExceedsRef.current = exceedsBalance;
+      updateNodeData(id, { exceedsBalance });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exceedsBalance]);
 
   return (
     <NodeShell
@@ -60,6 +107,7 @@ function RepayNodeComponent({ id, data }: NodeProps) {
       title="Repay"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
       loading={loading}
+      invalid={exceedsBalance}
     >
       <Handle
         type="target"
@@ -89,10 +137,16 @@ function RepayNodeComponent({ id, data }: NodeProps) {
             value={d.market?.uniqueKey ?? ""}
             onChange={(val) => {
               const pos = borrowPositions.find((p) => p.market.uniqueKey === val);
+              // The collateral to free is in the OLD market's collateral units:
+              // carried over, the executor would withdraw a wstETH raw figure
+              // as WBTC (1e18 vs 1e8) and downstream nodes would be fed it.
               updateNodeData(id, {
                 market: pos?.market ?? null,
                 amount: "",
                 amountUsd: 0,
+                repayAll: false,
+                withdrawCollateralAfterRepay: false,
+                collateralToWithdraw: undefined,
               });
             }}
             placeholder="Select borrow to repay..."
@@ -136,6 +190,9 @@ function RepayNodeComponent({ id, data }: NodeProps) {
                       d.market!.loanAsset.decimals > 6 ? 8 : 6
                     ),
                     amountUsd: currentDebtUsd,
+                    // Repay by shares so interest accrued before the bundle lands
+                    // is cleared too, not left behind as dust debt.
+                    repayAll: true,
                     // Full repay → auto-enable the withdraw collateral
                     // step so the user gets their collateral back.
                     withdrawCollateralAfterRepay: currentCollateral > 0,
@@ -169,6 +226,7 @@ function RepayNodeComponent({ id, data }: NodeProps) {
                 updateNodeData(id, {
                   amount: val,
                   amountUsd: isFinite(usd) ? usd : 0,
+                  repayAll: false,
                 });
               }}
               placeholder="0.00"
@@ -183,6 +241,18 @@ function RepayNodeComponent({ id, data }: NodeProps) {
           {amount > 0 && (
             <p className="mt-1 text-right text-[10px] text-text-tertiary">
               ≈ {formatUsd(d.amountUsd)}
+            </p>
+          )}
+          {d.repayAll && pullRaw > 0n && (
+            <p className="mt-1 text-[10px] text-text-tertiary">
+              Pulls up to {Number(formatUnits(pullRaw, d.market.loanAsset.decimals)).toLocaleString(undefined, { maximumFractionDigits: 6 })}{" "}
+              {d.market.loanAsset.symbol} (debt + 0.1% for interest until it lands); the unused part comes back in the same transaction.
+            </p>
+          )}
+          {exceedsBalance && (
+            <p className="mt-1 text-[10px] text-error">
+              Exceeds wallet balance ({Number(formatUnits(walletRaw, d.market.loanAsset.decimals)).toLocaleString(undefined, { maximumFractionDigits: 6 })}{" "}
+              {d.market.loanAsset.symbol})
             </p>
           )}
 
@@ -223,14 +293,14 @@ function RepayNodeComponent({ id, data }: NodeProps) {
                       />
                     )}
                     <span className="flex-1 text-xs text-text-primary">
-                      {currentCollateral.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                      {storedCollateral.toLocaleString(undefined, { maximumFractionDigits: 6 })}
                     </span>
                     <span className="shrink-0 text-[10px] text-text-tertiary">
                       {d.market.collateralAsset.symbol}
                     </span>
                   </div>
                   <p className="mt-1 text-right text-[10px] text-text-tertiary">
-                    ≈ {formatUsd(currentCollateralUsd)}
+                    ≈ {formatUsd(storedCollateralUsd)}
                   </p>
                 </>
               )}

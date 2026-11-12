@@ -195,8 +195,13 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
   });
 
   const allRoutes = useMemo(() => {
-    if (!cowRoute) return routes;
-    const merged = [...routes, cowRoute];
+    // Execution goes through LI.FI and asks it for the route's tool. A rail
+    // quoted elsewhere (native CCTP, LayerZero's own Stargate API, CoW) has no
+    // LI.FI tool, so picking it would sign whatever LI.FI ranks first instead.
+    // Keep those quotes visible for comparison, but not selectable.
+    const executable = (r: RouteQuote): RouteQuote =>
+      r.tool || r.unavailable ? r : { ...r, unavailable: "Quote only: can't be executed from Morpheus yet" };
+    const merged = [...routes, ...(cowRoute ? [cowRoute] : [])].map(executable);
     // Same ranking rule as the server rails: best net received, unusable last.
     return merged.sort((a, b) => {
       if (!!a.unavailable !== !!b.unavailable) return a.unavailable ? 1 : -1;
