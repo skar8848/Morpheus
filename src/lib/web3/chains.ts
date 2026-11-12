@@ -41,6 +41,15 @@ export const CHAIN_CONFIGS: ChainConfig[] = [
   { slug: "monad", chainId: 143, chain: monad, label: "Monad", logo: "/chains/monad.png" },
 ];
 
+/**
+ * Block explorer base URL by chainId, from the chain definitions themselves,
+ * so a chain added to CHAIN_CONFIGS links to its own explorer with no extra map.
+ */
+export function explorerBase(chainId: number): string {
+  const chain = CHAIN_CONFIGS.find((c) => c.chainId === chainId)?.chain;
+  return chain?.blockExplorers?.default.url ?? "https://etherscan.io";
+}
+
 /** Chain logo path by chainId (falls back to empty string). */
 export function chainLogo(chainId: number): string {
   return CHAIN_CONFIGS.find((c) => c.chainId === chainId)?.logo ?? "";

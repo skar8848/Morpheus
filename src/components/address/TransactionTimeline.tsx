@@ -5,12 +5,8 @@
 
 import Image from "next/image";
 import { useChain } from "@/lib/context/ChainContext";
+import { explorerBase } from "@/lib/web3/chains";
 import type { MarketTransaction, MorphoTransaction, VaultTransaction } from "@/lib/graphql/types";
-
-const EXPLORER_BASE: Record<number, string> = {
-  1: "https://etherscan.io",
-  8453: "https://basescan.org",
-};
 
 interface Props {
   transactions: MorphoTransaction[];
@@ -159,7 +155,7 @@ export default function TransactionTimeline({
   hasMore,
 }: Props) {
   const { chainId } = useChain();
-  const explorerBase = EXPLORER_BASE[chainId] ?? "https://etherscan.io";
+  const explorer = explorerBase(chainId);
   const grouped = groupByDate(transactions);
 
   return (
@@ -174,7 +170,7 @@ export default function TransactionTimeline({
             <div className="mb-2 text-[11px] font-medium text-text-tertiary">{date}</div>
             <div className="space-y-1">
               {txs.map((tx) => (
-                <TransactionRow key={tx.id} tx={tx} explorerBase={explorerBase} />
+                <TransactionRow key={tx.id} tx={tx} explorerBase={explorer} />
               ))}
             </div>
           </div>
