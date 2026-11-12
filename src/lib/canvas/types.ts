@@ -113,6 +113,9 @@ export interface VaultDepositNodeData {
   [key: string]: unknown;
   type: "vaultDeposit";
   vault: Vault | null;
+  /** Asset picked by hand when the deposit is fed straight from the wallet.
+   *  Every other source decides the asset itself (loan, swap output...). */
+  asset?: Asset | null;
   amount: string;
   amountUsd: number;
   /** Deposit entire upstream swap output (default true when connected to swap) */

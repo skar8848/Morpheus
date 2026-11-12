@@ -12,6 +12,7 @@ import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
 import ChainIcon from "../ChainIcon";
 import { useVaults } from "@/lib/hooks/useVaults";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
+import { useAllAssets } from "@/lib/hooks/useAllAssets";
 import { formatApy, formatUsd } from "@/lib/utils/format";
 import type { VaultDepositNodeData, CanvasNode } from "@/lib/canvas/types";
 import NodeShell from "./NodeShell";
@@ -89,12 +90,15 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     const sources: UpstreamSource[] = [];
     let loanAddr: string | null = null;
     let swapInfo: UpstreamSwapInfo | null = null;
+    let fromWallet = false;
 
     for (const edge of incomingEdges) {
       const sourceNode = allNodes.find((n) => n.id === edge.source);
       if (!sourceNode) continue;
 
       const sd = sourceNode.data as Record<string, unknown>;
+
+      if (sd.type === "wallet") fromWallet = true;
 
       if (sd.type === "borrow") {
         const market = sd.market as {
@@ -204,10 +208,10 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
       }
     }
 
-    return { sources, connectedLoanAddress: loanAddr, swapInfo };
+    return { sources, connectedLoanAddress: loanAddr, swapInfo, fromWallet };
   }, [edges, allNodes, id]);
 
-  const { sources, connectedLoanAddress, swapInfo } = upstreamSources;
+  const { sources, connectedLoanAddress, swapInfo, fromWallet } = upstreamSources;
 
   // Effective chain: walk the whole upstream chain, not just the direct
   // neighbour — with `bridge → swap → vault` the vault's neighbour is the swap,
@@ -218,6 +222,19 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     [id, allNodes, edges, chainId]
   );
   const chainLabel = CHAIN_CONFIGS.find((c) => c.chainId === nodeChainId)?.label ?? `Chain ${nodeChainId}`;
+
+  // A deposit fed straight from the wallet has no producer to say which asset
+  // it is, so the user picks it here (as in Lend). Without this the vault list
+  // was keyed on a producer that never came and stayed empty: Wallet -> Vault,
+  // the plain earn flow, could not pick a vault at all.
+  const pickAssetByHand = fromWallet && !connectedLoanAddress;
+  const { assets: allAssets, loading: assetsLoading } = useAllAssets(nodeChainId);
+  const assetOptions = useMemo(
+    () => allAssets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
+    [allAssets]
+  );
+  const vaultAssetAddress = connectedLoanAddress
+    ?? (pickAssetByHand ? d.asset?.address ?? d.vault?.asset.address ?? null : null);
   const hasBorrowUpstream = sources.some((s) => s.borrowAmount > 0);
   const hasSwapUpstream = !!swapInfo;
   const swapQuoteNum = parseFloat(swapInfo?.quoteOut || "0");
@@ -248,10 +265,10 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     return result;
   }, [sources, edges, allNodes, id]);
 
-  // Fetch vaults filtered by the connected loan asset
+  // Fetch vaults filtered by the connected (or hand-picked) asset
   const vaultAssetAddresses = useMemo(
-    () => (connectedLoanAddress ? [connectedLoanAddress] : []),
-    [connectedLoanAddress]
+    () => (vaultAssetAddress ? [vaultAssetAddress] : []),
+    [vaultAssetAddress]
   );
   const { vaults: filteredVaults, loading: vaultsLoading } = useVaults(vaultAssetAddresses, nodeChainId);
 
@@ -339,7 +356,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
       nodeType="vaultDeposit"
       title="Vault Deposit"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
-      loading={vaultsLoading}
+      loading={vaultsLoading || (pickAssetByHand && assetsLoading)}
     >
       <div className="space-y-2">
         {/* Which chain the vault list comes from — differs from the canvas
@@ -364,8 +381,25 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
           </div>
         )}
 
+        {pickAssetByHand && (
+          <div>
+            <label className="text-[10px] text-text-tertiary">Asset to deposit</label>
+            <SearchSelect
+              options={assetOptions}
+              value={vaultAssetAddress ?? ""}
+              onChange={(addr) => {
+                const asset = allAssets.find((a) => a.address === addr) ?? null;
+                const keepVault =
+                  !!d.vault && !!asset && d.vault.asset.address.toLowerCase() === asset.address.toLowerCase();
+                updateNodeData(id, keepVault ? { asset } : { asset, vault: null, amount: "", amountUsd: 0 });
+              }}
+              placeholder="Search asset..."
+            />
+          </div>
+        )}
+
         {/* Sort buttons */}
-        {connectedLoanAddress && !vaultsLoading && sortedVaults.length > 1 && (
+        {vaultAssetAddress && !vaultsLoading && sortedVaults.length > 1 && (
           <div className="flex items-center gap-1">
             <span className="text-[9px] text-text-tertiary mr-1">Sort:</span>
             {(["tvl", "apy"] as SortKey[]).map((key) => (
@@ -385,7 +419,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
         )}
 
         {/* Vault selector */}
-        {connectedLoanAddress && (
+        {vaultAssetAddress && (
           <div>
             <label className="text-[10px] text-text-tertiary">Vault</label>
             {vaultsLoading ? (
