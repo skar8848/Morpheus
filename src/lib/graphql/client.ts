@@ -30,16 +30,48 @@ function normalizePrices(node: unknown): void {
   for (const value of Object.values(obj)) normalizePrices(value);
 }
 
+/**
+ * A slow API is worse than a failing one: the call eventually resolves, no
+ * `catch` fires, and the UI sits on "loading" (or, server-side, the route hits
+ * its maxDuration and answers 504 with no body). Every request is cut off after
+ * this long so slowness surfaces as an error.
+ */
+const REQUEST_TIMEOUT_MS = 15_000;
+
+function requestSignal(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  if (!signal) return timeout;
+  // AbortSignal.any is recent; without it the caller's own signal still wins.
+  return typeof AbortSignal.any === "function" ? AbortSignal.any([signal, timeout]) : signal;
+}
+
+/**
+ * `signal` lets a hook cancel the request itself when its inputs change or the
+ * component unmounts, instead of only ignoring the late answer.
+ */
 export async function morphoQuery<T>(
   query: string,
-  variables?: Record<string, unknown>
+  variables?: Record<string, unknown>,
+  signal?: AbortSignal
 ): Promise<T> {
-  const res = await fetch(MORPHO_API, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, variables }),
-    next: { revalidate: 60 },
-  });
+  let res: Response;
+  try {
+    res = await fetch(MORPHO_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, variables }),
+      // Never served from Next's data cache: inside a route handler a POST with
+      // `revalidate` is cached by URL + body, so /api/positions re-read right
+      // after a transaction could answer with the pre-transaction state.
+      cache: "no-store",
+      signal: requestSignal(signal),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error(`Morpho API timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+    }
+    throw err;
+  }
 
   // Morpho returns GraphQL validation errors with a 400 status and a JSON
   // body, so parse before checking res.ok to surface the real message.
@@ -78,15 +110,17 @@ interface Page {
  *
  * The first page tells us the total; the remaining pages are fetched in parallel.
  * The result keeps the usual `{ [field]: { items } }` shape, so callers stay unchanged.
+ * `signal` cancels every page at once.
  */
 export async function morphoQueryAll<T extends object>(
   query: string,
   variables: Record<string, unknown>,
   field: keyof T & string,
+  signal?: AbortSignal,
   pageSize = 200,
   maxPages = 25
 ): Promise<T> {
-  const first = await morphoQuery<T>(query, { ...variables, first: pageSize, skip: 0 });
+  const first = await morphoQuery<T>(query, { ...variables, first: pageSize, skip: 0 }, signal);
   const head = (first as unknown as Record<string, Page>)[field];
   const total = head.pageInfo?.countTotal ?? head.items.length;
   const pages = Math.min(Math.ceil(total / pageSize), maxPages);
@@ -94,11 +128,15 @@ export async function morphoQueryAll<T extends object>(
 
   const rest = await Promise.all(
     Array.from({ length: pages - 1 }, (_, i) =>
-      morphoQuery<Record<string, Page>>(query, {
-        ...variables,
-        first: pageSize,
-        skip: (i + 1) * pageSize,
-      })
+      morphoQuery<Record<string, Page>>(
+        query,
+        {
+          ...variables,
+          first: pageSize,
+          skip: (i + 1) * pageSize,
+        },
+        signal
+      )
     )
   );
   const items = [head.items, ...rest.map((r) => r[field].items)].flat();

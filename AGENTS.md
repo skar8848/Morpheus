@@ -116,7 +116,7 @@ Agents can deep-link a user directly into a pre-built canvas:
 https://morpheus-visualizer.vercel.app/{chain}/canvas?strategy=<base64url(json)>
 ```
 
-- `{chain}`: `ethereum` or `base`
+- `{chain}`: `ethereum`, `base`, `arbitrum`, `hyperevm` or `monad`
 - `strategy`: a base64url-encoded UTF-8 JSON blob using the **Canonical Canvas JSON** format above
 
 **Shorter alternative** for atomic operations (no full graph):

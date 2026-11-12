@@ -42,7 +42,8 @@ export function useLendMarkets(loanAddresses: string[], overrideChainId?: number
     morphoQueryAll<MarketsResponse>(
       LEND_MARKETS_QUERY,
       { loanAssets: loanAddresses, chainId: [chainId] },
-      "markets"
+      "markets",
+      controller.signal
     )
       .then((data) => {
         if (controller.signal.aborted) return;

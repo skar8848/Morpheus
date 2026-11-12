@@ -16,14 +16,21 @@ import {
   buildStrategyFromPositions,
   saveImportedStrategy,
 } from "@/lib/canvas/importStrategy";
+import { CHAIN_CONFIGS, explorerBase } from "@/lib/web3/chains";
+import { formatUsd } from "@/lib/utils/format";
 import PositionsSummary from "./PositionsSummary";
 import TransactionTimeline from "./TransactionTimeline";
+
+/** Hosts of the block explorers of every supported chain (etherscan.io, arbiscan.io, ...). */
+const EXPLORER_HOSTS = new Set(
+  CHAIN_CONFIGS.map((c) => new URL(explorerBase(c.chainId)).host.replace(/^www\./, "").toLowerCase())
+);
 
 /**
  * Resolve a user-supplied input to an Ethereum address.
  * Accepts:
  *   - 0x-prefixed addresses
- *   - Etherscan / Basescan URLs (https only, known domains only)
+ *   - explorer address URLs of any supported chain (https only, known domains only)
  *   - ENS names (`.eth` and other ENS TLDs) — resolved via viem on mainnet
  *
  * Returns null when the input doesn't match any known format, or a string
@@ -36,11 +43,11 @@ async function resolveAddress(input: string): Promise<string | null | { error: s
   const addrMatch = trimmed.match(/^(0x[a-fA-F0-9]{40})$/);
   if (addrMatch && isAddress(addrMatch[1])) return addrMatch[1].toLowerCase();
 
-  // Etherscan/Basescan URL: enforce HTTPS + known domains
-  const urlMatch = trimmed.match(
-    /^https:\/\/(?:www\.)?(?:etherscan\.io|basescan\.org)\/address\/(0x[a-fA-F0-9]{40})/i
-  );
-  if (urlMatch && isAddress(urlMatch[1])) return urlMatch[1].toLowerCase();
+  // Explorer URL: enforce HTTPS + the explorer of a supported chain
+  const urlMatch = trimmed.match(/^https:\/\/(?:www\.)?([^/]+)\/address\/(0x[a-fA-F0-9]{40})/i);
+  if (urlMatch && EXPLORER_HOSTS.has(urlMatch[1].toLowerCase()) && isAddress(urlMatch[2])) {
+    return urlMatch[2].toLowerCase();
+  }
 
   // ENS name — anything containing a dot, no spaces, reasonable length
   if (/^[a-zA-Z0-9-_.]+\.[a-zA-Z]{2,}$/.test(trimmed) && !trimmed.startsWith("0x")) {
@@ -328,12 +335,7 @@ function SummaryCard({
   negative?: boolean;
   accent?: boolean;
 }) {
-  const formatted =
-    value >= 1_000_000
-      ? `$${(value / 1_000_000).toFixed(2)}M`
-      : value >= 1_000
-        ? `$${(value / 1_000).toFixed(1)}K`
-        : `$${value.toFixed(2)}`;
+  const formatted = formatUsd(value);
 
   return (
     <div

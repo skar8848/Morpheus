@@ -4,10 +4,16 @@
 import { http, createConfig, fallback } from "wagmi";
 import { mainnet, base, arbitrum } from "wagmi/chains";
 import { injected, safe } from "wagmi/connectors";
-import { hyperevm, monad } from "./chains";
+import { hyperevm, monad, RPC_URLS, type SupportedChainId } from "./chains";
+
+/** One chain's endpoints, in order, falling back down the list on failure. */
+function transport(chainId: SupportedChainId) {
+  const urls = RPC_URLS[chainId];
+  return urls.length > 1 ? fallback(urls.map((url) => http(url))) : http(urls[0]);
+}
 
 /**
- * RPC endpoints, ordered by measured latency.
+ * RPC endpoints, ordered by measured latency (listed in RPC_URLS, chains.ts).
  *
  * NOTE: do NOT put 1rpc.io or rpc.ankr.com first (or at all) — as of 2026-07
  * 1rpc.io returns "You've reached the usage limit for your current plan" and
@@ -28,19 +34,10 @@ export const wagmiConfig = createConfig({
     safe({ allowedDomains: [/^app\.safe\.global$/, /^safe\.global$/] }),
   ],
   transports: {
-    [mainnet.id]: fallback([
-      http("https://ethereum-rpc.publicnode.com"),
-      http("https://eth.drpc.org"),
-    ]),
-    [base.id]: fallback([
-      http("https://base-rpc.publicnode.com"),
-      http("https://mainnet.base.org"),
-    ]),
-    [arbitrum.id]: fallback([
-      http("https://arbitrum-one-rpc.publicnode.com"),
-      http("https://arb1.arbitrum.io/rpc"),
-    ]),
-    [hyperevm.id]: http("https://rpc.hyperliquid.xyz/evm"),
-    [monad.id]: http("https://rpc.monad.xyz"),
+    [mainnet.id]: transport(mainnet.id),
+    [base.id]: transport(base.id),
+    [arbitrum.id]: transport(arbitrum.id),
+    [hyperevm.id]: transport(hyperevm.id),
+    [monad.id]: transport(monad.id),
   },
 });

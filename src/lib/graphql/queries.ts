@@ -123,10 +123,17 @@ export const LEND_MARKETS_QUERY = `
   }
 `;
 
-/** Live state of specific markets (liquidity for a withdraw, current supply APY). */
+/**
+ * Live state of specific markets (liquidity for a withdraw, current supply APY).
+ *
+ * This and the two user-position queries below set `first` explicitly: the API
+ * caps a list at 100 items when it is omitted, with no error, so an address
+ * with more positions (or a canvas naming more markets) was silently cut short.
+ */
 export const MARKETS_BY_KEY_QUERY = `
   query GetMarketsByKey($keys: [String!]!, $chainId: [Int!]!) {
     markets(
+      first: 1000
       where: {
         uniqueKey_in: $keys
         chainId_in: $chainId
@@ -198,6 +205,7 @@ export const VAULTS_QUERY = `
 export const USER_MARKET_POSITIONS_QUERY = `
   query GetUserMarketPositions($userAddress: [String!]!, $chainId: [Int!]!) {
     marketPositions(
+      first: 1000
       where: {
         userAddress_in: $userAddress
         chainId_in: $chainId
@@ -249,6 +257,7 @@ export const USER_MARKET_POSITIONS_QUERY = `
 export const USER_VAULT_POSITIONS_QUERY = `
   query GetUserVaultPositions($userAddress: [String!]!, $chainId: [Int!]!) {
     vaultPositions(
+      first: 1000
       where: {
         userAddress_in: $userAddress
         chainId_in: $chainId

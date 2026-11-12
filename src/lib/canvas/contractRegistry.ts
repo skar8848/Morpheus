@@ -15,7 +15,7 @@
  * or read back from a live API response — noted per entry.
  */
 
-import type { SupportedChainId } from "@/lib/web3/chains";
+import { explorerBase, type SupportedChainId } from "@/lib/web3/chains";
 
 export type ContractOwner = "morpho" | "cowswap" | "lifi" | "circle" | "safe" | "token";
 
@@ -147,18 +147,9 @@ export function classifyDestination(
   return { known: false };
 }
 
-const EXPLORERS: Record<number, string> = {
-  1: "https://etherscan.io",
-  8453: "https://basescan.org",
-  42161: "https://arbiscan.io",
-  999: "https://hyperevmscan.io",
-  143: "https://monadscan.com",
-};
-
 /** Link to the contract's verified source, so the claim is checkable in one click. */
 export function explorerContractUrl(address: string, chainId: SupportedChainId | number): string {
-  const base = EXPLORERS[chainId] ?? EXPLORERS[1];
-  return `${base}/address/${address}#code`;
+  return `${explorerBase(chainId)}/address/${address}#code`;
 }
 
 export const OWNER_LABELS: Record<ContractOwner, string> = {

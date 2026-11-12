@@ -41,7 +41,7 @@ This ships a Claude Code skill (`SKILL.md`) that teaches any agent how to transl
 **Public endpoints:**
 - `POST /api/canvas` — validate a canvas JSON, return a deep-link URL
 - `POST /api/canvas/validate` — schema check only
-- `GET  /api/positions?address=0x…&chainId=1` — V1+V2 positions for an address
+- `GET  /api/positions?address=0x…&chainId=1` — V1+V2 positions for an address (`chainId=` or `chain=<slug>`, any supported chain)
 - `POST /api/morpho-simulate` — proxy to Morpho MCP simulation
 
 All CORS-open, Edge-runtime, no API key required.

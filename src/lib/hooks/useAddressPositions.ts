@@ -17,7 +17,6 @@ import type {
   UserMarketPositionsResponse,
   UserVaultPositionsResponse,
   MorphoTransaction,
-  TransactionsResponse,
 } from "../graphql/types";
 import { safeBigInt } from "../utils/bigint";
 import { fetchUserVaultV2Positions } from "../canvas/vaultV2";
@@ -45,12 +44,13 @@ const MAX_TRANSACTIONS = 1000;
 type RawTx = Record<string, unknown>;
 
 function normalizeTxs(market: RawTx[], vault: RawTx[]): MorphoTransaction[] {
-  const shape = (t: RawTx): RawTx => ({
+  const shape = (surface: MorphoTransaction["surface"]) => (t: RawTx): RawTx => ({
     ...t,
+    surface,
     id: `${String(t.txHash)}-${String(t.logIndex ?? 0)}`,
     hash: String(t.txHash),
   });
-  const all: RawTx[] = [...market.map(shape), ...vault.map(shape)];
+  const all: RawTx[] = [...market.map(shape("market")), ...vault.map(shape("vault"))];
   all.sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0));
   return all as unknown as MorphoTransaction[];
 }
@@ -92,25 +92,26 @@ export function useAddressPositions(
     skipRef.current = 0;
 
     Promise.all([
-      morphoQuery<UserMarketPositionsResponse>(USER_MARKET_POSITIONS_QUERY, {
-        userAddress: [address],
-        chainId: [chainId],
-      }),
-      morphoQuery<UserVaultPositionsResponse>(USER_VAULT_POSITIONS_QUERY, {
-        userAddress: [address],
-        chainId: [chainId],
-      }),
-      morphoQuery<{ marketTransactions: { items: RawTx[] } }>(USER_MARKET_TRANSACTIONS_QUERY, {
-        userAddress: [address],
-        chainId: [chainId],
-        first: TX_PAGE_SIZE,
-        skip: 0,
-      }),
-      morphoQuery<{ vaultV1Transactions: { items: RawTx[] } }>(USER_VAULT_TRANSACTIONS_QUERY, {
-        userAddress: [address],
-        chainId: [chainId],
-        first: TX_PAGE_SIZE,
-      }).catch(() => ({ vaultV1Transactions: { items: [] as RawTx[] } })),
+      morphoQuery<UserMarketPositionsResponse>(
+        USER_MARKET_POSITIONS_QUERY,
+        { userAddress: [address], chainId: [chainId] },
+        controller.signal
+      ),
+      morphoQuery<UserVaultPositionsResponse>(
+        USER_VAULT_POSITIONS_QUERY,
+        { userAddress: [address], chainId: [chainId] },
+        controller.signal
+      ),
+      morphoQuery<{ marketTransactions: { items: RawTx[] } }>(
+        USER_MARKET_TRANSACTIONS_QUERY,
+        { userAddress: [address], chainId: [chainId], first: TX_PAGE_SIZE, skip: 0 },
+        controller.signal
+      ),
+      morphoQuery<{ vaultV1Transactions: { items: RawTx[] } }>(
+        USER_VAULT_TRANSACTIONS_QUERY,
+        { userAddress: [address], chainId: [chainId], first: TX_PAGE_SIZE },
+        controller.signal
+      ).catch(() => ({ vaultV1Transactions: { items: [] as RawTx[] } })),
       // V2 vaults are NOT in `vaultPositions` — discover via list + multicall
       fetchUserVaultV2Positions(address as `0x${string}`, chainId).catch((err) => {
         console.warn("[useAddressPositions] V2 fetch failed:", err);

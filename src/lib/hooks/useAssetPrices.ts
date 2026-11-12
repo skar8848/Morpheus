@@ -55,10 +55,11 @@ export function useAssetPrices(addresses: string[]): {
 
     setLoading(true);
 
-    morphoQuery<PricesResponse>(PRICES_QUERY, {
-      addresses,
-      chainId: [chainId],
-    })
+    morphoQuery<PricesResponse>(
+      PRICES_QUERY,
+      { addresses, chainId: [chainId] },
+      controller.signal
+    )
       .then((data) => {
         if (controller.signal.aborted) return;
         const map: Record<string, number> = {};
