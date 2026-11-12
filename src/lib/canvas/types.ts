@@ -227,7 +227,9 @@ export const VALID_CONNECTIONS: Record<string, string[]> = {
   // transferable asset, so nothing flows out of it.
   lend: [],
   lendWithdraw: ["swap", "vaultDeposit", "borrow", "lend", "repay", "bridge"],
-  swap: ["vaultDeposit", "borrow", "lend", "wallet", "repay", "bridge"],
+  // No `wallet` target: the wallet node has no input handle and nothing reads
+  // a swap -> wallet edge; the swap output already lands in the wallet.
+  swap: ["vaultDeposit", "borrow", "lend", "repay", "bridge"],
   vaultDeposit: [],
   vaultWithdraw: ["swap", "vaultDeposit", "borrow", "lend", "repay", "bridge"],
   // Bridge output lands on the destination chain and can feed the earn/borrow
