@@ -215,7 +215,7 @@ function SwapNodeComponent({ id, data }: NodeProps) {
     }
     return list;
   }, [d.tokenIn?.address, d.tokenOut?.address]);
-  const { prices } = useAssetPrices(priceAddresses);
+  const { prices } = useAssetPrices(priceAddresses, chainId);
   const tokenInPrice = d.tokenIn?.address
     ? prices[d.tokenIn.address.toLowerCase()] ?? 0
     : 0;

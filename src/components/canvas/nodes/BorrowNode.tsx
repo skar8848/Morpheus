@@ -128,7 +128,7 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
     if (d.market?.loanAsset?.address) addrs.push(d.market.loanAsset.address);
     return addrs;
   }, [collateralAsset?.address, d.market?.loanAsset?.address]);
-  const { prices, loading: pricesLoading } = useAssetPrices(priceAddresses);
+  const { prices, loading: pricesLoading } = useAssetPrices(priceAddresses, nodeChainId);
   const collateralPrice = collateralAsset
     ? prices[collateralAsset.address.toLowerCase()] ?? 0
     : 0;

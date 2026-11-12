@@ -41,6 +41,15 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
   const edges = useEdges();
   const allNodes = useNodes();
 
+  // Effective chain: walk the whole upstream chain, not just the direct
+  // neighbour — with `bridge → swap → vault` the vault's neighbour is the swap,
+  // so looking one hop back missed the bridge and listed vaults on the wrong
+  // network (which is why nothing matched the bridged asset).
+  const nodeChainId = useMemo(
+    () => getNodeChainId(id, allNodes as CanvasNode[], edges, chainId as SupportedChainId),
+    [id, allNodes, edges, chainId]
+  );
+
   const [sortBy, setSortBy] = useState<SortKey>("tvl");
 
   // Live USD price for the vault's underlying asset — used to keep amountUsd
@@ -51,7 +60,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     () => (d.vault?.asset.address ? [d.vault.asset.address] : []),
     [d.vault?.asset.address]
   );
-  const { prices } = useAssetPrices(priceQueryAddresses);
+  const { prices } = useAssetPrices(priceQueryAddresses, nodeChainId);
   const assetPriceUsd = useMemo(() => {
     if (!d.vault?.asset.address) return 0;
     return prices[d.vault.asset.address.toLowerCase()] ?? 0;
@@ -213,14 +222,6 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
 
   const { sources, connectedLoanAddress, swapInfo, fromWallet } = upstreamSources;
 
-  // Effective chain: walk the whole upstream chain, not just the direct
-  // neighbour — with `bridge → swap → vault` the vault's neighbour is the swap,
-  // so looking one hop back missed the bridge and listed vaults on the wrong
-  // network (which is why nothing matched the bridged asset).
-  const nodeChainId = useMemo(
-    () => getNodeChainId(id, allNodes as CanvasNode[], edges, chainId as SupportedChainId),
-    [id, allNodes, edges, chainId]
-  );
   const chainLabel = CHAIN_CONFIGS.find((c) => c.chainId === nodeChainId)?.label ?? `Chain ${nodeChainId}`;
 
   // A deposit fed straight from the wallet has no producer to say which asset

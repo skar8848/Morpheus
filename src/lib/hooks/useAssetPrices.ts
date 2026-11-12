@@ -28,12 +28,18 @@ interface PricesResponse {
 /**
  * Fetch USD prices for a list of asset addresses from Morpho API.
  * Returns a map of lowercase address → priceUsd.
+ *
+ * Defaults to the canvas home chain; pass the chain the assets actually live
+ * on (a node downstream of a bridge, a bridge's destination token). Asking the
+ * home chain for another chain's addresses returns nothing, which priced every
+ * node after a bridge at $0.
  */
-export function useAssetPrices(addresses: string[]): {
+export function useAssetPrices(addresses: string[], overrideChainId?: number): {
   prices: Record<string, number>;
   loading: boolean;
 } {
-  const { chainId } = useChain();
+  const { chainId: homeChainId } = useChain();
+  const chainId = overrideChainId ?? homeChainId;
   const [prices, setPrices] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
