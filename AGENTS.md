@@ -49,6 +49,8 @@ When the user clicks **Execute**, the executor walks the graph in topological or
 
 The full validation map lives in `src/lib/canvas/types.ts` (`VALID_CONNECTIONS`). Always check it before constructing connections — invalid edges are rejected at runtime.
 
+**Full repay.** On a `repay` node, set `repayAll: true` to close the debt entirely: it is repaid by shares (no dust left by interest accrued since the debt was read), the wallet is pulled for the debt plus a 0.1% buffer, the unused part is sent back in the same bundle, and with `withdrawCollateralAfterRepay` all the collateral is freed.
+
 ## Canonical Canvas JSON
 
 The portable, agent-friendly representation of a canvas. This is what `morpheus_create_canvas` accepts and what `morpheus_get_canvas` returns. Agents should emit and consume this exact shape.

@@ -89,6 +89,8 @@ this borrow" primitive:
     "market": { /* full Market object — same as borrow node */ },
     "amount": "1300.08",                    // human units
     "amountUsd": 1300.08,
+    // OPTIONAL: full repay, closes the debt by shares (see below)
+    "repayAll": true,
     // OPTIONAL — free the collateral after the repay
     "withdrawCollateralAfterRepay": true,
     "collateralToWithdraw": "920000000000000000"   // raw units (wei) of the user's full collateral
@@ -109,6 +111,15 @@ sending the freed collateral straight to the user's wallet. The bundle becomes:
 a full repay (`amount` ≈ position's `borrow`). Always read the user's current
 collateral from `/api/positions` and pass the **raw** value (the `collateral`
 field on the market position object, already in token units).
+
+**Full repay: set `repayAll: true`**. Interest accrues every block, so a
+repay sized from the debt you read (`amount`) always leaves a few wei of debt
+by the time the bundle lands, and withdrawing all the collateral after it then
+reverts the whole bundle. With `repayAll` the executor repays every borrow
+share instead: it pulls `amount` plus 0.1% to cover the interest, repays by
+shares, sends the unused part back to the wallet, and withdraws all of the
+collateral when `withdrawCollateralAfterRepay` is set. Use it whenever the
+intent is to close the borrow; leave it out for a partial repay.
 
 **Why it matters**: without this, the user has to manually call
 `morpho.withdrawCollateral` outside Morpheus to get their collateral back.

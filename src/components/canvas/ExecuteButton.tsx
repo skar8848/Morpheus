@@ -414,7 +414,11 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
           });
           s.push({
             label: `Repay ${d.market.loanAsset.symbol}`,
-            detail: `${fmtNum(safeFloat(d.amount))} ${d.market.loanAsset.symbol} — ${formatApy(d.market.state.netBorrowApy)}`,
+            // A full repay clears the debt by shares; the 0.1% buffer pulled with
+            // it comes back to the wallet in the same transaction.
+            detail: d.repayAll
+              ? `All debt (≈ ${fmtNum(safeFloat(d.amount))} ${d.market.loanAsset.symbol}, unused buffer returned)`
+              : `${fmtNum(safeFloat(d.amount))} ${d.market.loanAsset.symbol} — ${formatApy(d.market.state.netBorrowApy)}`,
             type: "repay",
             icon: d.market.loanAsset.logoURI,
           });

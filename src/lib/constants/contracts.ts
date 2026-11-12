@@ -145,6 +145,19 @@ export const generalAdapterAbi = [
     outputs: [],
   },
   {
+    // Inherited from CoreAdapter. amount = type(uint256).max sends the adapter's
+    // whole balance, and a zero balance is a no-op rather than a revert.
+    name: "erc20Transfer",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "receiver", type: "address" },
+      { name: "amount", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
     name: "morphoSupply",
     type: "function",
     stateMutability: "nonpayable",

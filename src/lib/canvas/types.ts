@@ -134,6 +134,13 @@ export interface RepayNodeData {
   market: Market | null;
   amount: string;
   amountUsd: number;
+  /** Set by MAX, cleared as soon as the amount is edited by hand. The debt keeps
+   * accruing between the moment it was read and the block the bundle lands in,
+   * so a repay sized in assets always leaves a few wei of debt behind. With
+   * repayAll the executor repays every borrow share instead, pulls `amount`
+   * plus a small buffer to cover the interest, and sends the unused part back.
+   * When the collateral is freed too, all of it is withdrawn. */
+  repayAll?: boolean;
   /** When true, the executor emits a morpho.withdrawCollateral call after
    * the repay so the user gets their collateral back in their wallet.
    * Defaults to false (legacy behavior). Auto-enabled by the UI when the

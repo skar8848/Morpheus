@@ -189,6 +189,27 @@ function capAtUpstreamBorrow(
 }
 
 /**
+ * Head-room pulled on top of the debt for a full repay, in basis points (0.1%).
+ * The debt was read from the API some time before the bundle lands and keeps
+ * accruing in between; at a 100% borrow APY, 0.1% still covers about 8 hours.
+ * Whatever is not used is swept back to the user in the same bundle.
+ */
+const FULL_REPAY_BUFFER_BPS = 10n;
+
+/**
+ * Loan tokens a repay node pulls from the user's wallet. Shared by the executor,
+ * the approval list and the node's balance check, so the allowance and the
+ * "insufficient balance" warning always match the pull.
+ */
+export function repayPullRaw(d: RepayNodeData): bigint {
+  if (!d.market || !d.amount) return 0n;
+  const raw = safeAmountToBigInt(d.amount, d.market.loanAsset.decimals);
+  if (!d.repayAll || raw === 0n) return raw;
+  // +1 so a tiny debt still gets a buffer after integer division.
+  return raw + (raw * FULL_REPAY_BUFFER_BPS) / 10_000n + 1n;
+}
+
+/**
  * Collect all ERC-20 tokens that need user approval to the adapter.
  * Returns a list of { token, amount } to approve.
  */
@@ -253,8 +274,7 @@ export function getRequiredApprovals(
     if (data.type === "repay") {
       const d = node.data as unknown as RepayNodeData;
       if (!d.market?.loanAsset?.address || !d.amount) continue;
-      const raw = safeAmountToBigInt(d.amount, d.market.loanAsset.decimals);
-      addApproval(d.market.loanAsset.address, d.market.loanAsset.symbol, raw);
+      addApproval(d.market.loanAsset.address, d.market.loanAsset.symbol, repayPullRaw(d));
     }
 
     // VaultWithdraw: adapter needs approval on vault shares (vault address is the ERC-20 share token)
@@ -721,7 +741,7 @@ function emitNodeCalls(node: CanvasNode, ctx: EmitContext): BundlerCall[] {
     case "repay": {
       const d = node.data as unknown as RepayNodeData;
       if (!d.market || !d.amount) break;
-      const rawAmount = safeAmountToBigInt(d.amount, d.market.loanAsset.decimals);
+      const rawAmount = repayPullRaw(d);
       if (rawAmount === 0n) break;
       const mp = toMarketParams(d.market);
       if (!mp) break;
@@ -729,17 +749,39 @@ function emitNodeCalls(node: CanvasNode, ctx: EmitContext): BundlerCall[] {
       // Transfer loan tokens from user to adapter
       pullFromUser(ctx, calls, mp.loanToken, d.market.loanAsset.symbol ?? "loan token", rawAmount);
 
-      // Repay on behalf of user
+      // Repay on behalf of user. A full repay goes by shares: shares = MAX makes
+      // the adapter read the user's borrow shares on-chain, so the debt is cleared
+      // to the last wei whatever interest accrued since the amount was read.
+      // Repaying by assets would leave dust debt, and make the collateral
+      // withdrawal below revert, since the position would no longer be empty.
       calls.push(
         adapterCall(
           adapter,
           encodeFunctionData({
             abi: generalAdapterAbi,
             functionName: "morphoRepay",
-            args: [mp, rawAmount, 0n, MAX_UINT256, user, "0x"],
+            args: d.repayAll
+              ? [mp, 0n, MAX_UINT256, MAX_UINT256, user, "0x"]
+              : [mp, rawAmount, 0n, MAX_UINT256, user, "0x"],
           })
         )
       );
+
+      // The buffer pulled for a full repay is mostly unused: send it back. MAX
+      // transfers the adapter's whole balance of the loan token, and is a no-op
+      // when nothing is left.
+      if (d.repayAll) {
+        calls.push(
+          adapterCall(
+            adapter,
+            encodeFunctionData({
+              abi: generalAdapterAbi,
+              functionName: "erc20Transfer",
+              args: [mp.loanToken, user, MAX_UINT256],
+            })
+          )
+        );
+      }
 
       // Optional: withdraw the user's collateral after the repay so they
       // get it back in their wallet. Triggered when the user (or the agent
@@ -750,7 +792,10 @@ function emitNodeCalls(node: CanvasNode, ctx: EmitContext): BundlerCall[] {
         // collateralToWithdraw is RAW token units (wei) — already scaled.
         // Use safeBigInt directly. parseUnits via safeAmountToBigInt would
         // re-multiply by 10^decimals and produce a value 10^18 too large.
-        const collateralRaw = safeBigInt(d.collateralToWithdraw);
+        // After a full repay the position holds no debt, so all of the collateral
+        // is free: MAX makes the adapter read the exact on-chain amount instead of
+        // trusting the figure captured when the node was filled in.
+        const collateralRaw = d.repayAll ? MAX_UINT256 : safeBigInt(d.collateralToWithdraw);
         if (collateralRaw > 0n) {
           calls.push(
             adapterCall(
