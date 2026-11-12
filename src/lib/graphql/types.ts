@@ -219,21 +219,6 @@ export interface VaultV2ListResponse {
   };
 }
 
-export interface LoanAssetsResponse {
-  markets: {
-    items: {
-      loanAsset: {
-        symbol: string;
-        name: string;
-        address: string;
-        decimals: number;
-        logoURI: string;
-        priceUsd: number | null;
-      };
-    }[];
-  };
-}
-
 // --- Transactions ---
 
 export type TransactionType =
