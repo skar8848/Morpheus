@@ -755,8 +755,14 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         if (!bridgeTx.ok || !bridgeTx.transaction) {
           throw new Error(bridgeTx.error ?? "Could not build the bridge transaction");
         }
+        // A different route means a different fee, ETA and minimum received
+        // than the ones the user chose on the node: stop rather than sign it.
         if (bridgeTx.substituted) {
-          console.warn("[ExecuteButton] selected bridge route unavailable, using", bridgeTx.toolName);
+          throw new Error(
+            `The selected bridge route is not available right now${
+              bridgeTx.toolName ? ` (LI.FI would use ${bridgeTx.toolName})` : ""
+            }. Pick another route on the bridge node.`
+          );
         }
 
         // Phase 3 — approve the bridge router for the asset being sent.
