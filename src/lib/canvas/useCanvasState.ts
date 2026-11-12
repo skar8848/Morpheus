@@ -13,6 +13,7 @@ import {
   type OnConnect,
   type OnNodesChange,
   type OnEdgesChange,
+  type OnBeforeDelete,
 } from "@xyflow/react";
 import { useAccount } from "wagmi";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
@@ -307,33 +308,64 @@ export function useCanvasState() {
     [chainId, setNodes, pushHistory]
   );
 
-  // Delete a node — reconnect upstream→downstream if valid
-  const deleteNode = useCallback(
-    (nodeId: string) => {
+  // Delete nodes: reconnect each surviving upstream to each surviving
+  // downstream when that connection is valid. The wallet is never deleted.
+  //
+  // All the nodes go in one call on purpose: deleting them one by one from a
+  // render closure re-bridged through nodes that were already gone (select
+  // A and B in X→A→B→Y, the second call wired A→Y with A deleted), and each
+  // call pushed its own history entry.
+  const deleteNodes = useCallback(
+    (nodeIds: string[]) => {
+      const currentNodes = nodes as CanvasNode[];
+      const doomed = new Set(
+        nodeIds.filter((id) => {
+          const node = currentNodes.find((n) => n.id === id);
+          return node && (node.data as { type: string }).type !== "wallet";
+        })
+      );
+      if (doomed.size === 0) return;
       pushHistory();
 
-      // Find incoming and outgoing edges
-      const incoming = edges.filter((e) => e.target === nodeId);
-      const outgoing = edges.filter((e) => e.source === nodeId);
+      // Walk through deleted nodes so a chain of them bridges its two ends.
+      const walk = (start: string, dir: "up" | "down"): Set<string> => {
+        const found = new Set<string>();
+        const seen = new Set<string>([start]);
+        const queue = [start];
+        while (queue.length > 0) {
+          const current = queue.shift()!;
+          for (const e of edges) {
+            const next = dir === "up"
+              ? (e.target === current ? e.source : null)
+              : (e.source === current ? e.target : null);
+            if (!next || seen.has(next)) continue;
+            seen.add(next);
+            if (doomed.has(next)) queue.push(next);
+            else found.add(next);
+          }
+        }
+        return found;
+      };
 
-      // Build bridge edges for each upstream→downstream pair if valid
+      const kept = edges.filter((e) => !doomed.has(e.source) && !doomed.has(e.target));
+      const existing = new Set(kept.map((e) => `${e.source}->${e.target}`));
       const bridgeEdges: Edge[] = [];
-      const currentNodes = nodes as CanvasNode[];
-
-      for (const inEdge of incoming) {
-        for (const outEdge of outgoing) {
-          const sourceNode = currentNodes.find((n) => n.id === inEdge.source);
-          const targetNode = currentNodes.find((n) => n.id === outEdge.target);
-          if (!sourceNode || !targetNode) continue;
-
-          const sourceType = (sourceNode.data as { type: string }).type;
-          const targetType = (targetNode.data as { type: string }).type;
-          const allowed = VALID_CONNECTIONS[sourceType];
-          if (allowed?.includes(targetType)) {
+      for (const id of doomed) {
+        for (const sourceId of walk(id, "up")) {
+          for (const targetId of walk(id, "down")) {
+            const key = `${sourceId}->${targetId}`;
+            if (sourceId === targetId || existing.has(key)) continue;
+            const sourceNode = currentNodes.find((n) => n.id === sourceId);
+            const targetNode = currentNodes.find((n) => n.id === targetId);
+            if (!sourceNode || !targetNode) continue;
+            const sourceType = (sourceNode.data as { type: string }).type;
+            const targetType = (targetNode.data as { type: string }).type;
+            if (!VALID_CONNECTIONS[sourceType]?.includes(targetType)) continue;
+            existing.add(key);
             bridgeEdges.push({
-              id: `${inEdge.source}-${outEdge.target}`,
-              source: inEdge.source,
-              target: outEdge.target,
+              id: `${sourceId}-${targetId}`,
+              source: sourceId,
+              target: targetId,
               type: "animatedEdge",
               animated: true,
             });
@@ -341,13 +373,35 @@ export function useCanvasState() {
         }
       }
 
-      setNodes((nds) => nds.filter((n) => n.id !== nodeId));
+      setNodes((nds) => nds.filter((n) => !doomed.has(n.id)));
       setEdges((eds) => [
-        ...eds.filter((e) => e.source !== nodeId && e.target !== nodeId),
+        ...eds.filter((e) => !doomed.has(e.source) && !doomed.has(e.target)),
         ...bridgeEdges,
       ]);
     },
     [setNodes, setEdges, edges, nodes, pushHistory]
+  );
+
+  // Every deletion React Flow starts (Delete/Backspace, a node's X button via
+  // deleteElements) lands here first. Nodes are taken over by deleteNodes so
+  // all paths bridge and record history the same way; React Flow keeps only
+  // the edges it would delete on their own (selected, not touching a node in
+  // this deletion), and the wallet's edges survive unless selected.
+  const onBeforeDelete: OnBeforeDelete<CanvasNode, Edge> = useCallback(
+    async ({ nodes: removing, edges: removingEdges }) => {
+      const removingIds = new Set(removing.map((n) => n.id));
+      if (removing.length > 0) deleteNodes([...removingIds]);
+      return {
+        nodes: [],
+        edges: removingEdges.filter((e) => {
+          const touches = removingIds.has(e.source) || removingIds.has(e.target);
+          return !touches || (e.selected === true && !removing.some(
+            (n) => (n.id === e.source || n.id === e.target) && (n.data as { type: string }).type !== "wallet"
+          ));
+        }),
+      };
+    },
+    [deleteNodes]
   );
 
   // Update data for a specific node
@@ -409,7 +463,8 @@ export function useCanvasState() {
     onEdgesChange: onEdgesChange as OnEdgesChange<Edge>,
     onConnect,
     addNode,
-    deleteNode,
+    deleteNodes,
+    onBeforeDelete,
     updateNodeData,
     clearGraph,
     loadTemplate,

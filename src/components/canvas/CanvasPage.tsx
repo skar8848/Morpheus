@@ -33,6 +33,10 @@ import ChatPanel from "./ChatPanel";
 // and work; only the mount point is gated.
 const ENABLE_CHAT_PANEL = false;
 
+// Keys that delete the selection. Module-level so React Flow's key listener
+// is not re-registered on every render by a fresh array.
+const DELETE_KEYS = ["Backspace", "Delete"];
+
 /**
  * Replace every <img> src inside `root` with an inlined data URI, so the
  * screenshot rasterizer never has to fetch anything mid-render.
@@ -81,7 +85,7 @@ export default function CanvasPage() {
     onEdgesChange,
     onConnect,
     addNode,
-    deleteNode,
+    onBeforeDelete,
     clearGraph,
     loadTemplate,
     undo,
@@ -460,7 +464,7 @@ export default function CanvasPage() {
     [placingNodeType, addNode]
   );
 
-  // Keyboard handler — Delete + Ctrl+Z + node shortcuts
+  // Keyboard handler: placement shortcuts, help, minimap
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
       const tag = (event.target as HTMLElement).tagName;
@@ -471,7 +475,6 @@ export default function CanvasPage() {
       // preventDefault does not stop the event from reaching the window.
       if ((event.metaKey || event.ctrlKey) && (event.key === "z" || event.key === "y")) return;
 
-      // Delete/Backspace — only when not in input
       if (inInput) return;
 
       if (event.key === "Escape") {
@@ -502,16 +505,10 @@ export default function CanvasPage() {
         }
       }
 
-      if (event.key === "Delete" || event.key === "Backspace") {
-        const selected = nodes.filter((n) => n.selected);
-        selected.forEach((n) => {
-          if ((n.data as { type: string }).type !== "wallet") {
-            deleteNode(n.id);
-          }
-        });
-      }
+      // Delete/Backspace is React Flow's (deleteKeyCode below), routed through
+      // onBeforeDelete so it shares one path with the nodes' X buttons.
     },
-    [nodes, deleteNode]
+    []
   );
 
   // Also listen globally for Ctrl+Z / Ctrl+Shift+Z when canvas is focused
@@ -623,14 +620,18 @@ export default function CanvasPage() {
     return () => observer.disconnect();
   });
 
-  // Wrap onNodesChange to snapshot before deletions from React Flow (X button)
-  const handleNodesChange: typeof onNodesChange = useCallback(
-    (changes) => {
-      const hasDeletion = changes.some((c) => c.type === "remove");
-      if (hasDeletion) pushHistory();
-      onNodesChange(changes);
+  // Node deletions never reach onNodesChange: onBeforeDelete takes them over
+  // (deleteNodes snapshots history itself) and hands React Flow an empty list.
+  // The deleted node often held the focus, which then falls back to <body> and
+  // the window-level Cmd+Z handler ignores it; give it back to the canvas so
+  // undo works on the very next keypress.
+  const handleBeforeDelete: typeof onBeforeDelete = useCallback(
+    async (params) => {
+      const result = await onBeforeDelete(params);
+      requestAnimationFrame(() => reactFlowWrapper.current?.focus({ preventScroll: true }));
+      return result;
     },
-    [onNodesChange, pushHistory]
+    [onBeforeDelete]
   );
 
   const handleEdgesChange: typeof onEdgesChange = useCallback(
@@ -677,8 +678,10 @@ export default function CanvasPage() {
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        onNodesChange={handleNodesChange}
+        onNodesChange={onNodesChange}
         onEdgesChange={handleEdgesChange}
+        onBeforeDelete={handleBeforeDelete}
+        deleteKeyCode={DELETE_KEYS}
         onConnect={onConnect}
         onConnectEnd={onConnectEnd}
         onPaneClick={onPaneClick}
