@@ -239,27 +239,43 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
   const hasSwapUpstream = !!swapInfo;
   const swapQuoteNum = parseFloat(swapInfo?.quoteOut || "0");
 
-  // For each borrow source, find sibling vault deposits and their allocations
+  // For each borrow source, find sibling vault deposits and their allocations.
+  //
+  // A vault that has not set its share of a source yet takes an even split of
+  // what the explicit ones leave. Counting every unset sibling as 100% made two
+  // vaults on one borrow each see the other holding everything: both sliders
+  // stuck at 0% and no amount ever synced.
   const siblingAllocations = useMemo(() => {
-    const result: Record<string, { siblingTotal: number; remaining: number }> = {};
+    const result: Record<string, { siblingTotal: number; remaining: number; defaultPct: number }> = {};
     for (const src of sources) {
       if (src.borrowAmount <= 0) continue;
-      // Find all outgoing edges from this borrow source
-      const outEdges = edges.filter((e) => e.source === src.nodeId);
+      const vaultTargets = edges
+        .filter((e) => e.source === src.nodeId)
+        .map((e) => allNodes.find((n) => n.id === e.target))
+        .filter((n): n is NonNullable<typeof n> =>
+          !!n && (n.data as Record<string, unknown>).type === "vaultDeposit"
+        );
+      const pctOf = (n: (typeof vaultTargets)[number]) =>
+        ((n.data as Record<string, unknown>).allocPcts as Record<string, number> | undefined)?.[src.nodeId];
+
+      let explicitTotal = 0;
+      let unset = 0;
+      for (const n of vaultTargets) {
+        const pct = pctOf(n);
+        if (pct === undefined) unset++;
+        else explicitTotal += pct;
+      }
+      const defaultPct = unset > 0 ? Math.floor(Math.max(0, 100 - explicitTotal) / unset) : 0;
+
       let siblingTotal = 0;
-      for (const edge of outEdges) {
-        if (edge.target === id) continue; // skip self
-        const siblingNode = allNodes.find((n) => n.id === edge.target);
-        if (!siblingNode) continue;
-        const sd = siblingNode.data as Record<string, unknown>;
-        if (sd.type === "vaultDeposit") {
-          const sibAllocPcts = (sd.allocPcts as Record<string, number>) ?? {};
-          siblingTotal += sibAllocPcts[src.nodeId] ?? 100;
-        }
+      for (const n of vaultTargets) {
+        if (n.id === id) continue; // skip self
+        siblingTotal += pctOf(n) ?? defaultPct;
       }
       result[src.nodeId] = {
         siblingTotal,
         remaining: Math.max(0, 100 - siblingTotal),
+        defaultPct,
       };
     }
     return result;
@@ -300,8 +316,8 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
   // Per-source allocation percentages — capped by what siblings have taken
   const allocPcts = d.allocPcts ?? {};
   const getSourcePct = (nodeId: string) => {
-    const raw = allocPcts[nodeId] ?? 100;
     const sibling = siblingAllocations[nodeId];
+    const raw = allocPcts[nodeId] ?? sibling?.defaultPct ?? 100;
     if (!sibling) return raw;
     return Math.min(raw, sibling.remaining);
   };
@@ -509,9 +525,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
                     const newTotal = sources
                       .filter((s) => s.borrowAmount > 0)
                       .reduce((sum, s) => {
-                        const sibling = siblingAllocations[s.nodeId];
-                        const max = sibling ? sibling.remaining : 100;
-                        const p = s.nodeId === src.nodeId ? clamped : Math.min(allocPcts[s.nodeId] ?? 100, max);
+                        const p = s.nodeId === src.nodeId ? clamped : getSourcePct(s.nodeId);
                         return sum + (s.borrowAmount * p) / 100;
                       }, 0);
                     updateNodeData(id, {
