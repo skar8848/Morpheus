@@ -19,7 +19,7 @@
  * Returns:
  *   {
  *     "ok": true,
- *     "deepLinkUrl": "https://morpheus-app.vercel.app/ethereum/canvas?strategy=...",
+ *     "deepLinkUrl": "https://morpheus-visualizer.vercel.app/ethereum/canvas?strategy=...",
  *     "warnings": []
  *   }
  *
