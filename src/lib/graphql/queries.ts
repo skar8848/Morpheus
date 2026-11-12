@@ -147,6 +147,139 @@ export const MARKETS_BY_KEY_QUERY = `
   }
 `;
 
+/**
+ * Full market objects for a known set of keys, plus whether Morpho lists them.
+ *
+ * Used to re-resolve the markets a deep link names: the link is trusted for the
+ * key only, everything the executor encodes (oracle, IRM, LLTV, tokens) comes
+ * from here. Never call it with an empty `$keys`: the API treats an empty `_in`
+ * list as "no filter" and returns every market on the chain.
+ */
+export const VERIFY_MARKETS_QUERY = `
+  query VerifyMarkets($keys: [String!]!, $chainId: [Int!]!) {
+    markets(
+      first: 1000
+      where: {
+        uniqueKey_in: $keys
+        chainId_in: $chainId
+      }
+    ) {
+      items {
+        uniqueKey: marketId
+        listed
+        lltv
+        irmAddress
+        oracle { address }
+        collateralAsset {
+          symbol
+          address
+          logoURI
+          price { usd }
+          decimals
+        }
+        loanAsset {
+          symbol
+          address
+          logoURI
+          price { usd }
+          decimals
+        }
+        state {
+          borrowApy
+          netBorrowApy
+          supplyApy
+          netSupplyApy
+          utilization
+          borrowAssets
+          supplyAssets
+          supplyAssetsUsd
+          liquidityAssets
+          liquidityAssetsUsd
+          price
+          rewards {
+            asset {
+              symbol
+              address
+            }
+            supplyApr
+            borrowApr
+          }
+        }
+      }
+    }
+  }
+`;
+
+/**
+ * V1 and V2 vaults for a known set of addresses, in one round trip.
+ *
+ * Same purpose as VERIFY_MARKETS_QUERY, for vaults: the address is the only
+ * thing a deep link is trusted for. V2 is restricted to listed vaults, matching
+ * how V2 positions are discovered. Same caveat: never send an empty list.
+ */
+export const VERIFY_VAULTS_QUERY = `
+  query VerifyVaults($addresses: [String!]!, $chainId: [Int!]!) {
+    vaults(
+      first: 1000
+      where: {
+        address_in: $addresses
+        chainId_in: $chainId
+      }
+    ) {
+      items {
+        address
+        name
+        symbol
+        listed
+        asset {
+          symbol
+          address
+          logoURI
+          decimals
+        }
+        state {
+          totalAssets
+          totalAssetsUsd
+          curator
+          netApy
+          fee
+          allocation {
+            market {
+              uniqueKey: marketId
+              collateralAsset {
+                symbol
+              }
+              loanAsset {
+                symbol
+              }
+              lltv
+            }
+            supplyAssets
+          }
+        }
+      }
+    }
+    vaultV2s(
+      first: 1000
+      where: { address_in: $addresses, chainId_in: $chainId, listed: true }
+    ) {
+      items {
+        address
+        name
+        symbol
+        netApy
+        totalAssetsUsd
+        asset {
+          symbol
+          address
+          logoURI
+          decimals
+        }
+      }
+    }
+  }
+`;
+
 export const VAULTS_QUERY = `
   query GetVaults($assetAddresses: [String!]!, $chainId: [Int!]!, $first: Int, $skip: Int) {
     vaults(
