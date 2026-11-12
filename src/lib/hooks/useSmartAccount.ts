@@ -50,7 +50,13 @@ export function useSmartAccount(): SmartAccountInfo {
     setLoading(true);
     getBytecode(wagmiConfig, { address })
       .then((code) => {
-        if (!cancelled) setIsSmartAccount(!!code && code !== "0x");
+        // An EIP-7702 delegated EOA (MetaMask Smart Account and the like) has
+        // code too, but only the 23-byte delegation designator 0xef0100 ||
+        // address. It still signs and lands transactions like an EOA, with no
+        // multi-sig queue, so treating it as a contract account would skip the
+        // receipt waits the execution flow relies on.
+        if (!cancelled)
+          setIsSmartAccount(!!code && code !== "0x" && !code.toLowerCase().startsWith("0xef0100"));
       })
       .catch(() => {
         // Can't tell — assume EOA rather than blocking features on a bad RPC.
