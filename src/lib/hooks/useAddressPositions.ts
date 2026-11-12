@@ -92,25 +92,26 @@ export function useAddressPositions(
     skipRef.current = 0;
 
     Promise.all([
-      morphoQuery<UserMarketPositionsResponse>(USER_MARKET_POSITIONS_QUERY, {
-        userAddress: [address],
-        chainId: [chainId],
-      }),
-      morphoQuery<UserVaultPositionsResponse>(USER_VAULT_POSITIONS_QUERY, {
-        userAddress: [address],
-        chainId: [chainId],
-      }),
-      morphoQuery<{ marketTransactions: { items: RawTx[] } }>(USER_MARKET_TRANSACTIONS_QUERY, {
-        userAddress: [address],
-        chainId: [chainId],
-        first: TX_PAGE_SIZE,
-        skip: 0,
-      }),
-      morphoQuery<{ vaultV1Transactions: { items: RawTx[] } }>(USER_VAULT_TRANSACTIONS_QUERY, {
-        userAddress: [address],
-        chainId: [chainId],
-        first: TX_PAGE_SIZE,
-      }).catch(() => ({ vaultV1Transactions: { items: [] as RawTx[] } })),
+      morphoQuery<UserMarketPositionsResponse>(
+        USER_MARKET_POSITIONS_QUERY,
+        { userAddress: [address], chainId: [chainId] },
+        controller.signal
+      ),
+      morphoQuery<UserVaultPositionsResponse>(
+        USER_VAULT_POSITIONS_QUERY,
+        { userAddress: [address], chainId: [chainId] },
+        controller.signal
+      ),
+      morphoQuery<{ marketTransactions: { items: RawTx[] } }>(
+        USER_MARKET_TRANSACTIONS_QUERY,
+        { userAddress: [address], chainId: [chainId], first: TX_PAGE_SIZE, skip: 0 },
+        controller.signal
+      ),
+      morphoQuery<{ vaultV1Transactions: { items: RawTx[] } }>(
+        USER_VAULT_TRANSACTIONS_QUERY,
+        { userAddress: [address], chainId: [chainId], first: TX_PAGE_SIZE },
+        controller.signal
+      ).catch(() => ({ vaultV1Transactions: { items: [] as RawTx[] } })),
       // V2 vaults are NOT in `vaultPositions` — discover via list + multicall
       fetchUserVaultV2Positions(address as `0x${string}`, chainId).catch((err) => {
         console.warn("[useAddressPositions] V2 fetch failed:", err);

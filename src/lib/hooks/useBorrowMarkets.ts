@@ -104,7 +104,8 @@ export function useBorrowMarkets(
     morphoQueryAll<MarketsResponse>(
       buildQuery(collateralAddresses.length > 0, loanAddresses.length > 0),
       variables,
-      "markets"
+      "markets",
+      controller.signal
     )
       .then((data) => {
         if (controller.signal.aborted) return;

@@ -47,14 +47,16 @@ export function useUserPositions() {
     setError(null);
 
     Promise.all([
-      morphoQuery<UserMarketPositionsResponse>(USER_MARKET_POSITIONS_QUERY, {
-        userAddress: [address],
-        chainId: [chainId],
-      }),
-      morphoQuery<UserVaultPositionsResponse>(USER_VAULT_POSITIONS_QUERY, {
-        userAddress: [address],
-        chainId: [chainId],
-      }),
+      morphoQuery<UserMarketPositionsResponse>(
+        USER_MARKET_POSITIONS_QUERY,
+        { userAddress: [address], chainId: [chainId] },
+        controller.signal
+      ),
+      morphoQuery<UserVaultPositionsResponse>(
+        USER_VAULT_POSITIONS_QUERY,
+        { userAddress: [address], chainId: [chainId] },
+        controller.signal
+      ),
       // V2 vaults are NOT in `vaultPositions` — discover via list + multicall
       fetchUserVaultV2Positions(address, chainId).catch((err) => {
         console.warn("[useUserPositions] V2 fetch failed:", err);

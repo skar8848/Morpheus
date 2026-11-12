@@ -38,7 +38,8 @@ export function useVaults(assetAddresses: string[], overrideChainId?: number) {
     morphoQueryAll<VaultsResponse>(
       VAULTS_QUERY,
       { assetAddresses, chainId: [chainId] },
-      "vaults"
+      "vaults",
+      controller.signal
     )
       .then((data) => {
         if (!controller.signal.aborted) {
