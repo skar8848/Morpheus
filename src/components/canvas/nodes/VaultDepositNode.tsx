@@ -12,6 +12,7 @@ import { CHAIN_CONFIGS, type SupportedChainId } from "@/lib/web3/chains";
 import ChainIcon from "../ChainIcon";
 import { useVaults } from "@/lib/hooks/useVaults";
 import { useAssetPrices } from "@/lib/hooks/useAssetPrices";
+import { useAllAssets } from "@/lib/hooks/useAllAssets";
 import { formatApy, formatUsd } from "@/lib/utils/format";
 import type { VaultDepositNodeData, CanvasNode } from "@/lib/canvas/types";
 import NodeShell from "./NodeShell";
@@ -40,6 +41,15 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
   const edges = useEdges();
   const allNodes = useNodes();
 
+  // Effective chain: walk the whole upstream chain, not just the direct
+  // neighbour — with `bridge → swap → vault` the vault's neighbour is the swap,
+  // so looking one hop back missed the bridge and listed vaults on the wrong
+  // network (which is why nothing matched the bridged asset).
+  const nodeChainId = useMemo(
+    () => getNodeChainId(id, allNodes as CanvasNode[], edges, chainId as SupportedChainId),
+    [id, allNodes, edges, chainId]
+  );
+
   const [sortBy, setSortBy] = useState<SortKey>("tvl");
 
   // Live USD price for the vault's underlying asset — used to keep amountUsd
@@ -50,7 +60,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     () => (d.vault?.asset.address ? [d.vault.asset.address] : []),
     [d.vault?.asset.address]
   );
-  const { prices } = useAssetPrices(priceQueryAddresses);
+  const { prices } = useAssetPrices(priceQueryAddresses, nodeChainId);
   const assetPriceUsd = useMemo(() => {
     if (!d.vault?.asset.address) return 0;
     return prices[d.vault.asset.address.toLowerCase()] ?? 0;
@@ -89,12 +99,15 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     const sources: UpstreamSource[] = [];
     let loanAddr: string | null = null;
     let swapInfo: UpstreamSwapInfo | null = null;
+    let fromWallet = false;
 
     for (const edge of incomingEdges) {
       const sourceNode = allNodes.find((n) => n.id === edge.source);
       if (!sourceNode) continue;
 
       const sd = sourceNode.data as Record<string, unknown>;
+
+      if (sd.type === "wallet") fromWallet = true;
 
       if (sd.type === "borrow") {
         const market = sd.market as {
@@ -204,54 +217,75 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
       }
     }
 
-    return { sources, connectedLoanAddress: loanAddr, swapInfo };
+    return { sources, connectedLoanAddress: loanAddr, swapInfo, fromWallet };
   }, [edges, allNodes, id]);
 
-  const { sources, connectedLoanAddress, swapInfo } = upstreamSources;
+  const { sources, connectedLoanAddress, swapInfo, fromWallet } = upstreamSources;
 
-  // Effective chain: walk the whole upstream chain, not just the direct
-  // neighbour — with `bridge → swap → vault` the vault's neighbour is the swap,
-  // so looking one hop back missed the bridge and listed vaults on the wrong
-  // network (which is why nothing matched the bridged asset).
-  const nodeChainId = useMemo(
-    () => getNodeChainId(id, allNodes as CanvasNode[], edges, chainId as SupportedChainId),
-    [id, allNodes, edges, chainId]
-  );
   const chainLabel = CHAIN_CONFIGS.find((c) => c.chainId === nodeChainId)?.label ?? `Chain ${nodeChainId}`;
+
+  // A deposit fed straight from the wallet has no producer to say which asset
+  // it is, so the user picks it here (as in Lend). Without this the vault list
+  // was keyed on a producer that never came and stayed empty: Wallet -> Vault,
+  // the plain earn flow, could not pick a vault at all.
+  const pickAssetByHand = fromWallet && !connectedLoanAddress;
+  const { assets: allAssets, loading: assetsLoading } = useAllAssets(nodeChainId);
+  const assetOptions = useMemo(
+    () => allAssets.map((a) => ({ value: a.address, label: a.symbol, icon: a.logoURI })),
+    [allAssets]
+  );
+  const vaultAssetAddress = connectedLoanAddress
+    ?? (pickAssetByHand ? d.asset?.address ?? d.vault?.asset.address ?? null : null);
   const hasBorrowUpstream = sources.some((s) => s.borrowAmount > 0);
   const hasSwapUpstream = !!swapInfo;
   const swapQuoteNum = parseFloat(swapInfo?.quoteOut || "0");
 
-  // For each borrow source, find sibling vault deposits and their allocations
+  // For each borrow source, find sibling vault deposits and their allocations.
+  //
+  // A vault that has not set its share of a source yet takes an even split of
+  // what the explicit ones leave. Counting every unset sibling as 100% made two
+  // vaults on one borrow each see the other holding everything: both sliders
+  // stuck at 0% and no amount ever synced.
   const siblingAllocations = useMemo(() => {
-    const result: Record<string, { siblingTotal: number; remaining: number }> = {};
+    const result: Record<string, { siblingTotal: number; remaining: number; defaultPct: number }> = {};
     for (const src of sources) {
       if (src.borrowAmount <= 0) continue;
-      // Find all outgoing edges from this borrow source
-      const outEdges = edges.filter((e) => e.source === src.nodeId);
+      const vaultTargets = edges
+        .filter((e) => e.source === src.nodeId)
+        .map((e) => allNodes.find((n) => n.id === e.target))
+        .filter((n): n is NonNullable<typeof n> =>
+          !!n && (n.data as Record<string, unknown>).type === "vaultDeposit"
+        );
+      const pctOf = (n: (typeof vaultTargets)[number]) =>
+        ((n.data as Record<string, unknown>).allocPcts as Record<string, number> | undefined)?.[src.nodeId];
+
+      let explicitTotal = 0;
+      let unset = 0;
+      for (const n of vaultTargets) {
+        const pct = pctOf(n);
+        if (pct === undefined) unset++;
+        else explicitTotal += pct;
+      }
+      const defaultPct = unset > 0 ? Math.floor(Math.max(0, 100 - explicitTotal) / unset) : 0;
+
       let siblingTotal = 0;
-      for (const edge of outEdges) {
-        if (edge.target === id) continue; // skip self
-        const siblingNode = allNodes.find((n) => n.id === edge.target);
-        if (!siblingNode) continue;
-        const sd = siblingNode.data as Record<string, unknown>;
-        if (sd.type === "vaultDeposit") {
-          const sibAllocPcts = (sd.allocPcts as Record<string, number>) ?? {};
-          siblingTotal += sibAllocPcts[src.nodeId] ?? 100;
-        }
+      for (const n of vaultTargets) {
+        if (n.id === id) continue; // skip self
+        siblingTotal += pctOf(n) ?? defaultPct;
       }
       result[src.nodeId] = {
         siblingTotal,
         remaining: Math.max(0, 100 - siblingTotal),
+        defaultPct,
       };
     }
     return result;
   }, [sources, edges, allNodes, id]);
 
-  // Fetch vaults filtered by the connected loan asset
+  // Fetch vaults filtered by the connected (or hand-picked) asset
   const vaultAssetAddresses = useMemo(
-    () => (connectedLoanAddress ? [connectedLoanAddress] : []),
-    [connectedLoanAddress]
+    () => (vaultAssetAddress ? [vaultAssetAddress] : []),
+    [vaultAssetAddress]
   );
   const { vaults: filteredVaults, loading: vaultsLoading } = useVaults(vaultAssetAddresses, nodeChainId);
 
@@ -283,8 +317,8 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
   // Per-source allocation percentages — capped by what siblings have taken
   const allocPcts = d.allocPcts ?? {};
   const getSourcePct = (nodeId: string) => {
-    const raw = allocPcts[nodeId] ?? 100;
     const sibling = siblingAllocations[nodeId];
+    const raw = allocPcts[nodeId] ?? sibling?.defaultPct ?? 100;
     if (!sibling) return raw;
     return Math.min(raw, sibling.remaining);
   };
@@ -319,7 +353,11 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalDeposit, hasBorrowUpstream, d.vault, assetPriceUsd]);
 
-  // Auto-set depositAll when swap first connects
+  // Auto-set depositAll when swap first connects, and drop it once no swap
+  // feeds the node. "Deposit all" only means something for a swap output: left
+  // on for a borrow or wallet feed it skipped the amount check in validation,
+  // and an empty amount then executed as no deposit at all, silently. It is
+  // reset to unset (not false) so the next swap wired in turns it on again.
   const prevSwapRef = useRef<string | null>(null);
   useEffect(() => {
     if (swapInfo && swapInfo.nodeId !== prevSwapRef.current) {
@@ -328,7 +366,11 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
         updateNodeData(id, { depositAll: true });
       }
     }
-    if (!swapInfo) prevSwapRef.current = null;
+    if (!swapInfo) {
+      prevSwapRef.current = null;
+      if (d.depositAll !== undefined) updateNodeData(id, { depositAll: undefined });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [swapInfo]);
 
   const truncateAddress = (addr: string) =>
@@ -339,7 +381,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
       nodeType="vaultDeposit"
       title="Vault Deposit"
       onDelete={() => deleteElements({ nodes: [{ id }] })}
-      loading={vaultsLoading}
+      loading={vaultsLoading || (pickAssetByHand && assetsLoading)}
     >
       <div className="space-y-2">
         {/* Which chain the vault list comes from — differs from the canvas
@@ -364,8 +406,25 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
           </div>
         )}
 
+        {pickAssetByHand && (
+          <div>
+            <label className="text-[10px] text-text-tertiary">Asset to deposit</label>
+            <SearchSelect
+              options={assetOptions}
+              value={vaultAssetAddress ?? ""}
+              onChange={(addr) => {
+                const asset = allAssets.find((a) => a.address === addr) ?? null;
+                const keepVault =
+                  !!d.vault && !!asset && d.vault.asset.address.toLowerCase() === asset.address.toLowerCase();
+                updateNodeData(id, keepVault ? { asset } : { asset, vault: null, amount: "", amountUsd: 0 });
+              }}
+              placeholder="Search asset..."
+            />
+          </div>
+        )}
+
         {/* Sort buttons */}
-        {connectedLoanAddress && !vaultsLoading && sortedVaults.length > 1 && (
+        {vaultAssetAddress && !vaultsLoading && sortedVaults.length > 1 && (
           <div className="flex items-center gap-1">
             <span className="text-[9px] text-text-tertiary mr-1">Sort:</span>
             {(["tvl", "apy"] as SortKey[]).map((key) => (
@@ -385,7 +444,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
         )}
 
         {/* Vault selector */}
-        {connectedLoanAddress && (
+        {vaultAssetAddress && (
           <div>
             <label className="text-[10px] text-text-tertiary">Vault</label>
             {vaultsLoading ? (
@@ -467,9 +526,7 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
                     const newTotal = sources
                       .filter((s) => s.borrowAmount > 0)
                       .reduce((sum, s) => {
-                        const sibling = siblingAllocations[s.nodeId];
-                        const max = sibling ? sibling.remaining : 100;
-                        const p = s.nodeId === src.nodeId ? clamped : Math.min(allocPcts[s.nodeId] ?? 100, max);
+                        const p = s.nodeId === src.nodeId ? clamped : getSourcePct(s.nodeId);
                         return sum + (s.borrowAmount * p) / 100;
                       }, 0);
                     updateNodeData(id, {

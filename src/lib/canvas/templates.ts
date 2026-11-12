@@ -154,7 +154,8 @@ function vaultDepositNode(posY = 80): CanvasNode {
       vault: null,
       amount: "",
       amountUsd: 0,
-      depositAll: true,
+      // No depositAll: every template vault is fed by a borrow, whose amount
+      // the node syncs itself. "Deposit all" is for swap outputs only.
     } as unknown as CanvasNodeData,
   };
 }
@@ -336,14 +337,3 @@ export function getTemplatesForChain(chainId: number): StrategyTemplate[] {
   return TEMPLATES.filter((t) => t.chainId === chainId);
 }
 
-/** Return all templates. */
-export function getAllTemplates(): StrategyTemplate[] {
-  return TEMPLATES;
-}
-
-/** Build a template by id. */
-export function buildTemplate(id: string): ImportedStrategy | null {
-  const tpl = TEMPLATES.find((t) => t.id === id);
-  if (!tpl) return null;
-  return tpl.build();
-}

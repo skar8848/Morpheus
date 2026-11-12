@@ -181,11 +181,14 @@ function LendNodeComponent({ id, data }: NodeProps) {
   const liquidityUsd = liveMarket?.state.liquidityAssetsUsd;
 
   // ── Prices + balance + amount ───────────────────────────────────────────────
-  const { prices, loading: pricesLoading } = useAssetPrices(loanAsset?.address ? [loanAsset.address] : []);
+  const { prices, loading: pricesLoading } = useAssetPrices(
+    loanAsset?.address ? [loanAsset.address] : [],
+    nodeChainId
+  );
   const price = loanAsset ? prices[loanAsset.address.toLowerCase()] ?? 0 : 0;
 
   const selectedAssets = useMemo(() => (loanAsset ? [loanAsset] : []), [loanAsset]);
-  const { assetsWithBalances, isLoading: balanceLoading } = useTokenBalances(selectedAssets);
+  const { assetsWithBalances, isLoading: balanceLoading } = useTokenBalances(selectedAssets, undefined, nodeChainId);
   const walletBalance = parseFloat(assetsWithBalances[0]?.balance ?? "0");
 
   const inputsWithBalances = inputs.map((i) =>

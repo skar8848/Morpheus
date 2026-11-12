@@ -17,7 +17,8 @@ import "@xyflow/react/dist/style.css";
 import type { Edge } from "@xyflow/react";
 import { nodeTypes } from "./nodes";
 import { edgeTypes } from "./edges";
-import { useCanvasState } from "@/lib/canvas/useCanvasState";
+import { useCanvasState, dropUnknownNodes } from "@/lib/canvas/useCanvasState";
+import { stripDustNodes } from "@/lib/canvas/dust";
 import { useChain } from "@/lib/context/ChainContext";
 import { isValidConnection, getConnectionHint } from "@/lib/canvas/validation";
 import { organizeLayout } from "@/lib/canvas/layout";
@@ -32,6 +33,10 @@ import ChatPanel from "./ChatPanel";
 // bubble + centered modal. The component and /api/chat route still exist
 // and work; only the mount point is gated.
 const ENABLE_CHAT_PANEL = false;
+
+// Keys that delete the selection. Module-level so React Flow's key listener
+// is not re-registered on every render by a fresh array.
+const DELETE_KEYS = ["Backspace", "Delete"];
 
 /**
  * Replace every <img> src inside `root` with an inlined data URI, so the
@@ -81,7 +86,7 @@ export default function CanvasPage() {
     onEdgesChange,
     onConnect,
     addNode,
-    deleteNode,
+    onBeforeDelete,
     clearGraph,
     loadTemplate,
     undo,
@@ -223,8 +228,13 @@ export default function CanvasPage() {
   const loadStrategy = useCallback(
     (strategy: SavedStrategy) => {
       pushHistory();
-      setNodes(strategy.nodes as CanvasNode[]);
-      setEdges(strategy.edges);
+      // Same cleanup as the autosaved draft: a strategy saved before the
+      // Supply Collateral node was folded into Borrow still holds that node,
+      // which renders as a blank box and fails validation.
+      const known = dropUnknownNodes(strategy.nodes as CanvasNode[], strategy.edges);
+      const clean = stripDustNodes(known.nodes, known.edges);
+      setNodes(clean.nodes);
+      setEdges(clean.edges);
       setShowLoad(false);
     },
     [pushHistory, setNodes, setEdges]
@@ -255,13 +265,26 @@ export default function CanvasPage() {
     reactFlowInstance.current = instance;
   }, []);
 
-  // Auto-organize after importing positions from address page
+  // Auto-organize after importing positions from address page, loading a
+  // template or opening a deep link (all of them raise wasImported).
+  //
+  // Keyed on the nodes themselves, not nodes.length: a template with as many
+  // nodes as the canvas it replaced never re-ran the effect, so it stayed on
+  // its hardcoded positions and the flag stayed raised until the next add or
+  // delete reorganized the user's own layout. The flag is the gate; the timer
+  // is not cancelled by the node updates that follow a load (nodes picking
+  // their assets), only by unmount.
+  const organizeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => () => {
+    if (organizeTimerRef.current) clearTimeout(organizeTimerRef.current);
+  }, []);
   useEffect(() => {
-    if (!wasImported.current || nodes.length === 0) return;
+    if (!wasImported.current || nodes.length === 0 || organizeTimerRef.current) return;
     wasImported.current = false;
 
     // Wait for DOM nodes to render so we can measure sizes
-    const timer = setTimeout(() => {
+    organizeTimerRef.current = setTimeout(() => {
+      organizeTimerRef.current = null;
       const sizes = new Map<string, { w: number; h: number }>();
       for (const n of nodes) {
         const el = document.querySelector(`[data-id="${n.id}"]`) as HTMLElement | null;
@@ -285,10 +308,8 @@ export default function CanvasPage() {
         isOrganizing.current = false;
       }, 500);
     }, 300);
-
-    return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes.length]);
+  }, [nodes]);
 
   // Drag & drop from sidebar
   const onDragOver = useCallback((event: DragEvent) => {
@@ -416,8 +437,8 @@ export default function CanvasPage() {
   );
 
   // Validate connection before allowing — also track rejections for hints
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const connectionValidator = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (connection: any) => {
       const valid = isValidConnection(connection, nodes as CanvasNode[]);
       if (!valid && connection.source && connection.target) {
@@ -460,27 +481,17 @@ export default function CanvasPage() {
     [placingNodeType, addNode]
   );
 
-  // Keyboard handler — Delete + Ctrl+Z + node shortcuts
+  // Keyboard handler: placement shortcuts, help, minimap
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
       const tag = (event.target as HTMLElement).tagName;
       const inInput = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA";
 
-      // Ctrl+Shift+Z / Cmd+Shift+Z or Ctrl+Y — redo
-      if ((event.metaKey || event.ctrlKey) && ((event.shiftKey && event.key === "z") || event.key === "y")) {
-        event.preventDefault();
-        redo();
-        return;
-      }
+      // Undo / redo are handled by the window listener below. Handling them
+      // here as well made one Cmd+Z pop two history entries, since
+      // preventDefault does not stop the event from reaching the window.
+      if ((event.metaKey || event.ctrlKey) && (event.key === "z" || event.key === "y")) return;
 
-      // Ctrl+Z / Cmd+Z — undo
-      if ((event.metaKey || event.ctrlKey) && event.key === "z") {
-        event.preventDefault();
-        undo();
-        return;
-      }
-
-      // Delete/Backspace — only when not in input
       if (inInput) return;
 
       if (event.key === "Escape") {
@@ -511,16 +522,10 @@ export default function CanvasPage() {
         }
       }
 
-      if (event.key === "Delete" || event.key === "Backspace") {
-        const selected = nodes.filter((n) => n.selected);
-        selected.forEach((n) => {
-          if ((n.data as { type: string }).type !== "wallet") {
-            deleteNode(n.id);
-          }
-        });
-      }
+      // Delete/Backspace is React Flow's (deleteKeyCode below), routed through
+      // onBeforeDelete so it shares one path with the nodes' X buttons.
     },
-    [nodes, deleteNode, undo]
+    []
   );
 
   // Also listen globally for Ctrl+Z / Ctrl+Shift+Z when canvas is focused
@@ -587,7 +592,14 @@ export default function CanvasPage() {
     }
   }, [nodes, setNodes, getNodeRect]);
 
-  // Watch for node resizes — push overlapping neighbors apart
+  // Watch for node resizes — push overlapping neighbors apart.
+  //
+  // Set up once. The effect used to have no dependency list, so every
+  // keystroke in any node disconnected the observer, re-queried every node and
+  // re-observed it, and each observe() fires an initial callback, which queued
+  // a setNodes. React Flow mounts node elements a render after the nodes
+  // change, so instead of re-running on nodes.length a MutationObserver picks
+  // up the ones that appear.
   const resizeDebounce = useRef<NodeJS.Timeout | null>(null);
   useEffect(() => {
     const container = reactFlowWrapper.current;
@@ -612,7 +624,6 @@ export default function CanvasPage() {
                 const pushIdx = a.x <= b.x ? j : i;
                 const stayIdx = a.x <= b.x ? i : j;
                 const stay = rects[stayIdx];
-                const push = rects[pushIdx];
                 const newX = stay.x + stay.w + GAP;
                 updated[pushIdx].position.x = newX;
                 rects[pushIdx].x = newX;
@@ -625,21 +636,38 @@ export default function CanvasPage() {
       }, 200);
     });
 
-    // Observe all node elements
-    const nodeEls = container.querySelectorAll(".react-flow__node");
-    nodeEls.forEach((el) => observer.observe(el));
+    // Observe every node element, now and as they are added
+    const observed = new WeakSet<Element>();
+    const observeNodes = () => {
+      container.querySelectorAll(".react-flow__node").forEach((el) => {
+        if (observed.has(el)) return;
+        observed.add(el);
+        observer.observe(el);
+      });
+    };
+    observeNodes();
+    const mutations = new MutationObserver(observeNodes);
+    mutations.observe(container, { childList: true, subtree: true });
 
-    return () => observer.disconnect();
-  });
+    return () => {
+      mutations.disconnect();
+      observer.disconnect();
+      if (resizeDebounce.current) clearTimeout(resizeDebounce.current);
+    };
+  }, [setNodes, getNodeRect]);
 
-  // Wrap onNodesChange to snapshot before deletions from React Flow (X button)
-  const handleNodesChange: typeof onNodesChange = useCallback(
-    (changes) => {
-      const hasDeletion = changes.some((c) => c.type === "remove");
-      if (hasDeletion) pushHistory();
-      onNodesChange(changes);
+  // Node deletions never reach onNodesChange: onBeforeDelete takes them over
+  // (deleteNodes snapshots history itself) and hands React Flow an empty list.
+  // The deleted node often held the focus, which then falls back to <body> and
+  // the window-level Cmd+Z handler ignores it; give it back to the canvas so
+  // undo works on the very next keypress.
+  const handleBeforeDelete: typeof onBeforeDelete = useCallback(
+    async (params) => {
+      const result = await onBeforeDelete(params);
+      requestAnimationFrame(() => reactFlowWrapper.current?.focus({ preventScroll: true }));
+      return result;
     },
-    [onNodesChange, pushHistory]
+    [onBeforeDelete]
   );
 
   const handleEdgesChange: typeof onEdgesChange = useCallback(
@@ -686,8 +714,10 @@ export default function CanvasPage() {
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        onNodesChange={handleNodesChange}
+        onNodesChange={onNodesChange}
         onEdgesChange={handleEdgesChange}
+        onBeforeDelete={handleBeforeDelete}
+        deleteKeyCode={DELETE_KEYS}
         onConnect={onConnect}
         onConnectEnd={onConnectEnd}
         onPaneClick={onPaneClick}

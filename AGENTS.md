@@ -37,14 +37,15 @@ When the user clicks **Execute**, the executor walks the graph in topological or
 
 | Type | Purpose | Inputs | Outputs |
 |------|---------|--------|---------|
-| `wallet` | User's connected EOA, balances, chain | — | `vaultDeposit`, `borrow`, `lend`, `swap`, `repay` |
+| `wallet` | User's connected EOA, balances, chain | — | `vaultDeposit`, `borrow`, `lend`, `swap`, `repay`, `bridge` |
 | `borrow` | Post collateral on a **Morpho Blue market** and borrow the loan asset against it, with LTV target + health-factor preview. One node holds both legs (`collateralAsset`/`collateralAmount` and `market`/`ltvPercent`) — on-chain they are `supplyCollateral` then `borrow` | `wallet`, `swap`, `vaultWithdraw`, `lendWithdraw`, `repay`, `bridge`, `borrow`, `position` | `swap`, `vaultDeposit`, `lend`, `bridge`, `borrow` |
 | `lend` | Supply the loan asset into **one isolated Morpho Blue market** (no collateral, no debt). The lender is exposed only to that market's collateral. Only `listed` markets are offered | `wallet`, `borrow`, `swap`, `vaultWithdraw`, `lendWithdraw`, `repay`, `bridge` | — |
 | `lendWithdraw` | Take supply back out of an isolated market. A full exit burns every supply share (no dust); the amount is capped by the market's live liquidity | `position` | `swap`, `vaultDeposit`, `borrow`, `lend`, `repay`, `bridge` |
-| `swap` | CowSwap intent-based swap (Ethereum mainnet only — Base not supported by CoW) | `wallet`, `borrow`, `vaultWithdraw`, `lendWithdraw` | `vaultDeposit`, `borrow`, `lend`, `wallet`, `repay` |
-| `vaultDeposit` | Deposit into a Morpho Vault (v1 MetaMorpho or v2). Can be fed directly by `wallet` for pure earn flows. Supports multi-source allocation percentages | `wallet`, `borrow`, `swap`, `vaultWithdraw`, `lendWithdraw` | — |
-| `vaultWithdraw` | Withdraw shares from an existing vault position (uses `redeem()`, not `withdraw()`, to avoid dust) | `position` | `swap`, `vaultDeposit`, `borrow`, `lend`, `repay` |
-| `repay` | Repay borrow on a Morpho Blue market | `wallet`, `swap`, `vaultWithdraw` | — |
+| `swap` | CowSwap intent-based swap (Ethereum mainnet only — Base not supported by CoW) | `wallet`, `borrow`, `vaultWithdraw`, `lendWithdraw`, `repay`, `bridge`, `position` | `vaultDeposit`, `borrow`, `lend`, `repay`, `bridge` |
+| `vaultDeposit` | Deposit into a Morpho Vault (v1 MetaMorpho or v2). Can be fed directly by `wallet` for pure earn flows. Supports multi-source allocation percentages | `wallet`, `borrow`, `swap`, `vaultWithdraw`, `lendWithdraw`, `repay`, `bridge` | — |
+| `vaultWithdraw` | Withdraw shares from an existing vault position (uses `redeem()`, not `withdraw()`, to avoid dust) | `position` | `swap`, `vaultDeposit`, `borrow`, `lend`, `repay`, `bridge` |
+| `repay` | Repay borrow on a Morpho Blue market. With `withdrawCollateralAfterRepay` it also withdraws the freed collateral in the same bundle and becomes a source of that collateral | `wallet`, `swap`, `vaultWithdraw`, `lendWithdraw`, `bridge` | `swap`, `borrow`, `vaultDeposit`, `lend` (only with `withdrawCollateralAfterRepay`) |
+| `bridge` | Move an asset to another supported chain through LI.FI. The only edge allowed to cross chains: the nodes after it run on the destination chain | `wallet`, `borrow`, `swap`, `vaultWithdraw`, `lendWithdraw`, `position` | `borrow`, `vaultDeposit`, `lend`, `swap`, `repay` |
 | `position` | Read-only existing on-chain position imported from `useAddressPositions` | — | `vaultWithdraw`, `lendWithdraw`, `borrow`, `swap`, `bridge` |
 
 The full validation map lives in `src/lib/canvas/types.ts` (`VALID_CONNECTIONS`). Always check it before constructing connections — invalid edges are rejected at runtime.

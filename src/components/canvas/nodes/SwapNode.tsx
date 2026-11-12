@@ -203,7 +203,7 @@ function SwapNodeComponent({ id, data }: NodeProps) {
     if (d.tokenOut && d.tokenOut.address !== d.tokenIn?.address) list.push(d.tokenOut as Asset);
     return list;
   }, [d.tokenIn, d.tokenOut]);
-  const { assetsWithBalances } = useTokenBalances(balanceAssets);
+  const { assetsWithBalances } = useTokenBalances(balanceAssets, undefined, chainId);
 
   // Fetch USD prices for tokenIn + tokenOut so we can show $ values
   // alongside every amount (available, selected, wallet, estimated output).
@@ -215,7 +215,7 @@ function SwapNodeComponent({ id, data }: NodeProps) {
     }
     return list;
   }, [d.tokenIn?.address, d.tokenOut?.address]);
-  const { prices } = useAssetPrices(priceAddresses);
+  const { prices } = useAssetPrices(priceAddresses, chainId);
   const tokenInPrice = d.tokenIn?.address
     ? prices[d.tokenIn.address.toLowerCase()] ?? 0
     : 0;

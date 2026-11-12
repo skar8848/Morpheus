@@ -113,6 +113,9 @@ export interface VaultDepositNodeData {
   [key: string]: unknown;
   type: "vaultDeposit";
   vault: Vault | null;
+  /** Asset picked by hand when the deposit is fed straight from the wallet.
+   *  Every other source decides the asset itself (loan, swap output...). */
+  asset?: Asset | null;
   amount: string;
   amountUsd: number;
   /** Deposit entire upstream swap output (default true when connected to swap) */
@@ -176,7 +179,7 @@ export interface BridgeNodeData {
 export interface PositionNodeData {
   [key: string]: unknown;
   type: "position";
-  positionType: "borrow" | "supply" | "vault" | "collateral";
+  positionType: "borrow" | "supply" | "vault";
   marketPosition: UserMarketPosition | null;
   vaultPosition: UserVaultPosition | null;
 }
@@ -224,7 +227,9 @@ export const VALID_CONNECTIONS: Record<string, string[]> = {
   // transferable asset, so nothing flows out of it.
   lend: [],
   lendWithdraw: ["swap", "vaultDeposit", "borrow", "lend", "repay", "bridge"],
-  swap: ["vaultDeposit", "borrow", "lend", "wallet", "repay", "bridge"],
+  // No `wallet` target: the wallet node has no input handle and nothing reads
+  // a swap -> wallet edge; the swap output already lands in the wallet.
+  swap: ["vaultDeposit", "borrow", "lend", "repay", "bridge"],
   vaultDeposit: [],
   vaultWithdraw: ["swap", "vaultDeposit", "borrow", "lend", "repay", "bridge"],
   // Bridge output lands on the destination chain and can feed the earn/borrow

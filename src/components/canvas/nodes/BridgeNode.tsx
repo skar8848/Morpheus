@@ -145,14 +145,16 @@ function BridgeNodeComponent({ id, data }: NodeProps) {
   const amountIn = manualSource ? parseFloat(d.amountIn || "0") || 0 : upstreamAmount;
 
   // USD value of the input + price of the output token (for token-denominated
-  // receive display).
-  const priceAddrs = useMemo(
-    () => [tokenIn?.address, d.tokenOut?.address].filter(Boolean) as string[],
-    [tokenIn?.address, d.tokenOut?.address]
-  );
-  const { prices } = useAssetPrices(priceAddrs);
-  const tokenInPrice = tokenIn?.address ? prices[tokenIn.address.toLowerCase()] ?? 0 : 0;
-  const tokenOutPrice = d.tokenOut?.address ? prices[d.tokenOut.address.toLowerCase()] ?? 0 : 0;
+  // receive display). Each token is priced on its own chain: the output lives
+  // on the destination, so asking the source chain for it returned nothing.
+  const tokenInAddr = tokenIn?.address;
+  const tokenOutAddr = d.tokenOut?.address;
+  const priceInAddrs = useMemo(() => (tokenInAddr ? [tokenInAddr] : []), [tokenInAddr]);
+  const priceOutAddrs = useMemo(() => (tokenOutAddr ? [tokenOutAddr] : []), [tokenOutAddr]);
+  const { prices: pricesIn } = useAssetPrices(priceInAddrs, srcChainId);
+  const { prices: pricesOut } = useAssetPrices(priceOutAddrs, dstChainId);
+  const tokenInPrice = tokenIn?.address ? pricesIn[tokenIn.address.toLowerCase()] ?? 0 : 0;
+  const tokenOutPrice = d.tokenOut?.address ? pricesOut[d.tokenOut.address.toLowerCase()] ?? 0 : 0;
   const amountInUsd = amountIn * tokenInPrice;
 
   // Candidate routes, ranked best-first. CCTP is offered first for USDC but

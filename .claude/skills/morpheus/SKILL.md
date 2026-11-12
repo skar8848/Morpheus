@@ -23,7 +23,7 @@ A canvas is a directed graph of nodes connected by edges:
 - **borrow** — post collateral on a **Morpho Blue market** AND borrow the loan asset against it, in ONE node. The node owns both legs: `collateralAsset` + `collateralAmount` (what it posts) and `market` + `ltvPercent` (what it draws). Connects from `wallet`/`swap`/`vaultWithdraw`/`lendWithdraw`/`repay`/`bridge`/`borrow`/`position`. Connects to: `swap`, `vaultDeposit`, `lend`, `bridge`, `borrow`
 - **lend** — supply the loan asset into ONE **isolated Morpho Blue market** (bare supply — no collateral, no debt). The lender is exposed only to that market's collateral. Terminal node. Connects from `wallet`/`borrow`/`swap`/`vaultWithdraw`/`lendWithdraw`/`repay`/`bridge`.
 - **lendWithdraw** — take supply back out of an isolated market. The position is picked from what the wallet holds. Connects from `position`. Connects to: `swap`/`vaultDeposit`/`borrow`/`lend`/`repay`/`bridge`
-- **swap** — CowSwap intent (Ethereum mainnet only). Connects from `wallet`/`borrow`/`vaultWithdraw`/`lendWithdraw`. Connects to: `vaultDeposit`/`borrow`/`lend`/`wallet`/`repay`
+- **swap** — CowSwap intent (Ethereum mainnet only). Connects from `wallet`/`borrow`/`vaultWithdraw`/`lendWithdraw`. Connects to: `vaultDeposit`/`borrow`/`lend`/`repay`
 - **vaultDeposit** — deposit into a Morpho Vault. Terminal node. Can be fed by `wallet` (pure earn), `borrow` (carry trade), `swap`, `vaultWithdraw` or `lendWithdraw` (rebalance).
 - **vaultWithdraw** — withdraw from existing vault position. Connects from `position`. Connects to: `swap`/`vaultDeposit`/`borrow`/`lend`/`repay`
 - **repay** — repay a Morpho Blue borrow. With `withdrawCollateralAfterRepay` it also sources the freed collateral (see below).
