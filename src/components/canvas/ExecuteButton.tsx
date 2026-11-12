@@ -601,6 +601,64 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         }
       };
 
+      // ─── Morpho Blue authorization preflight ───────────────────────────────
+      // The bundler executes morpho.borrow on behalf of the user via the
+      // GeneralAdapter1 contract. Morpho Blue requires the user to have
+      // explicitly authorized that adapter via setAuthorization. Without it,
+      // first-time borrowers see "Unauthorized()" reverts.
+      //
+      // We check isAuthorized once before the bundle. If false, we submit a
+      // separate setAuthorization tx (one extra signature for the user). This
+      // is a one-time setup per (user, adapter) pair.
+      //
+      // A helper rather than inline code because the cross-chain path needs it
+      // too: a borrow that feeds a bridge runs in the source-chain bundle, and
+      // that branch returns before the single-chain flow below.
+      //
+      // FUTURE: replace with setAuthorizationWithSig embedded in the bundle
+      // (saves one signature). Requires EIP-712 signing flow.
+      const ensureMorphoAuthorization = async (authNodes: CanvasNode[]) => {
+        if (!strategyNeedsMorphoAuthorization(authNodes)) return;
+        let isAuth = false;
+        try {
+          isAuth = (await readContract(wagmiConfig, {
+            address: MORPHO_BLUE[cid],
+            abi: morphoBlueAbi,
+            functionName: "isAuthorized",
+            args: [currentAddress, adapter],
+          })) as boolean;
+        } catch (err) {
+          // RPC failure — fall through and try the auth tx anyway. If the
+          // user is already authorized the tx is a no-op (cheap).
+          console.warn("[ExecuteButton] isAuthorized check failed, will attempt setAuthorization:", err);
+        }
+        if (isAuth) return;
+
+        const authTx = buildMorphoAuthorizationTx(cid);
+        if (!authTx) throw new Error("Cannot build authorization tx for this chain");
+        assertChain();
+        setSwapStatus("Authorizing Morpho adapter (one-time setup)…");
+        const authHash = await new Promise<`0x${string}`>((resolve, reject) => {
+          sendTransaction(
+            { to: authTx.to, data: authTx.data, value: 0n },
+            { onSuccess: (h) => resolve(h), onError: (err) => reject(err) }
+          );
+        });
+        try {
+          const receipt = await waitWithRetry(authHash);
+          if (receipt.status === "reverted") {
+            throw new Error("Authorization tx reverted on-chain");
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(`Authorization failed: ${msg}`);
+        }
+        setSwapStatus(null);
+        if (addressRef.current !== currentAddress) {
+          throw new Error("Wallet address changed during execution. Aborting.");
+        }
+      };
+
       // ─── Fixed-rate legs (Midnight) ────────────────────────────────────────
       // A fixed-rate borrow isn't a Blue call: it lifts an order book. The
       // router hands back the exact offers, one `take` each, so a fill that
@@ -674,6 +732,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
 
         // Phase 1 — Morpho actions on the source chain, if any.
         if (xchain.sourceSegment) {
+          await ensureMorphoAuthorization(xchain.sourceSegment.nodes);
           setSwapStatus("Executing source-chain actions…");
           const srcBundle = buildExecutionBundle(
             xchain.sourceSegment.nodes,
@@ -758,63 +817,7 @@ export default function ExecuteButton({ nodes, edges }: ExecuteButtonProps) {
         return;
       }
 
-      // ─── Morpho Blue authorization preflight ───────────────────────────────
-      // The bundler executes morpho.borrow on behalf of the user via the
-      // GeneralAdapter1 contract. Morpho Blue requires the user to have
-      // explicitly authorized that adapter via setAuthorization. Without it,
-      // first-time borrowers see "Unauthorized()" reverts.
-      //
-      // We check isAuthorized once before the bundle. If false, we submit a
-      // separate setAuthorization tx (one extra signature for the user). This
-      // is a one-time setup per (user, adapter) pair.
-      //
-      // FUTURE: replace with setAuthorizationWithSig embedded in the bundle
-      // (saves one signature). Requires EIP-712 signing flow.
-      if (strategyNeedsMorphoAuthorization(execNodes)) {
-        let isAuth = false;
-        try {
-          isAuth = (await readContract(wagmiConfig, {
-            address: MORPHO_BLUE[cid],
-            abi: morphoBlueAbi,
-            functionName: "isAuthorized",
-            args: [currentAddress, adapter],
-          })) as boolean;
-        } catch (err) {
-          // RPC failure — fall through and try the auth tx anyway. If the
-          // user is already authorized the tx is a no-op (cheap).
-          console.warn("[ExecuteButton] isAuthorized check failed, will attempt setAuthorization:", err);
-        }
-
-        if (!isAuth) {
-          const authTx = buildMorphoAuthorizationTx(cid);
-          if (!authTx) {
-            setError("Cannot build authorization tx for this chain");
-            return;
-          }
-          assertChain();
-          setSwapStatus("Authorizing Morpho adapter (one-time setup)…");
-          const authHash = await new Promise<`0x${string}`>((resolve, reject) => {
-            sendTransaction(
-              { to: authTx.to, data: authTx.data, value: 0n },
-              { onSuccess: (h) => resolve(h), onError: (err) => reject(err) }
-            );
-          });
-          try {
-            const receipt = await waitWithRetry(authHash);
-            if (receipt.status === "reverted") {
-              throw new Error("Authorization tx reverted on-chain");
-            }
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            throw new Error(`Authorization failed: ${msg}`);
-          }
-          setSwapStatus(null);
-          if (addressRef.current !== currentAddress) {
-            setError("Wallet address changed during execution. Aborting.");
-            return;
-          }
-        }
-      }
+      await ensureMorphoAuthorization(execNodes);
 
       // Detect if graph contains swaps
       const swaps = getSwapDetails(execNodes, execEdges);
