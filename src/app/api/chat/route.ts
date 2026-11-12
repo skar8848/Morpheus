@@ -82,24 +82,66 @@ interface ChatRequestBody {
   messages: Array<{ role: "user" | "assistant"; content: string }>;
 }
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "content-type",
-};
+// No CORS headers on purpose. Unlike /api/canvas, this route is not a public API:
+// every call spends the deployment's Anthropic key, and its only caller is the
+// in-app chat panel. Without `Access-Control-Allow-Origin`, another site can't
+// read the replies from a visitor's browser, and the Origin check below refuses
+// to even make the call.
 
 function jsonError(status: number, message: string) {
   return new Response(JSON.stringify({ error: message }), {
     status,
-    headers: { ...CORS_HEADERS, "content-type": "application/json" },
+    headers: { "content-type": "application/json" },
   });
 }
 
-export async function OPTIONS() {
-  return new Response(null, { status: 204, headers: CORS_HEADERS });
+/**
+ * True when the request comes from a page served by this same deployment.
+ * Browsers always send `Origin` on a POST; a missing one falls back to Referer.
+ * A script can forge either, which is what the rate limit below is for.
+ */
+function isSameOrigin(req: Request): boolean {
+  // x-forwarded-host is only trustworthy behind a proxy that sets it (Vercel
+  // does). On a bare `next start` a client can send its own, so self-hosting
+  // without a trusted proxy leaves only the rate limit as the guard.
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  const from = req.headers.get("origin") ?? req.headers.get("referer");
+  if (!host || !from) return false;
+  try {
+    return new URL(from).host === host;
+  } catch {
+    return false;
+  }
+}
+
+// --- tiny in-process rate limit per IP (same idea as the bridge-routes cache) ---
+// Per serverless instance, so it's a speed bump rather than a hard quota, but it
+// turns "loop this endpoint all night on our key" into a handful of replies.
+const RATE_WINDOW_MS = 10 * 60_000;
+const RATE_MAX = 20;
+const hits = new Map<string, { start: number; count: number }>();
+
+function rateLimited(req: Request): boolean {
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const now = Date.now();
+  const entry = hits.get(ip);
+  if (!entry || now - entry.start > RATE_WINDOW_MS) {
+    if (hits.size > 1000) hits.clear();
+    hits.set(ip, { start: now, count: 1 });
+    return false;
+  }
+  entry.count++;
+  return entry.count > RATE_MAX;
 }
 
 export async function POST(req: Request) {
+  if (!isSameOrigin(req)) {
+    return jsonError(403, "The chat endpoint only serves the Morpheus app itself");
+  }
+  if (rateLimited(req)) {
+    return jsonError(429, "Too many messages, try again in a few minutes");
+  }
+
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return jsonError(
@@ -163,7 +205,7 @@ export async function POST(req: Request) {
       }),
       {
         status: 200,
-        headers: { ...CORS_HEADERS, "content-type": "application/json" },
+        headers: { "content-type": "application/json" },
       }
     );
   } catch (err) {
