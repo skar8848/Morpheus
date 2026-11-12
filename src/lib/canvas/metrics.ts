@@ -26,6 +26,10 @@ export interface StrategyMetrics {
   netApy: number;
   /** Debt-weighted health factor across isolated markets (null with no debt). */
   healthFactor: number | null;
+  /** USD earned per year by the yield legs (vaults and lends). */
+  earnedAnnualUsd: number;
+  /** USD paid per year on the debt (negative when rewards exceed the rate). */
+  paidAnnualUsd: number;
   /** Net USD earned per year (earned − paid). */
   netAnnualUsd: number;
   vaultCount: number;
@@ -120,6 +124,8 @@ export function computeStrategyMetrics(nodes: CanvasNode[]): StrategyMetrics {
     avgBorrowApy,
     netApy,
     healthFactor: totalBorrowUsd > 0 ? weightedHfNumerator / totalBorrowUsd : null,
+    earnedAnnualUsd: weightedEarnApy,
+    paidAnnualUsd: weightedBorrowApy,
     netAnnualUsd: weightedEarnApy - weightedBorrowApy,
     vaultCount,
     lendCount,
