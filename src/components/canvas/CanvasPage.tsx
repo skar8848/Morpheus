@@ -265,13 +265,26 @@ export default function CanvasPage() {
     reactFlowInstance.current = instance;
   }, []);
 
-  // Auto-organize after importing positions from address page
+  // Auto-organize after importing positions from address page, loading a
+  // template or opening a deep link (all of them raise wasImported).
+  //
+  // Keyed on the nodes themselves, not nodes.length: a template with as many
+  // nodes as the canvas it replaced never re-ran the effect, so it stayed on
+  // its hardcoded positions and the flag stayed raised until the next add or
+  // delete reorganized the user's own layout. The flag is the gate; the timer
+  // is not cancelled by the node updates that follow a load (nodes picking
+  // their assets), only by unmount.
+  const organizeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => () => {
+    if (organizeTimerRef.current) clearTimeout(organizeTimerRef.current);
+  }, []);
   useEffect(() => {
-    if (!wasImported.current || nodes.length === 0) return;
+    if (!wasImported.current || nodes.length === 0 || organizeTimerRef.current) return;
     wasImported.current = false;
 
     // Wait for DOM nodes to render so we can measure sizes
-    const timer = setTimeout(() => {
+    organizeTimerRef.current = setTimeout(() => {
+      organizeTimerRef.current = null;
       const sizes = new Map<string, { w: number; h: number }>();
       for (const n of nodes) {
         const el = document.querySelector(`[data-id="${n.id}"]`) as HTMLElement | null;
@@ -295,10 +308,8 @@ export default function CanvasPage() {
         isOrganizing.current = false;
       }, 500);
     }, 300);
-
-    return () => clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes.length]);
+  }, [nodes]);
 
   // Drag & drop from sidebar
   const onDragOver = useCallback((event: DragEvent) => {
