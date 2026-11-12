@@ -89,6 +89,30 @@ function safeAmountToBigInt(amount: number | string, decimals: number): bigint {
 }
 
 /**
+ * Raw sell amount of a swap, or null when the input is not a positive number.
+ *
+ * Truncates extra decimals rather than rounding like parseUnits: the order
+ * must never sell a wei more than the user typed or holds. Shared with
+ * useCowQuote so the quoted size and the signed size are the same number.
+ * The amount input is type="number", so "1e-7" or "1e18" can reach here;
+ * BigInt() throws on those, which crashed the panel during render, so
+ * exponential notation is spelled out first.
+ */
+export function swapAmountToRaw(amount: string, decimals: number): bigint | null {
+  let str = amount.trim();
+  if (/e/i.test(str)) {
+    const n = Number(str);
+    if (!isFinite(n) || n <= 0) return null;
+    str = n.toFixed(decimals);
+  }
+  const [intPart = "", fracPart = "", ...rest] = str.split(".");
+  if (rest.length > 0 || !/^\d*$/.test(intPart) || !/^\d*$/.test(fracPart)) return null;
+  if (intPart === "" && fracPart === "") return null;
+  const raw = BigInt((intPart || "0") + fracPart.slice(0, decimals).padEnd(decimals, "0"));
+  return raw > 0n ? raw : null;
+}
+
+/**
  * Safely convert an API string to BigInt. Returns fallback on failure.
  */
 function safeBigInt(value: unknown, fallback: bigint = 0n): bigint {
@@ -992,16 +1016,9 @@ export function getSwapDetails(
     if (d.type !== "swap") continue;
     if (!d.tokenIn?.address || !d.tokenOut?.address || !d.amountIn) continue;
 
-    const amountInNum = parseFloat(d.amountIn);
-    if (!isFinite(amountInNum) || amountInNum <= 0) continue;
-
-    // String-based BigInt conversion (same as useCowQuote)
-    const parts = d.amountIn.split(".");
-    const intPart = parts[0] || "0";
-    const fracPart = (parts[1] || "")
-      .slice(0, d.tokenIn.decimals)
-      .padEnd(d.tokenIn.decimals, "0");
-    const sellAmountWei = BigInt(intPart + fracPart).toString();
+    const sellRaw = swapAmountToRaw(d.amountIn, d.tokenIn.decimals);
+    if (sellRaw === null) continue;
+    const sellAmountWei = sellRaw.toString();
 
     swaps.push({
       nodeId: node.id,
