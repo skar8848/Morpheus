@@ -336,7 +336,11 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalDeposit, hasBorrowUpstream, d.vault, assetPriceUsd]);
 
-  // Auto-set depositAll when swap first connects
+  // Auto-set depositAll when swap first connects, and drop it once no swap
+  // feeds the node. "Deposit all" only means something for a swap output: left
+  // on for a borrow or wallet feed it skipped the amount check in validation,
+  // and an empty amount then executed as no deposit at all, silently. It is
+  // reset to unset (not false) so the next swap wired in turns it on again.
   const prevSwapRef = useRef<string | null>(null);
   useEffect(() => {
     if (swapInfo && swapInfo.nodeId !== prevSwapRef.current) {
@@ -345,7 +349,11 @@ function VaultDepositNodeComponent({ id, data }: NodeProps) {
         updateNodeData(id, { depositAll: true });
       }
     }
-    if (!swapInfo) prevSwapRef.current = null;
+    if (!swapInfo) {
+      prevSwapRef.current = null;
+      if (d.depositAll !== undefined) updateNodeData(id, { depositAll: undefined });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [swapInfo]);
 
   const truncateAddress = (addr: string) =>

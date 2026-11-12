@@ -154,7 +154,8 @@ function vaultDepositNode(posY = 80): CanvasNode {
       vault: null,
       amount: "",
       amountUsd: 0,
-      depositAll: true,
+      // No depositAll: every template vault is fed by a borrow, whose amount
+      // the node syncs itself. "Deposit all" is for swap outputs only.
     } as unknown as CanvasNodeData,
   };
 }
