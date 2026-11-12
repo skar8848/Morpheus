@@ -76,6 +76,18 @@ export function planCrossChainExecution(
   if (!plan.multiChain || !plan.bridge) return NO_EXECUTION;
   if (plan.error) return { ...NO_EXECUTION, isCrossChain: true, error: plan.error };
 
+  // The phases below never place a CoW order: the source segment is encoded
+  // with the single-phase engine (user amounts, no fill), so a swap feeding the
+  // bridge would have the bridge send an output that was never bought. Refuse
+  // until the two-phase swap flow is wired into the cross-chain phases.
+  if (nodes.some((n) => (n.data as { type?: string }).type === "swap")) {
+    return {
+      ...NO_EXECUTION,
+      isCrossChain: true,
+      error: "Swaps can't run in a cross-chain strategy yet",
+    };
+  }
+
   const bridgeNode = nodes.find((n) => n.id === plan.bridge!.nodeId);
   const bd = bridgeNode?.data as unknown as BridgeNodeData | undefined;
   if (!bd?.tokenIn || !bd.tokenOut) {
