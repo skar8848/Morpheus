@@ -188,7 +188,7 @@ function LendNodeComponent({ id, data }: NodeProps) {
   const price = loanAsset ? prices[loanAsset.address.toLowerCase()] ?? 0 : 0;
 
   const selectedAssets = useMemo(() => (loanAsset ? [loanAsset] : []), [loanAsset]);
-  const { assetsWithBalances, isLoading: balanceLoading } = useTokenBalances(selectedAssets);
+  const { assetsWithBalances, isLoading: balanceLoading } = useTokenBalances(selectedAssets, undefined, nodeChainId);
   const walletBalance = parseFloat(assetsWithBalances[0]?.balance ?? "0");
 
   const inputsWithBalances = inputs.map((i) =>

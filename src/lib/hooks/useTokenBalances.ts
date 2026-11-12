@@ -7,11 +7,28 @@ import { useMemo } from "react";
 import { useAccount, useReadContracts } from "wagmi";
 import { erc20Abi } from "viem";
 import type { Asset, AssetWithBalance } from "../graphql/types";
+import { useChain } from "../context/ChainContext";
+import type { SupportedChainId } from "../web3/chains";
 
-export function useTokenBalances(assets: Asset[], addressOverride?: `0x${string}`): {
+/**
+ * ERC-20 balances of the connected wallet (or of `addressOverride`).
+ *
+ * Read on the canvas chain, or on `overrideChainId` for a node that runs on
+ * another chain (downstream of a bridge). Without an explicit chain wagmi reads
+ * on whatever network the wallet is connected to: a wallet left on Base read
+ * mainnet token addresses on Base, showed zeros, and "Insufficient balance"
+ * blocked a funded strategy.
+ */
+export function useTokenBalances(
+  assets: Asset[],
+  addressOverride?: `0x${string}`,
+  overrideChainId?: number
+): {
   assetsWithBalances: AssetWithBalance[];
   isLoading: boolean;
 } {
+  const { chainId: homeChainId } = useChain();
+  const chainId = (overrideChainId ?? homeChainId) as SupportedChainId;
   const { address: connected, isConnected: walletConnected } = useAccount();
   // In Safe mode the strategy is built against the Safe's holdings, not the
   // signer's — reading the signer's balances there would be plainly wrong.
@@ -25,8 +42,9 @@ export function useTokenBalances(assets: Asset[], addressOverride?: `0x${string}
       abi: erc20Abi,
       functionName: "balanceOf" as const,
       args: [account] as const,
+      chainId,
     }));
-  }, [assets, account, isConnected]);
+  }, [assets, account, isConnected, chainId]);
 
   const { data, isLoading } = useReadContracts({
     contracts: contracts.length > 0 ? contracts : undefined,

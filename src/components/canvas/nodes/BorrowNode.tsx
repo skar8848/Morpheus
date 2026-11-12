@@ -138,7 +138,7 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
     : 0;
 
   const selectedAssets = useMemo(() => (collateralAsset ? [collateralAsset] : []), [collateralAsset]);
-  const { assetsWithBalances, isLoading: balanceLoading } = useTokenBalances(selectedAssets);
+  const { assetsWithBalances, isLoading: balanceLoading } = useTokenBalances(selectedAssets, undefined, nodeChainId);
   const walletBalance = parseFloat(assetsWithBalances[0]?.balance ?? "0");
 
   // What is available to post: the sum of every wired source (a wallet counts as
