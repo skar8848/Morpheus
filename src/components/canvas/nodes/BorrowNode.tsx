@@ -247,10 +247,6 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
 
   // An imported node arrives with a market but no remembered loan-asset pick.
   const selectedLoanAddress = d.loanAssetAddress ?? d.market?.loanAsset?.address;
-  const loanAddresses = useMemo(
-    () => (selectedLoanAddress ? [selectedLoanAddress] : []),
-    [selectedLoanAddress]
-  );
 
   // Markets for the collateral filter alone: they define which loan assets exist.
   const { markets: collateralMarkets, loading: collateralMarketsLoading } = useBorrowMarkets(
@@ -258,15 +254,16 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
     [],
     nodeChainId
   );
-  // Narrowed by the loan asset too — only fetched once one is chosen.
-  const { markets: loanFilteredMarkets, loading: loanMarketsLoading } = useBorrowMarkets(
-    collateralAddresses,
-    loanAddresses,
-    nodeChainId,
-    loanAddresses.length > 0
-  );
-  const markets = loanAddresses.length > 0 ? loanFilteredMarkets : collateralMarkets;
-  const marketsLoading = collateralMarketsLoading || loanMarketsLoading;
+  // Narrowed by the loan asset too. The loan-filtered set is a strict subset of
+  // the list above (which already holds every listed market when no collateral
+  // is chosen), so it is filtered here rather than fetched a second time: each
+  // loan-asset change used to cost another paginated query per node.
+  const markets = useMemo(() => {
+    if (!selectedLoanAddress) return collateralMarkets;
+    const loan = selectedLoanAddress.toLowerCase();
+    return collateralMarkets.filter((m) => m.loanAsset.address.toLowerCase() === loan);
+  }, [collateralMarkets, selectedLoanAddress]);
+  const marketsLoading = collateralMarketsLoading;
   const loanAssetsLoading = collateralMarketsLoading;
 
   const loanAssets = useMemo(() => {
@@ -306,7 +303,7 @@ function BorrowNodeComponent({ id, data }: NodeProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.market?.uniqueKey, d.ltvPercent, depositUsd, loanAssetPrice]);
 
-  // Market liquidity check — use LIVE data from useMarkets, not the stale d.market snapshot
+  // Market liquidity check — use LIVE data from useBorrowMarkets, not the stale d.market snapshot
   const availableLiquidity = useMemo(() => {
     if (!d.market) return null;
     // Find the live version of the selected market
