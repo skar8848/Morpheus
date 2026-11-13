@@ -51,62 +51,60 @@ The full validation map lives in `src/lib/canvas/types.ts` (`VALID_CONNECTIONS`)
 
 ## Canonical Canvas JSON
 
-The portable, agent-friendly representation of a canvas. This is what `morpheus_create_canvas` accepts and what `morpheus_get_canvas` returns. Agents should emit and consume this exact shape.
+The shape the importer actually accepts, for `?strategy=` deep links and `POST /api/canvas`: the internal `ImportedStrategy` format (`src/lib/canvas/importStrategy.ts`). It is the canvas's own React Flow graph, so node `data` carries the same fields the nodes use at runtime. Symbols are not resolved, amounts are not computed, and there is no `"max"` keyword: assets, markets and vaults are full objects as returned by the Morpho GraphQL API.
 
 ```jsonc
 {
-  "version": 1,
-  "chain": "ethereum",                  // "ethereum" | "base"
+  "sourceAddress": "0x...",              // required string (display only, may be "")
   "nodes": [
     {
       "id": "wallet-1",
-      "type": "wallet",
-      "position": { "x": 50, "y": 300 } // optional — auto-laid out if missing
+      "type": "walletNode",               // React Flow node type
+      "position": { "x": 50, "y": 300 },  // required
+      "data": { "type": "wallet", "address": "0x...", "chain": "ethereum", "chainId": 1, "balances": [] }
     },
     {
       "id": "borrow-1",
-      "type": "borrow",                 // posts the collateral AND draws the loan
+      "type": "borrowNode",               // posts the collateral AND draws the loan
+      "position": { "x": 380, "y": 300 },
       "data": {
-        "collateralAssetSymbol": "wstETH", // human-readable; resolved to address at runtime
-        "collateralAmount": "10",          // human units, NOT raw — Morpheus parses with the asset's decimals
-        "marketId": "0x...",               // Morpho Blue market unique key (its collateral must match the asset above)
-        "ltvPercent": 60                   // target LTV in percent (0..LLTV)
-      }
-    },
-    {
-      "id": "swap-1",
-      "type": "swap",
-      "data": {
-        "tokenInSymbol": "USDC",
-        "tokenOutSymbol": "WETH",
-        "amountIn": "max"               // "max" or human-readable number
+        "type": "borrow",
+        "collateralAsset": { /* Asset: symbol, name, address, decimals, logoURI */ },
+        "collateralAmount": "10",          // human units, NOT raw
+        "collateralAmountUsd": 0,
+        "market": { /* full Market object; its collateral must match collateralAsset */ },
+        "ltvPercent": 60,                  // target LTV in percent (0..LLTV)
+        "borrowAmount": 0,                 // recomputed by the node from the LTV
+        "borrowAmountUsd": 0,
+        "healthFactor": null
       }
     },
     {
       "id": "vault-1",
-      "type": "vaultDeposit",
+      "type": "vaultDepositNode",
+      "position": { "x": 710, "y": 300 },
       "data": {
-        "vaultAddress": "0x...",        // Morpho vault address
-        "amount": "max",
-        "allocPcts": { "swap-1": 100 }  // optional multi-source allocation
+        "type": "vaultDeposit",
+        "vault": { /* full Vault object */ },
+        "amount": "",                      // human units; synced from the borrow when fed by one
+        "amountUsd": 0
       }
     }
   ],
   "edges": [
-    { "id": "e1", "source": "wallet-1",  "target": "borrow-1" },
-    { "id": "e2", "source": "borrow-1",  "target": "swap-1"   },
-    { "id": "e3", "source": "swap-1",    "target": "vault-1"  }
+    { "id": "e1", "source": "wallet-1", "target": "borrow-1" },
+    { "id": "e2", "source": "borrow-1", "target": "vault-1" }
   ]
 }
 ```
 
-**Resolution rules** when an agent emits this JSON:
+**Rules** when an agent emits this JSON:
 
-1. `assetSymbol` is resolved against the chain's asset registry. If ambiguous, use the address form.
-2. `marketId` is the Morpho Blue `uniqueKey` (32-byte hex). Discover via the Morpho GraphQL API or `morpho_query_markets`.
-3. `vaultAddress` is the on-chain vault contract address. Discover via `morpho_query_vaults`.
-4. `amount` is **always human-readable** (e.g. `"10"` for 10 wstETH). The runtime parses it with the asset's decimals — never pass raw units.
-5. `"max"` means "use the entire upstream amount". For wallet-sourced inputs, it means full balance.
+1. Node `type` is the React Flow node type (`walletNode`, `borrowNode`, ...; the accepted list is in the Public HTTP API section below) and `data.type` is the matching discriminant (`wallet`, `borrow`, ...). Field names per node are the `*NodeData` interfaces in `src/lib/canvas/types.ts`.
+2. Markets are identified by `market.uniqueKey` (the Morpho Blue market id, 32-byte hex). Discover them via the Morpho GraphQL API or `morpho_query_markets`, and pass the object you got back.
+3. Vaults are identified by `vault.address`. Discover them via `morpho_query_vaults`.
+4. Amounts are **human-readable strings** (e.g. `"10"` for 10 wstETH), parsed with the asset's decimals. The raw fields are `repay.collateralToWithdraw` (collateral units) and `borrow.fixedRate.assetsRaw` (loan-token units).
+5. Limits: at most 200 nodes and 500 edges.
 
 ## Deep Link API
 
@@ -238,7 +236,6 @@ Morpheus/
 │   │   ├── [chain]/
 │   │   │   ├── canvas/              # The node-graph editor (main page)
 │   │   │   ├── address/             # View/import positions of any address
-│   │   │   ├── strategy/            # Legacy step-by-step builder (kept for fallback)
 │   │   │   └── layout.tsx           # Wraps with ChainProvider + Navbar
 │   │   ├── layout.tsx               # Web3Provider (wagmi + react-query)
 │   │   └── page.tsx                 # Redirects to /ethereum/canvas
@@ -252,7 +249,7 @@ Morpheus/
 │   │   │   ├── layout.ts            # Auto-layout (column-based, then tree refinement)
 │   │   │   └── useCanvasState.ts    # Central state hook (nodes, edges, undo/redo, save/load)
 │   │   ├── graphql/                 # Morpho API client + types + queries
-│   │   ├── hooks/                   # useMarkets, useVaults, useUserPositions, etc.
+│   │   ├── hooks/                   # useBorrowMarkets, useVaults, useUserPositions, etc.
 │   │   ├── cowswap/                 # CoW Protocol integration (quotes + order signing)
 │   │   ├── web3/                    # wagmi config, chain definitions
 │   │   ├── context/                 # ChainContext
@@ -261,9 +258,7 @@ Morpheus/
 │   └── components/
 │       ├── canvas/                  # ReactFlow canvas + Sidebar + ExecuteButton + nodes/
 │       ├── address/                 # /address page components
-│       ├── strategy/                # Legacy step-by-step builder
-│       ├── layout/                  # Navbar
-│       └── ui/                      # Card, Badge, Skeleton primitives
+│       └── layout/                  # Navbar
 ```
 
 ## Build & Dev
@@ -298,7 +293,7 @@ These mirror the Morpho Builder skill — agents modifying Morpheus's executor M
 - **Do not fabricate addresses**. Always discover via the Morpho GraphQL API or `morpho_query_*` MCP tools, then put the address in the Canonical JSON.
 - **Do not assume token decimals**. Resolve via the asset registry.
 - **Do not bypass `validateGraph()`**. Even a programmatically-built canvas must pass validation before execution.
-- **Do not connect a `vaultDeposit` or `repay` node to anything downstream** — they are terminal nodes.
+- **Do not connect a `vaultDeposit` or `lend` node to anything downstream**: they are terminal nodes. A `repay` node is a source only when `withdrawCollateralAfterRepay` is set.
 - **Do not expect CowSwap to work on Base**. CoW Protocol only supports Ethereum mainnet currently. Use a different swap route or skip the swap on Base.
 - **Do not strip the BUSL 1.1 license headers** from existing files.
 

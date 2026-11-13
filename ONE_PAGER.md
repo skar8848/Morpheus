@@ -8,7 +8,7 @@
 
 Morpheus is a **visual node-graph editor for Morpho lending strategies**. Users drag & drop nodes — wallet, borrow (collateral + loan in one node), lend (isolated market), lend withdraw, swap (CowSwap), vault deposit, vault withdraw, repay — connect them, and execute the whole graph as **one bundled on-chain transaction**.
 
-It runs on **Ethereum mainnet and Base**, supports both **Morpho Vault V1 (MetaMorpho) and V2**, and ships with templates for the most common flows (looped wstETH, multi-collateral diversified, WETH carry, borrow & yield).
+It runs on **Ethereum mainnet, Base, Arbitrum, HyperEVM and Monad**, supports both **Morpho Vault V1 (MetaMorpho) and V2**, and ships with templates for the most common flows (looped wstETH, multi-collateral diversified, WETH carry, borrow & yield).
 
 ## Why it exists
 
@@ -44,7 +44,7 @@ This ships a Claude Code skill (`SKILL.md`) that teaches any agent how to transl
 - `GET  /api/positions?address=0x…&chainId=1` — V1+V2 positions for an address
 - `POST /api/morpho-simulate` — proxy to Morpho MCP simulation
 
-All CORS-open, Edge-runtime, no API key required.
+All CORS-open, no API key required. The two `/api/canvas` routes run on the Edge runtime, the others on Node.
 
 ## Who it's for
 

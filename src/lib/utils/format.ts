@@ -7,12 +7,6 @@ export function formatApy(value: number): string {
   return `${sign}${pct.toFixed(2)}%`;
 }
 
-export function formatApyWithSign(value: number): string {
-  const pct = value * 100;
-  if (pct > 0) return `+${pct.toFixed(2)}%`;
-  return `${pct.toFixed(2)}%`;
-}
-
 export function formatUsd(value: number): string {
   if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;

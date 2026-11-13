@@ -1,60 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 // Copyright (c) 2025-2026 Alban Derouin. All rights reserved.
 
-export const MARKETS_QUERY = `
-  query GetMarkets($collateralAssets: [String!]!, $loanAssets: [String!]!, $chainId: [Int!]!, $first: Int, $skip: Int) {
-    markets(
-      first: $first
-      skip: $skip
-      orderBy: SupplyAssetsUsd
-      orderDirection: Desc
-      where: {
-        collateralAssetAddress_in: $collateralAssets
-        loanAssetAddress_in: $loanAssets
-        chainId_in: $chainId
-      }
-    ) {
-      items {
-        uniqueKey: marketId
-        lltv
-        irmAddress
-        oracle { address }
-        collateralAsset {
-          symbol
-          address
-          logoURI
-          price { usd }
-          decimals
-        }
-        loanAsset {
-          symbol
-          address
-          logoURI
-          price { usd }
-          decimals
-        }
-        state {
-          borrowApy
-          netBorrowApy
-          borrowAssets
-          supplyAssets
-          liquidityAssets
-          price
-          rewards {
-            asset {
-              symbol
-              address
-            }
-            supplyApr
-            borrowApr
-          }
-        }
-      }
-  pageInfo { countTotal }
-    }
-  }
-`;
-
 /**
  * Markets a user can LEND into, for a given loan asset — any collateral.
  *
@@ -361,33 +307,6 @@ export const VAULT_V2_LIST_QUERY = `
         count
         countTotal
       }
-    }
-  }
-`;
-
-export const LOAN_ASSETS_QUERY = `
-  query GetLoanAssets($collateralAssets: [String!]!, $chainId: [Int!]!, $first: Int, $skip: Int) {
-    markets(
-      first: $first
-      skip: $skip
-      orderBy: SupplyAssetsUsd
-      orderDirection: Desc
-      where: {
-        collateralAssetAddress_in: $collateralAssets
-        chainId_in: $chainId
-      }
-    ) {
-      items {
-        loanAsset {
-          symbol
-          name
-          address
-          decimals
-          logoURI
-          price { usd }
-        }
-      }
-  pageInfo { countTotal }
     }
   }
 `;
